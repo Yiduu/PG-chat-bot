@@ -1,20 +1,7 @@
 import os
-import sys
-import subprocess
-
-# Check if we're on Render and install dependencies
-if 'RENDER' in os.environ:
-    try:
-        subprocess.run(['apt-get', 'update'], check=True)
-        subprocess.run(['apt-get', 'install', '-y', 'build-essential', 'libpq-dev'], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Error installing system dependencies: {e}")
-        sys.exit(1)
 import json
 import logging
 import threading
-import psycopg2
-import psycopg2.extras
 from pathlib import Path
 from dotenv import load_dotenv
 from telegram import (
@@ -28,61 +15,73 @@ from telegram.ext import (
 from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
 from flask import Flask, jsonify
+import pg8000
+from pg8000.dbapi import ProgrammingError
 
 # --------------------------
 # Database Functions
 # --------------------------
 def get_db_connection():
-    conn = psycopg2.connect(
-        os.getenv('DATABASE_URL'),
-        sslmode='require'
-    )
+    conn = pg8000.connect(
+        database=os.getenv('DB_NAME'),
+        user=os.getenv('DB_USER'),
+        password=os.getenv('DB_PASSWORD'),
+        host=os.getenv('DB_HOST'),
+        port=int(os.getenv('DB_PORT'))
     return conn
 
 def init_db():
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            # Create users table
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id TEXT PRIMARY KEY,
-                    anonymous_name TEXT,
-                    sex TEXT,
-                    followers JSONB,
-                    waiting_for_post BOOLEAN DEFAULT FALSE,
-                    selected_category TEXT,
-                    waiting_for_comment BOOLEAN DEFAULT FALSE,
-                    comment_post_id INTEGER,
-                    comment_idx INTEGER,
-                    reply_idx INTEGER,
-                    nested_idx INTEGER,
-                    awaiting_name BOOLEAN DEFAULT FALSE
-                )
-            """)
-            
-            # Create posts table
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS posts (
-                    post_id SERIAL PRIMARY KEY,
-                    content TEXT,
-                    author_id TEXT REFERENCES users(user_id),
-                    author_name TEXT,
-                    category TEXT,
-                    channel_message_id INTEGER,
-                    comments JSONB,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
-            logger.info("Database tables initialized successfully")
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Create users table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        user_id TEXT PRIMARY KEY,
+                        anonymous_name TEXT,
+                        sex TEXT,
+                        followers JSONB,
+                        waiting_for_post BOOLEAN DEFAULT FALSE,
+                        selected_category TEXT,
+                        waiting_for_comment BOOLEAN DEFAULT FALSE,
+                        comment_post_id INTEGER,
+                        comment_idx INTEGER,
+                        reply_idx INTEGER,
+                        nested_idx INTEGER,
+                        awaiting_name BOOLEAN DEFAULT FALSE
+                    )
+                """)
+                
+                # Create posts table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS posts (
+                        post_id SERIAL PRIMARY KEY,
+                        content TEXT,
+                        author_id TEXT REFERENCES users(user_id),
+                        author_name TEXT,
+                        category TEXT,
+                        channel_message_id INTEGER,
+                        comments JSONB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.commit()
+                logger.info("Database tables initialized successfully")
+    except ProgrammingError as e:
+        logger.error(f"Database already exists: {e}")
+    except Exception as e:
+        logger.error(f"Error initializing database: {e}")
 
 def get_user(user_id):
     try:
         with get_db_connection() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            with conn.cursor() as cur:
                 cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-                user = cur.fetchone()
-                return dict(user) if user else None
+                row = cur.fetchone()
+                if row:
+                    columns = [desc[0] for desc in cur.description]
+                    return dict(zip(columns, row))
+                return None
     except Exception as e:
         logger.error(f"Error getting user {user_id}: {e}")
         return None
@@ -91,12 +90,17 @@ def save_user(user_id, user_data):
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO users (user_id, anonymous_name, sex, followers, 
-                                       waiting_for_post, selected_category, 
-                                       waiting_for_comment, comment_post_id, 
-                                       comment_idx, reply_idx, nested_idx, awaiting_name)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                # Convert followers to JSON string
+                followers = json.dumps(user_data.get('followers', []))
+                
+                # Prepare the query
+                query = """
+                    INSERT INTO users (
+                        user_id, anonymous_name, sex, followers, 
+                        waiting_for_post, selected_category, 
+                        waiting_for_comment, comment_post_id, 
+                        comment_idx, reply_idx, nested_idx, awaiting_name
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (user_id) DO UPDATE SET
                         anonymous_name = EXCLUDED.anonymous_name,
                         sex = EXCLUDED.sex,
@@ -109,11 +113,14 @@ def save_user(user_id, user_data):
                         reply_idx = EXCLUDED.reply_idx,
                         nested_idx = EXCLUDED.nested_idx,
                         awaiting_name = EXCLUDED.awaiting_name
-                """, (
+                """
+                
+                # Execute with parameters
+                cur.execute(query, (
                     user_id,
                     user_data.get('anonymous_name'),
                     user_data.get('sex'),
-                    json.dumps(user_data.get('followers', [])),
+                    followers,
                     user_data.get('waiting_for_post', False),
                     user_data.get('selected_category'),
                     user_data.get('waiting_for_comment', False),
@@ -133,18 +140,23 @@ def create_post(post_data):
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO posts (content, author_id, author_name, category, 
-                                       channel_message_id, comments)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                # Convert comments to JSON string
+                comments = json.dumps(post_data.get('comments', []))
+                
+                query = """
+                    INSERT INTO posts (
+                        content, author_id, author_name, category, 
+                        channel_message_id, comments
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING post_id
-                """, (
+                """
+                cur.execute(query, (
                     post_data['content'],
                     post_data['author_id'],
                     post_data['author_name'],
                     post_data['category'],
                     post_data['channel_message_id'],
-                    json.dumps(post_data.get('comments', []))
+                    comments
                 ))
                 post_id = cur.fetchone()[0]
                 conn.commit()
@@ -156,13 +168,16 @@ def create_post(post_data):
 def get_post(post_id):
     try:
         with get_db_connection() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            with conn.cursor() as cur:
                 cur.execute("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-                post = cur.fetchone()
-                if post:
-                    post = dict(post)
-                    post['comments'] = json.loads(post['comments']) if post['comments'] else []
-                return post
+                row = cur.fetchone()
+                if row:
+                    columns = [desc[0] for desc in cur.description]
+                    post = dict(zip(columns, row))
+                    if post['comments']:
+                        post['comments'] = json.loads(post['comments'])
+                    return post
+                return None
     except Exception as e:
         logger.error(f"Error getting post {post_id}: {e}")
         return None
@@ -171,14 +186,15 @@ def update_post(post_id, post_data):
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                # Convert comments to JSON string
+                comments = json.dumps(post_data['comments'])
+                
+                query = """
                     UPDATE posts
                     SET comments = %s
                     WHERE post_id = %s
-                """, (
-                    json.dumps(post_data['comments']),
-                    post_id
-                ))
+                """
+                cur.execute(query, (comments, post_id))
                 conn.commit()
                 return True
     except Exception as e:
@@ -188,23 +204,22 @@ def update_post(post_id, post_data):
 def get_all_posts():
     try:
         with get_db_connection() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            with conn.cursor() as cur:
                 cur.execute("SELECT * FROM posts")
-                posts = cur.fetchall()
-                result = []
-                for post in posts:
-                    post = dict(post)
-                    post['comments'] = json.loads(post['comments']) if post['comments'] else []
-                    result.append(post)
-                return result
+                rows = cur.fetchall()
+                columns = [desc[0] for desc in cur.description]
+                posts = []
+                for row in rows:
+                    post = dict(zip(columns, row))
+                    if post['comments']:
+                        post['comments'] = json.loads(post['comments'])
+                    posts.append(post)
+                return posts
     except Exception as e:
         logger.error(f"Error getting all posts: {e}")
         return []
 
-# --------------------------
-# Bot Configuration
-# --------------------------
-# Initialize database tables before anything else
+# Initialize logging and database
 load_dotenv()
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -212,6 +227,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 init_db()
+
+# ... rest of your bot code remains unchanged from the previous full version ...
+# [Keep all the rest of your bot code exactly as before]
 
 CATEGORIES = [
     ("🙏 Pray For Me", "PrayForMe"),
