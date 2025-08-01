@@ -1,4 +1,15 @@
 import os
+import sys
+import subprocess
+
+# Check if we're on Render and install dependencies
+if 'RENDER' in os.environ:
+    try:
+        subprocess.run(['apt-get', 'update'], check=True)
+        subprocess.run(['apt-get', 'install', '-y', 'build-essential', 'libpq-dev'], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error installing system dependencies: {e}")
+        sys.exit(1)
 import json
 import logging
 import threading
