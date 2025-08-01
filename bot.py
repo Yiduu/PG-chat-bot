@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import threading
+import sqlite3
 from pathlib import Path
 from dotenv import load_dotenv
 from telegram import (
@@ -15,211 +16,215 @@ from telegram.ext import (
 from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
 from flask import Flask, jsonify
-import pg8000
-from pg8000.dbapi import ProgrammingError
+import hashlib
 
 # --------------------------
-# Database Functions
+# Database Functions (SQLite)
 # --------------------------
-def get_db_connection():
-    conn = pg8000.connect(
-        database=os.getenv('DB_NAME'),
-        user=os.getenv('DB_USER'),
-        password=os.getenv('DB_PASSWORD'),
-        host=os.getenv('DB_HOST'),
-        port=int(os.getenv('DB_PORT'))
-    return conn
+DB_FILE = 'database.db'
 
 def init_db():
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                # Create users table
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        user_id TEXT PRIMARY KEY,
-                        anonymous_name TEXT,
-                        sex TEXT,
-                        followers JSONB,
-                        waiting_for_post BOOLEAN DEFAULT FALSE,
-                        selected_category TEXT,
-                        waiting_for_comment BOOLEAN DEFAULT FALSE,
-                        comment_post_id INTEGER,
-                        comment_idx INTEGER,
-                        reply_idx INTEGER,
-                        nested_idx INTEGER,
-                        awaiting_name BOOLEAN DEFAULT FALSE
-                    )
-                """)
-                
-                # Create posts table
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS posts (
-                        post_id SERIAL PRIMARY KEY,
-                        content TEXT,
-                        author_id TEXT REFERENCES users(user_id),
-                        author_name TEXT,
-                        category TEXT,
-                        channel_message_id INTEGER,
-                        comments JSONB,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                conn.commit()
-                logger.info("Database tables initialized successfully")
-    except ProgrammingError as e:
-        logger.error(f"Database already exists: {e}")
-    except Exception as e:
-        logger.error(f"Error initializing database: {e}")
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # Create users table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            anonymous_name TEXT,
+            sex TEXT,
+            followers TEXT,  -- JSON string
+            waiting_for_post BOOLEAN DEFAULT 0,
+            selected_category TEXT,
+            waiting_for_comment BOOLEAN DEFAULT 0,
+            comment_post_id INTEGER,
+            comment_idx INTEGER,
+            reply_idx INTEGER,
+            nested_idx INTEGER,
+            awaiting_name BOOLEAN DEFAULT 0
+        )
+    ''')
+    
+    # Create posts table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS posts (
+            post_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT,
+            author_id TEXT,
+            author_name TEXT,
+            category TEXT,
+            channel_message_id INTEGER,
+            comments TEXT,  -- JSON string
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    logging.info("Database initialized successfully")
 
 def get_user(user_id):
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-                row = cur.fetchone()
-                if row:
-                    columns = [desc[0] for desc in cur.description]
-                    return dict(zip(columns, row))
-                return None
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        row = c.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                "user_id": row[0],
+                "anonymous_name": row[1],
+                "sex": row[2],
+                "followers": json.loads(row[3]) if row[3] else [],
+                "waiting_for_post": bool(row[4]),
+                "selected_category": row[5],
+                "waiting_for_comment": bool(row[6]),
+                "comment_post_id": row[7],
+                "comment_idx": row[8],
+                "reply_idx": row[9],
+                "nested_idx": row[10],
+                "awaiting_name": bool(row[11])
+            }
+        return None
     except Exception as e:
-        logger.error(f"Error getting user {user_id}: {e}")
+        logging.error(f"Error getting user: {e}")
         return None
 
 def save_user(user_id, user_data):
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                # Convert followers to JSON string
-                followers = json.dumps(user_data.get('followers', []))
-                
-                # Prepare the query
-                query = """
-                    INSERT INTO users (
-                        user_id, anonymous_name, sex, followers, 
-                        waiting_for_post, selected_category, 
-                        waiting_for_comment, comment_post_id, 
-                        comment_idx, reply_idx, nested_idx, awaiting_name
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (user_id) DO UPDATE SET
-                        anonymous_name = EXCLUDED.anonymous_name,
-                        sex = EXCLUDED.sex,
-                        followers = EXCLUDED.followers,
-                        waiting_for_post = EXCLUDED.waiting_for_post,
-                        selected_category = EXCLUDED.selected_category,
-                        waiting_for_comment = EXCLUDED.waiting_for_comment,
-                        comment_post_id = EXCLUDED.comment_post_id,
-                        comment_idx = EXCLUDED.comment_idx,
-                        reply_idx = EXCLUDED.reply_idx,
-                        nested_idx = EXCLUDED.nested_idx,
-                        awaiting_name = EXCLUDED.awaiting_name
-                """
-                
-                # Execute with parameters
-                cur.execute(query, (
-                    user_id,
-                    user_data.get('anonymous_name'),
-                    user_data.get('sex'),
-                    followers,
-                    user_data.get('waiting_for_post', False),
-                    user_data.get('selected_category'),
-                    user_data.get('waiting_for_comment', False),
-                    user_data.get('comment_post_id'),
-                    user_data.get('comment_idx'),
-                    user_data.get('reply_idx'),
-                    user_data.get('nested_idx'),
-                    user_data.get('awaiting_name', False)
-                ))
-                conn.commit()
-                return True
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        
+        # Prepare followers as JSON string
+        followers = json.dumps(user_data.get('followers', []))
+        
+        c.execute('''
+            INSERT OR REPLACE INTO users (
+                user_id, anonymous_name, sex, followers, 
+                waiting_for_post, selected_category, 
+                waiting_for_comment, comment_post_id, 
+                comment_idx, reply_idx, nested_idx, awaiting_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            user_id,
+            user_data.get('anonymous_name'),
+            user_data.get('sex'),
+            followers,
+            int(user_data.get('waiting_for_post', False)),
+            user_data.get('selected_category'),
+            int(user_data.get('waiting_for_comment', False)),
+            user_data.get('comment_post_id'),
+            user_data.get('comment_idx'),
+            user_data.get('reply_idx'),
+            user_data.get('nested_idx'),
+            int(user_data.get('awaiting_name', False))
+        ))
+        conn.commit()
+        conn.close()
+        return True
     except Exception as e:
-        logger.error(f"Error saving user {user_id}: {e}")
+        logging.error(f"Error saving user: {e}")
         return False
 
 def create_post(post_data):
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                # Convert comments to JSON string
-                comments = json.dumps(post_data.get('comments', []))
-                
-                query = """
-                    INSERT INTO posts (
-                        content, author_id, author_name, category, 
-                        channel_message_id, comments
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING post_id
-                """
-                cur.execute(query, (
-                    post_data['content'],
-                    post_data['author_id'],
-                    post_data['author_name'],
-                    post_data['category'],
-                    post_data['channel_message_id'],
-                    comments
-                ))
-                post_id = cur.fetchone()[0]
-                conn.commit()
-                return post_id
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        
+        # Prepare comments as JSON string
+        comments = json.dumps(post_data.get('comments', []))
+        
+        c.execute('''
+            INSERT INTO posts (
+                content, author_id, author_name, category, 
+                channel_message_id, comments
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            post_data['content'],
+            post_data['author_id'],
+            post_data['author_name'],
+            post_data['category'],
+            post_data['channel_message_id'],
+            comments
+        ))
+        post_id = c.lastrowid
+        conn.commit()
+        conn.close()
+        return post_id
     except Exception as e:
-        logger.error(f"Error creating post: {e}")
+        logging.error(f"Error creating post: {e}")
         return None
 
 def get_post(post_id):
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-                row = cur.fetchone()
-                if row:
-                    columns = [desc[0] for desc in cur.description]
-                    post = dict(zip(columns, row))
-                    if post['comments']:
-                        post['comments'] = json.loads(post['comments'])
-                    return post
-                return None
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+        row = c.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                "post_id": row[0],
+                "content": row[1],
+                "author_id": row[2],
+                "author_name": row[3],
+                "category": row[4],
+                "channel_message_id": row[5],
+                "comments": json.loads(row[6]) if row[6] else [],
+                "created_at": row[7]
+            }
+        return None
     except Exception as e:
-        logger.error(f"Error getting post {post_id}: {e}")
+        logging.error(f"Error getting post: {e}")
         return None
 
 def update_post(post_id, post_data):
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                # Convert comments to JSON string
-                comments = json.dumps(post_data['comments'])
-                
-                query = """
-                    UPDATE posts
-                    SET comments = %s
-                    WHERE post_id = %s
-                """
-                cur.execute(query, (comments, post_id))
-                conn.commit()
-                return True
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        
+        # Prepare comments as JSON string
+        comments = json.dumps(post_data['comments'])
+        
+        c.execute('''
+            UPDATE posts
+            SET comments = ?
+            WHERE post_id = ?
+        ''', (comments, post_id))
+        conn.commit()
+        conn.close()
+        return True
     except Exception as e:
-        logger.error(f"Error updating post {post_id}: {e}")
+        logging.error(f"Error updating post: {e}")
         return False
 
 def get_all_posts():
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM posts")
-                rows = cur.fetchall()
-                columns = [desc[0] for desc in cur.description]
-                posts = []
-                for row in rows:
-                    post = dict(zip(columns, row))
-                    if post['comments']:
-                        post['comments'] = json.loads(post['comments'])
-                    posts.append(post)
-                return posts
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT * FROM posts")
+        rows = c.fetchall()
+        conn.close()
+        
+        posts = []
+        for row in rows:
+            posts.append({
+                "post_id": row[0],
+                "content": row[1],
+                "author_id": row[2],
+                "author_name": row[3],
+                "category": row[4],
+                "channel_message_id": row[5],
+                "comments": json.loads(row[6]) if row[6] else [],
+                "created_at": row[7]
+            })
+        return posts
     except Exception as e:
-        logger.error(f"Error getting all posts: {e}")
+        logging.error(f"Error getting all posts: {e}")
         return []
 
-# Initialize logging and database
+# Initialize database
 load_dotenv()
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -228,9 +233,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 init_db()
 
-# ... rest of your bot code remains unchanged from the previous full version ...
-# [Keep all the rest of your bot code exactly as before]
-
+# --------------------------
+# Bot Configuration
+# --------------------------
 CATEGORIES = [
     ("🙏 Pray For Me", "PrayForMe"),
     ("📖 Bible", "Bible"),
@@ -282,17 +287,12 @@ main_menu = ReplyKeyboardMarkup(
     one_time_keyboard=False
 )
 
-# --------------------------
-# Helper Functions
-# --------------------------
 def create_anonymous_name(user_id):
-    try:
-        uid_int = int(user_id)
-    except ValueError:
-        uid_int = abs(hash(user_id)) % 10000
     names = ["Hopeful", "Believer", "Forgiven", "ChildOfGod", "Redeemed",
              "Graceful", "Faithful", "Blessed", "Peaceful", "Joyful", "Loved"]
-    return f"{names[uid_int % len(names)]}{uid_int % 1000}"
+    # Create a stable hash from user_id
+    hash_val = int(hashlib.sha256(user_id.encode()).hexdigest(), 16) % (10**4)
+    return f"{names[hash_val % len(names)]}{hash_val}"
 
 def calculate_user_rating(user_id):
     posts = get_all_posts()
@@ -321,6 +321,7 @@ def format_stars(rating, max_stars=5):
     empty = '☆' * max(0, max_stars - rating)
     return full + empty
 
+# Helper function to count all comments and replies recursively
 def count_all_comments(comments):
     total = 0
     for comment in comments:
@@ -545,11 +546,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Show profile (from deep link)
         elif arg.startswith("profile_"):
             target_name = arg.split("_", 1)[1]
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT * FROM users")
             all_users = []
-            with get_db_connection() as conn:
-                with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                    cur.execute("SELECT * FROM users")
-                    all_users = [dict(row) for row in cur.fetchall()]
+            for row in c.fetchall():
+                all_users.append({
+                    "user_id": row[0],
+                    "anonymous_name": row[1],
+                    "sex": row[2],
+                    "followers": json.loads(row[3]) if row[3] else []
+                })
+            conn.close()
             
             for u in all_users:
                 if u.get('anonymous_name') == target_name:
