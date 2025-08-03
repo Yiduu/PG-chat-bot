@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 import threading
 from flask import Flask, jsonify 
 from contextlib import closing
@@ -761,7 +762,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=ForceReply(selective=True),
                 parse_mode=ParseMode.MARKDOWN_V2
             )
-    # FIXED REACTION HANDLING SECTION
+    
+    # REACTION HANDLING WITH ERROR FIXES
     elif query.data.startswith(("likecomment_", "dislikecomment_", "likereply_", "dislikereply_")):
         # Extract comment ID from callback data
         parts = query.data.split('_')
@@ -824,6 +826,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             # Update the message with new counts
             await query.message.edit_reply_markup(reply_markup=new_kb)
+        except BadRequest as e:
+            if "Message is not modified" in str(e):
+                # Silently ignore "not modified" errors
+                pass
+            else:
+                logger.warning(f"Could not update buttons: {e}")
         except Exception as e:
             logger.warning(f"Could not update buttons: {e}")
             
