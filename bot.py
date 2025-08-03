@@ -30,8 +30,8 @@ def init_db():
         c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
-            anonymous_name TEXT,
-            sex TEXT DEFAULT '❓',
+            anonymous_name TEXT DEFAULT 'Anonymous',
+            sex TEXT DEFAULT '👤',
             awaiting_name BOOLEAN DEFAULT 0,
             waiting_for_post BOOLEAN DEFAULT 0,
             waiting_for_comment BOOLEAN DEFAULT 0,
@@ -90,7 +90,7 @@ init_db()
 
 # Database helper functions
 def db_execute(query, params=(), fetch=False):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE)) as conn:
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute(query, params)
@@ -100,14 +100,14 @@ def db_execute(query, params=(), fetch=False):
         return c.lastrowid if c.lastrowid else True
 
 def db_fetch_one(query, params=()):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE)) as conn:
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute(query, params)
         return c.fetchone()
 
 def db_fetch_all(query, params=()):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(DB_FILE)) as conn:
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute(query, params)
@@ -177,13 +177,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__) 
 
 def create_anonymous_name(user_id):
-    try:
-        uid_int = int(user_id)
-    except ValueError:
-        uid_int = abs(hash(user_id)) % 10000
-    names = ["Hopeful", "Believer", "Forgiven", "ChildOfGod", "Redeemed",
-             "Graceful", "Faithful", "Blessed", "Peaceful", "Joyful", "Loved"]
-    return f"{names[uid_int % len(names)]}{uid_int % 1000}" 
+    return "Anonymous"
 
 def calculate_user_rating(user_id):
     # Count posts
@@ -297,11 +291,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for comment in comments:
                     commenter_id = comment['author_id']
                     commenter = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (commenter_id,))
-                    anon = commenter['anonymous_name'] if commenter else "Unknown"
-                    sex = commenter['sex'] if commenter else '❓'
+                    anon = commenter['anonymous_name'] if commenter else "Anonymous"
+                    sex = commenter['sex'] if commenter else '👤'
                     rating = calculate_user_rating(commenter_id)
                     stars = format_stars(rating)
-                    profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{anon}" 
 
                     # Get like/dislike counts
                     likes = db_fetch_one(
@@ -323,8 +316,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Create clean comment text
                     comment_text = escape_markdown(comment['content'], version=2)
                     
-                    # Create author text as clickable link
-                    author_text = f"[{escape_markdown(anon, version=2)}]({profile_url}) {sex} {stars}" 
+                    # Create author text
+                    author_text = f"{anon} {sex} {stars}" 
 
                     kb = InlineKeyboardMarkup([
                         [
@@ -351,11 +344,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for reply in replies:
                         reply_user_id = reply['author_id']
                         reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (reply_user_id,))
-                        reply_anon = reply_user['anonymous_name'] if reply_user else 'Unknown'
-                        reply_sex = reply_user['sex'] if reply_user else '❓'
+                        reply_anon = reply_user['anonymous_name'] if reply_user else 'Anonymous'
+                        reply_sex = reply_user['sex'] if reply_user else '👤'
                         rating_reply = calculate_user_rating(reply_user_id)
                         stars_reply = format_stars(rating_reply)
-                        profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_anon}"
                         safe_reply = escape_markdown(reply['content'], version=2)
                         
                         # Get like/dislike counts for this reply
@@ -387,7 +379,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # Send as threaded reply
                         reply_msg = await context.bot.send_message(
                             chat_id=update.effective_chat.id,
-                            text=f"{safe_reply}\n\n[{reply_anon}]({profile_url_reply}) {reply_sex} {stars_reply}",
+                            text=f"{safe_reply}\n\n{reply_anon} {reply_sex} {stars_reply}",
                             parse_mode=ParseMode.MARKDOWN_V2,
                             reply_to_message_id=msg.message_id,
                             reply_markup=reply_kb
@@ -418,40 +410,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return 
 
-        # Show profile (from deep link)
-        elif arg.startswith("profile_"):
-            target_name = arg.split("_", 1)[1]
-            user_data = db_fetch_one("SELECT * FROM users WHERE anonymous_name = ?", (target_name,))
-            if user_data:
-                followers = db_fetch_all(
-                    "SELECT * FROM followers WHERE followed_id = ?",
-                    (user_data['user_id'],)
-                )
-                rating = calculate_user_rating(user_data['user_id'])
-                stars = format_stars(rating)
-                current = user_id
-                btn = []
-                if user_data['user_id'] != current:
-                    is_following = db_fetch_one(
-                        "SELECT * FROM followers WHERE follower_id = ? AND followed_id = ?",
-                        (current, user_data['user_id'])
-                    )
-                    if is_following:
-                        btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
-                    else:
-                        btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
-                await update.message.reply_text(
-                    f"👤 *{target_name}* 🎖 Verified\n"
-                    f"📌 Sex: {user_data['sex']}\n"
-                    f"👥 Followers: {len(followers)}\n"
-                    f"🎖 Batch: User\n"
-                    f"⭐️ Contributions: {rating} {stars}\n"
-                    f"〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
-                    f"_Use /menu to return_",
-                    reply_markup=InlineKeyboardMarkup(btn) if btn else None,
-                    parse_mode=ParseMode.MARKDOWN)
-                return 
-
     # Default welcome menu if no deep link argument
     keyboard = [
         [
@@ -471,7 +429,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌟✝️ *እንኳን ወደ Christian Chat Bot በሰላም መጡ* ✝️🌟\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ �ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN)
     
@@ -751,11 +709,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     commenter_id = comment['author_id']
                     commenter = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (commenter_id,))
-                    anon = commenter['anonymous_name'] if commenter else "Unknown"
-                    sex = commenter['sex'] if commenter else '❓'
+                    anon = commenter['anonymous_name'] if commenter else "Anonymous"
+                    sex = commenter['sex'] if commenter else '👤'
                     rating = calculate_user_rating(commenter_id)
                     stars = format_stars(rating)
-                    profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{anon}"
     
                     likes = db_fetch_one(
                         "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
@@ -777,8 +734,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     comment_text = comment['content']
                     safe_comment = escape_markdown(comment_text, version=2)
     
-                    # Build clean comment message with clickable name
-                    comment_msg = f"{safe_comment}\n\n[{anon}]({profile_url}) {sex} {stars}"
+                    # Build clean comment message
+                    comment_msg = f"{safe_comment}\n\n{anon} {sex} {stars}"
     
                     # Build keyboard
                     kb = InlineKeyboardMarkup([[
@@ -805,11 +762,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for reply in replies:
                         reply_user_id = reply['author_id']
                         reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (reply_user_id,))
-                        reply_anon = reply_user['anonymous_name'] if reply_user else 'Unknown'
-                        reply_sex = reply_user['sex'] if reply_user else '❓'
+                        reply_anon = reply_user['anonymous_name'] if reply_user else 'Anonymous'
+                        reply_sex = reply_user['sex'] if reply_user else '👤'
                         rating_reply = calculate_user_rating(reply_user_id)
                         stars_reply = format_stars(rating_reply)
-                        profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_anon}"
                         safe_reply = escape_markdown(reply['content'], version=2)
                         
                         # Get like/dislike counts for this reply
@@ -829,8 +785,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             (reply['comment_id'],)
                         ) else 0
                         
-                        # Create reply author text as clickable link
-                        reply_author_text = f"[{reply_anon}]({profile_url_reply}) {reply_sex} {stars_reply}"
+                        # Create reply author text
+                        reply_author_text = f"{reply_anon} {reply_sex} {stars_reply}"
                         
                         # Create keyboard for the reply
                         reply_kb = InlineKeyboardMarkup([
