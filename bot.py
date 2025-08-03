@@ -1181,7 +1181,7 @@ if __name__ == "__main__":
     ).start()
     
     # Start Telegram bot in main thread
-    main()    logging.info("Database initialized successfully")
+main()    logging.info("Database initialized successfully")
 
 def get_user(user_id):
     try:
