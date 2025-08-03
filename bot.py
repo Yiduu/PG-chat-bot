@@ -34,7 +34,7 @@ def init_db():
             anonymous_name TEXT DEFAULT 'Anonymous',
             sex TEXT DEFAULT '👤',
             awaiting_name BOOLEAN DEFAULT 0,
-            waiting极for_post BOOLEAN DEFAULT 0,
+            waiting_for_post BOOLEAN DEFAULT 0,
             waiting_for_comment BOOLEAN DEFAULT 0,
             selected_category TEXT,
             comment_post_id INTEGER,
@@ -377,7 +377,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         ) else 0
                         
                         # Create keyboard for the reply
-                        reply_k极 = InlineKeyboardMarkup([
+                        reply_kb = InlineKeyboardMarkup([
                             [
                                 InlineKeyboardButton(f"👍 {reply_likes}", callback_data=f"likereply_{reply['comment_id']}"),
                                 InlineKeyboardButton(f"👎 {reply_dislikes}", callback_data=f"dislikereply_{reply['comment_id']}"),
@@ -618,7 +618,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         settings_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
             [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
-            [InlineKeyboardButton("📱 Main Menu", callback_data='极menu')]
+            [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
         ])
         await query.message.reply_text(
             "⚙️ *Settings*\nChoose what you want to update:",
@@ -682,7 +682,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except sqlite3.IntegrityError:
                 pass  # Already following
         else:
-            db_execute(
+            db_exec极(
                 "DELETE FROM followers WHERE follower_id = ? AND followed_id = ?",
                 (user_id, target_uid)
             )
@@ -735,7 +735,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=query.message.chat_id,
                 text=header_text,
                 parse_mode=ParseMode.MARKDOWN_V2,
-                reply_markup=InlineKeyboardMarkup([pagination_buttons]) if pagination_buttons else None
+                reply_markup=InlineKeyboard极arkup([pagination_buttons]) if pagination_buttons else None
             )
             context.user_data['comment_header_id'] = header_msg.message_id
             
@@ -1033,7 +1033,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user and user['waiting_for_post']:
         category = user['selected_category']
         db_execute(
-            "UPDATE users SET waiting_for_post = 0, selected_category = NULL WHERE user_id = ?",
+            "UPDATE users SET waiting_for_post = 0, selected_category = NULL WHERE user极_id = ?",
             (user_id,)
         )
         anon = user['anonymous_name']
@@ -1171,7 +1171,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (user_id,)
         )
         
-        await update.message.reply_text("✅ Your comment has been added!", reply_markup极=main_menu)
+        await update.message.reply_text("✅ Your comment has been added!", reply_markup=main_menu)
         return
 
     # Handle profile name updates
@@ -1262,7 +1262,7 @@ async def error_handler(update, context):
 from telegram import BotCommand 
 
 async def set_bot_commands(app):
-    await app.b极.bot.set_my_commands([
+    await app.bot.set_my_commands([
         BotCommand("start", "Start the bot and open the menu"),
         BotCommand("menu", "📱 Open main menu"),
         BotCommand("profile", "View your profile"),
