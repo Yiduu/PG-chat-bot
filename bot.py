@@ -207,7 +207,7 @@ def format_stars(rating, max_stars=5):
     empty = '☆' * max(0, max_stars - rating)
     return full + empty
 
-# FIXED: Properly count all comments for a post
+# Helper function to count all comments for a post
 def count_all_comments(post_id):
     result = db_fetch_one("SELECT COUNT(*) FROM comments WHERE post_id = ?", (post_id,))
     return result[0] if result else 0
@@ -496,6 +496,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu
     ) 
 
+# ENHANCED PROFILE UI
 async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (user_id,))
     if not user:
@@ -510,24 +511,53 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         "SELECT * FROM followers WHERE followed_id = ?",
         (user_id,)
     )
+    follower_count = len(followers)
+    
+    # Get post count
+    post_count = db_fetch_one(
+        "SELECT COUNT(*) FROM posts WHERE author_id = ?",
+        (user_id,)
+    )[0] if db_fetch_one(
+        "SELECT COUNT(*) FROM posts WHERE author_id = ?",
+        (user_id,)
+    ) else 0
+    
+    # Get comment count
+    comment_count = db_fetch_one(
+        "SELECT COUNT(*) FROM comments WHERE author_id = ?",
+        (user_id,)
+    )[0] if db_fetch_one(
+        "SELECT COUNT(*) FROM comments WHERE author_id = ?",
+        (user_id,)
+    ) else 0
+    
+    # Enhanced profile UI
+    profile_text = (
+        f"✝️ *Christian Chat Profile* ✝️\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔹 *Anonymous Name:* {anon}\n"
+        f"🔹 *Gender:* {user.get('sex', '❓')}\n"
+        f"🔹 *Rating:* {stars} ({rating} points)\n\n"
+        f"📊 *Activity Stats*\n"
+        f"├─ *Posts Created:* {post_count}\n"
+        f"├─ *Comments Made:* {comment_count}\n"
+        f"└─ *Followers:* {follower_count}\n\n"
+        f"🛠 *Profile Management*\n"
+        f"_Use buttons below to edit your profile_"
+    )
+    
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
-        [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
-        [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
+        [InlineKeyboardButton("✏️ Change Name", callback_data='edit_name'),
+         InlineKeyboardButton("⚧️ Change Gender", callback_data='edit_sex')],
+        [InlineKeyboardButton("📱 Return to Main Menu", callback_data='menu')]
     ])
+    
     await context.bot.send_message(
         chat_id=chat_id,
-        text=(
-            f"👤 *{anon}* 🎖 Verified\n"
-            f"📌 Sex: {user['sex']}\n"
-            f"⭐️ Rating: {rating} {stars}\n"
-            f"🎖 Batch: User\n"
-            f"👥 Followers: {len(followers)}\n"
-            f"〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
-            f"_Use /menu to return_"
-        ),
+        text=profile_text,
         reply_markup=kb,
-        parse_mode=ParseMode.MARKDOWN) 
+        parse_mode=ParseMode.MARKDOWN
+    )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -606,7 +636,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("👨 Male", callback_data='sex_male')],
             [InlineKeyboardButton("👩 Female", callback_data='sex_female')]
         ]
-        await query.message.reply_text("⚧️ Select your sex:", reply_markup=InlineKeyboardMarkup(btns)) 
+        await query.message.reply_text("⚧️ Select your gender:", reply_markup=InlineKeyboardMarkup(btns)) 
 
     elif query.data.startswith('sex_'):
         sex = '👨' if 'male' in query.data else '👩'
@@ -614,7 +644,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE users SET sex = ? WHERE user_id = ?",
             (sex, user_id)
         )
-        await query.message.reply_text("✅ Sex updated!")
+        await query.message.reply_text("✅ Gender updated!")
         await send_updated_profile(user_id, query.message.chat_id, context) 
 
     elif query.data.startswith(('follow_', 'unfollow_')):
@@ -1067,7 +1097,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (post_id, parent_comment_id, user_id, content, comment_type, file_id)
         )
         
-        # FIXED: Update comment count in channel
+        # Update comment count in channel
         total_comments = count_all_comments(post_id)
         try:
             # Get the channel message ID for this post
@@ -1177,4 +1207,4 @@ if __name__ == "__main__":
     ).start()
     
     # Start Telegram bot in main thread
-    main()
+    main()                        
