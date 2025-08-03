@@ -329,7 +329,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌟✝️ *እንኳን ወደ Christian Chat Bot በሰላም መጡ* ✝️🌟\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጁ :",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN)
     
@@ -363,13 +363,11 @@ async def show_comments_menu(update, context, post_id, page=1):
     )
 
 async def show_comments_page(update, context, post_id, page=1):
-    # Get chat ID from update or callback query
-    if hasattr(update, 'message'):
-        chat_id = update.message.chat_id
-    elif hasattr(update, 'callback_query') and update.callback_query.message:
-        chat_id = update.callback_query.message.chat.id
-    else:
-        chat_id = update.effective_chat.id
+    # Get chat ID from effective_chat
+    if update.effective_chat is None:
+        logger.error("Cannot determine chat from update: %s", update)
+        return
+    chat_id = update.effective_chat.id
         
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
     if not post:
