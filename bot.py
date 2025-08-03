@@ -46,7 +46,7 @@ def init_db():
         c.execute('''
         CREATE TABLE IF NOT EXISTS followers (
             follower_id TEXT,
-            followed_id TEXT,
+            followed极_id TEXT,
             PRIMARY KEY (follower_id, followed_id)
         )''')
         
@@ -172,7 +172,7 @@ main_menu = ReplyKeyboardMarkup(
 ) 
 
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(level极name)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__) 
@@ -372,7 +372,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
                             (reply['comment_id'],)
                         )[0] if db_fetch_one(
-                            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
+                            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = '极dislike'",
                             (reply['comment_id'],)
                         ) else 0
                         
@@ -472,7 +472,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌟✝️ *እንኳን ወደ Christian Chat Bot በሰላም መጡ* ✝️🌟\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጁ :",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN)
     
@@ -682,7 +682,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except sqlite3.IntegrityError:
                 pass  # Already following
         else:
-            db_exec极(
+            db_execute(
                 "DELETE FROM followers WHERE follower_id = ? AND followed_id = ?",
                 (user_id, target_uid)
             )
@@ -735,7 +735,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=query.message.chat_id,
                 text=header_text,
                 parse_mode=ParseMode.MARKDOWN_V2,
-                reply_markup=InlineKeyboard极arkup([pagination_buttons]) if pagination_buttons else None
+                reply_markup=InlineKeyboardMarkup([pagination_buttons]) if pagination_buttons else None
             )
             context.user_data['comment_header_id'] = header_msg.message_id
             
@@ -1033,7 +1033,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user and user['waiting_for_post']:
         category = user['selected_category']
         db_execute(
-            "UPDATE users SET waiting_for_post = 0, selected_category = NULL WHERE user极_id = ?",
+            "UPDATE users SET waiting_for_post = 0, selected_category = NULL WHERE user_id = ?",  # FIXED TYPO HERE
             (user_id,)
         )
         anon = user['anonymous_name']
@@ -1250,7 +1250,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "ℹ️ About Us":
         about_text = (
             "👤 Creator: Yididiya Tamiru\n\n"
-            "🔗 Telegram: @YIDIDIYATAMIRUU\n"
+            "🔗 Telegram: @极YIDIDIYATAMIRUU\n"
             "🙏 This bot helps you share your thoughts anonymously with the Christian community."
         )
         await update.message.reply_text(about_text, parse_mode=ParseMode.MARKDOWN)
