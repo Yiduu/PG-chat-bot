@@ -363,9 +363,17 @@ async def show_comments_menu(update, context, post_id, page=1):
     )
 
 async def show_comments_page(update, context, post_id, page=1):
+    # Get chat ID from update or callback query
+    if hasattr(update, 'message'):
+        chat_id = update.message.chat_id
+    elif hasattr(update, 'callback_query') and update.callback_query.message:
+        chat_id = update.callback_query.message.chat.id
+    else:
+        chat_id = update.effective_chat.id
+        
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
     if not post:
-        await update.message.reply_text("❌ Post not found.", reply_markup=main_menu)
+        await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=main_menu)
         return 
 
     # Pagination settings
@@ -387,17 +395,22 @@ async def show_comments_page(update, context, post_id, page=1):
     header = f"{escape_markdown(post_text, version=2)}\n\n" 
 
     if not comments and page == 1:
-        await update.message.reply_text(header + "_No comments yet._", 
-                                      parse_mode=ParseMode.MARKDOWN_V2,
-                                      reply_markup=main_menu)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=header + "_No comments yet._", 
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=main_menu
+        )
         return 
 
-    await update.message.reply_text(header, 
-                                  parse_mode=ParseMode.MARKDOWN_V2,
-                                  reply_markup=main_menu) 
-
-    # Store the message ID of the header message for threading
-    context.user_data['comment_header_id'] = update.message.message_id + 1
+    # Send header message
+    header_msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=header, 
+        parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=main_menu
+    )
+    header_message_id = header_msg.message_id
     
     for comment in comments:
         commenter_id = comment['author_id']
@@ -441,11 +454,11 @@ async def show_comments_page(update, context, post_id, page=1):
 
         # Send comment as a reply to the header message for proper threading
         msg = await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             text=f"{comment_text}\n\n{author_text}",
             reply_markup=kb,
             parse_mode=ParseMode.MARKDOWN_V2,
-            reply_to_message_id=context.user_data.get('comment_header_id')
+            reply_to_message_id=header_message_id
         )
         
         # Display replies to this comment as threaded replies
@@ -490,8 +503,8 @@ async def show_comments_page(update, context, post_id, page=1):
             ])
             
             # Send as threaded reply
-            reply_msg = await context.bot.send_message(
-                chat_id=update.effective_chat.id,
+            await context.bot.send_message(
+                chat_id=chat_id,
                 text=f"{safe_reply}\n\n[{reply_display_name}]({profile_url_reply}) {reply_display_sex} {stars_reply}",
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_to_message_id=msg.message_id,
@@ -509,10 +522,10 @@ async def show_comments_page(update, context, post_id, page=1):
     if pagination_buttons:
         pagination_markup = InlineKeyboardMarkup([pagination_buttons])
         await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             text=f"📄 Page {page}/{total_pages}",
             reply_markup=pagination_markup,
-            reply_to_message_id=context.user_data.get('comment_header_id')
+            reply_to_message_id=header_message_id
         )
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -650,10 +663,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )    
 
     elif query.data == 'profile':
-        await send_updated_profile(user_id, query.message.chat_id, context) 
+        await send_updated_profile(user_id, query.message.chat.id, context) 
 
     elif query.data == 'leaderboard':
-        await show_leaderboard(query, context)
+        await show_leaderboard(update, context)  # Pass update instead of query
 
     elif query.data == 'settings':
         kb = InlineKeyboardMarkup([
@@ -706,7 +719,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (sex, user_id)
         )
         await query.message.reply_text("✅ Sex updated!")
-        await send_updated_profile(user_id, query.message.chat_id, context) 
+        await send_updated_profile(user_id, query.message.chat.id, context) 
 
     elif query.data.startswith(('follow_', 'unfollow_')):
         target_uid = query.data.split('_', 1)[1]
@@ -724,14 +737,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 (user_id, target_uid)
             )
         await query.message.reply_text("✅ Successfully updated!")
-        await send_updated_profile(target_uid, query.message.chat_id, context)
+        await send_updated_profile(target_uid, query.message.chat.id, context)
     elif query.data.startswith('viewcomments_'):
         try:
             parts = query.data.split('_')
             if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
                 post_id = int(parts[1])
                 page = int(parts[2])
-                await show_comments_page(query, context, post_id, page)
+                await show_comments_page(update, context, post_id, page)  # Pass update instead of query
         except Exception as e:
             logger.error(f"ViewComments error: {e}")
             await query.answer("❌ Error loading comments")
