@@ -17,6 +17,7 @@ import threading
 from flask import Flask, jsonify 
 from contextlib import closing
 from datetime import datetime
+import html
 
 # Initialize database
 DB_FILE = 'bot.db'
@@ -33,7 +34,7 @@ def init_db():
             anonymous_name TEXT DEFAULT 'Anonymous',
             sex TEXT DEFAULT '👤',
             awaiting_name BOOLEAN DEFAULT 0,
-            waiting_for_post BOOLEAN DEFAULT 0,
+            waiting极for_post BOOLEAN DEFAULT 0,
             waiting_for_comment BOOLEAN DEFAULT 0,
             selected_category TEXT,
             comment_post_id INTEGER,
@@ -210,6 +211,12 @@ def count_all_comments(post_id):
     result = db_fetch_one("SELECT COUNT(*) FROM comments WHERE post_id = ?", (post_id,))
     return result[0] if result else 0
 
+# Custom escape function for MarkdownV2
+def safe_markdown(text):
+    """Escape all special characters for MarkdownV2"""
+    escape_chars = r'\_*[]()~`>#+-=|{}.!'
+    return ''.join(f'\\{char}' if char in escape_chars else char for char in text)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     
@@ -315,10 +322,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ) else 0
                     
                     # Create clean comment text
-                    comment_text = escape_markdown(comment['content'], version=2)
+                    comment_text = safe_markdown(comment['content'])
                     
                     # Create author text as clickable link
-                    author_text = f"[{escape_markdown(anon, version=2)}]({profile_url}) {sex} {stars}" 
+                    author_text = f"[{safe_markdown(anon)}]({profile_url}) {sex} {stars}" 
 
                     kb = InlineKeyboardMarkup([
                         [
@@ -350,7 +357,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         rating_reply = calculate_user_rating(reply_user_id)
                         stars_reply = format_stars(rating_reply)
                         profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_user_id}"
-                        safe_reply = escape_markdown(reply['content'], version=2)
+                        safe_reply = safe_markdown(reply['content'])
                         
                         # Get like/dislike counts for this reply
                         reply_likes = db_fetch_one(
@@ -370,7 +377,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         ) else 0
                         
                         # Create keyboard for the reply
-                        reply_kb = InlineKeyboardMarkup([
+                        reply_k极 = InlineKeyboardMarkup([
                             [
                                 InlineKeyboardButton(f"👍 {reply_likes}", callback_data=f"likereply_{reply['comment_id']}"),
                                 InlineKeyboardButton(f"👎 {reply_dislikes}", callback_data=f"dislikereply_{reply['comment_id']}"),
@@ -611,7 +618,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         settings_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
             [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
-            [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
+            [InlineKeyboardButton("📱 Main Menu", callback_data='极menu')]
         ])
         await query.message.reply_text(
             "⚙️ *Settings*\nChoose what you want to update:",
@@ -767,12 +774,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         (comment['comment_id'],)
                     ) else 0
     
-                    # Get comment text safely
-                    comment_text = comment['content']
-                    safe_comment = escape_markdown(comment_text, version=2)
+                    # Get comment text safely with custom escape
+                    comment_text = safe_markdown(comment['content'])
     
                     # Build clean comment message with clickable name
-                    comment_msg = f"{safe_comment}\n\n[{anon}]({profile_url}) {sex} {stars}"
+                    comment_msg = f"{comment_text}\n\n[{safe_markdown(anon)}]({profile_url}) {sex} {stars}"
     
                     # Build keyboard
                     kb = InlineKeyboardMarkup([[
@@ -804,7 +810,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         rating_reply = calculate_user_rating(reply_user_id)
                         stars_reply = format_stars(rating_reply)
                         profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_user_id}"
-                        safe_reply = escape_markdown(reply['content'], version=2)
+                        safe_reply = safe_markdown(reply['content'])
                         
                         # Get like/dislike counts for this reply
                         reply_likes = db_fetch_one(
@@ -824,7 +830,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         ) else 0
                         
                         # Create reply author text as clickable link
-                        reply_author_text = f"[{reply_anon}]({profile_url_reply}) {reply_sex} {stars_reply}"
+                        reply_author_text = f"[{safe_markdown(reply_anon)}]({profile_url_reply}) {reply_sex} {stars_reply}"
                         
                         # Create keyboard for the reply
                         reply_kb = InlineKeyboardMarkup([
@@ -973,7 +979,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(parts) == 3:
             post_id = int(parts[1])
             comment_id = int(parts[2])
-            db_exec极(
+            db_execute(
                 "UPDATE users SET waiting_for_comment = 1, comment_post_id = ?, comment_idx = ? WHERE user_id = ?",
                 (post_id, comment_id, user_id)
             )
@@ -987,7 +993,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 preview_text = f"💬 *Replying to:*\n{escape_markdown(content, version=2)}"
             
             await query.message.reply_text(
-                f"{preview极text}\n\n↩️ Please type your *reply*:",
+                f"{preview_text}\n\n↩️ Please type your *reply*:",
                 reply_markup=ForceReply(selective=True),
                 parse_mode=ParseMode.MARKDOWN_V2
             )
@@ -1084,7 +1090,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         chat_id=CHANNEL_ID,
                         photo=file_id,
                         caption=caption_text,
-                        parse_mode=ParseMode极MARKDOWN,
+                        parse_mode=ParseMode.MARKDOWN,
                         reply_markup=kb)
                 else:  # voice
                     msg = await context.bot.send_voice(
@@ -1165,7 +1171,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (user_id,)
         )
         
-        await update.message.reply_text("✅ Your comment has been added!", reply_markup=main_menu)
+        await update.message.reply_text("✅ Your comment has been added!", reply_markup极=main_menu)
         return
 
     # Handle profile name updates
@@ -1200,7 +1206,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         top_users = db_fetch_all('''
             SELECT u.user_id, u.anonymous_name, 
                    (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id) +
-                   (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user极id) AS rating
+                   (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) AS rating
             FROM users u
             ORDER BY rating DESC
             LIMIT 10
@@ -1256,7 +1262,7 @@ async def error_handler(update, context):
 from telegram import BotCommand 
 
 async def set_bot_commands(app):
-    await app.bot.set_my_commands([
+    await app.b极.bot.set_my_commands([
         BotCommand("start", "Start the bot and open the menu"),
         BotCommand("menu", "📱 Open main menu"),
         BotCommand("profile", "View your profile"),
