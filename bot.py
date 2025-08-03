@@ -420,21 +420,17 @@ async def show_comments_page(update, context, post_id, page=1):
         profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{display_name}" 
 
         # Get like/dislike counts
-        likes = db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
+        likes_row = db_fetch_one(
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
             (comment['comment_id'],)
-        )[0] if db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
-            (comment['comment_id'],)
-        ) else 0
+        )
+        likes = likes_row['cnt'] if likes_row and 'cnt' in likes_row else 0
         
-        dislikes = db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
+        dislikes_row = db_fetch_one(
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
             (comment['comment_id'],)
-        )[0] if db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-            (comment['comment_id'],)
-        ) else 0
+        )
+        dislikes = dislikes_row['cnt'] if dislikes_row and 'cnt' in dislikes_row else 0
         
         # Create clean comment text
         comment_text = escape_markdown(comment['content'], version=2)
@@ -475,21 +471,17 @@ async def show_comments_page(update, context, post_id, page=1):
             safe_reply = escape_markdown(reply['content'], version=2)
             
             # Get like/dislike counts for this reply
-            reply_likes = db_fetch_one(
-                "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
+            reply_likes_row = db_fetch_one(
+                "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
                 (reply['comment_id'],)
-            )[0] if db_fetch_one(
-                "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
-                (reply['comment_id'],)
-            ) else 0
+            )
+            reply_likes = reply_likes_row['cnt'] if reply_likes_row and 'cnt' in reply_likes_row else 0
             
-            reply_dislikes = db_fetch_one(
-                "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
+            reply_dislikes_row = db_fetch_one(
+                "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
                 (reply['comment_id'],)
-            )[0] if db_fetch_one(
-                "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-                (reply['comment_id'],)
-            ) else 0
+            )
+            reply_dislikes = reply_dislikes_row['cnt'] if reply_dislikes_row and 'cnt' in reply_dislikes_row else 0
             
             # Create keyboard for the reply
             reply_kb = InlineKeyboardMarkup([
@@ -769,9 +761,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=ForceReply(selective=True),
                 parse_mode=ParseMode.MARKDOWN_V2
             )
-    elif query.data.startswith(("likecomment_", "dislikecomment_")):
-        comment_id = int(query.data.split('_', 1)[1])
-        reaction_type = 'like' if 'like' in query.data else 'dislike'
+    elif query.data.startswith(("likecomment_", "dislikecomment_", "likereply_", "dislikereply_")):
+        # Extract comment ID from callback data
+        parts = query.data.split('_')
+        comment_id = int(parts[1])
+        reaction_type = 'like' if 'like' in parts[0] else 'dislike'
         
         # Remove existing reaction
         db_execute(
@@ -786,84 +780,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Get updated counts
-        likes = db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
+        likes_row = db_fetch_one(
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
             (comment_id,)
-        )[0] if db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
-            (comment_id,)
-        ) else 0
+        )
+        likes = likes_row['cnt'] if likes_row and 'cnt' in likes_row else 0
         
-        dislikes = db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
+        dislikes_row = db_fetch_one(
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
             (comment_id,)
-        )[0] if db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-            (comment_id,)
-        ) else 0
+        )
+        dislikes = dislikes_row['cnt'] if dislikes_row and 'cnt' in dislikes_row else 0
         
         # Build new keyboard with updated counts
-        new_kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(f"👍 {likes}", callback_data=f"likecomment_{comment_id}"),
-                InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikecomment_{comment_id}"),
-                InlineKeyboardButton("Reply", callback_data=f"reply_{comment_id}")
-            ]
-        ]) 
+        if 'reply' in parts[0]:  # For replies
+            new_kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(f"👍 {likes}", callback_data=f"likereply_{comment_id}"),
+                    InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikereply_{comment_id}"),
+                    InlineKeyboardButton("Reply", callback_data=f"replytoreply_{comment_id}")
+                ]
+            ])
+        else:  # For top-level comments
+            new_kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(f"👍 {likes}", callback_data=f"likecomment_{comment_id}"),
+                    InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikecomment_{comment_id}"),
+                    InlineKeyboardButton("Reply", callback_data=f"reply_{comment_id}")
+                ]
+            ]) 
 
         try:
             # Update the message with new counts
             await query.message.edit_reply_markup(reply_markup=new_kb)
         except Exception as e:
             logger.warning(f"Could not update buttons: {e}")
-            
-    elif query.data.startswith(("likereply_", "dislikereply_")):
-        comment_id = int(query.data.split('_', 1)[1])
-        reaction_type = 'like' if 'like' in query.data else 'dislike'
-        
-        # Remove existing reaction
-        db_execute(
-            "DELETE FROM reactions WHERE comment_id = ? AND user_id = ?",
-            (comment_id, user_id)
-        )
-        
-        # Add new reaction
-        db_execute(
-            "INSERT INTO reactions (comment_id, user_id, type) VALUES (?, ?, ?)",
-            (comment_id, user_id, reaction_type)
-        )
-        
-        # Get updated counts
-        likes = db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
-            (comment_id,)
-        )[0] if db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
-            (comment_id,)
-        ) else 0
-        
-        dislikes = db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-            (comment_id,)
-        )[0] if db_fetch_one(
-            "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-            (comment_id,)
-        ) else 0
-        
-        # Build new keyboard with updated counts
-        new_kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(f"👍 {likes}", callback_data=f"likereply_{comment_id}"),
-                InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikereply_{comment_id}"),
-                InlineKeyboardButton("Reply", callback_data=f"replytoreply_{comment_id}")
-            ]
-        ])
-        
-        try:
-            # Update the message with new counts
-            await query.message.edit_reply_markup(reply_markup=new_kb)
-        except Exception as e:
-            logger.warning(f"Could not update reply buttons: {e}")
             
     elif query.data.startswith("reply_"):
         parts = query.data.split("_")
@@ -1011,7 +962,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = None
         
         # Determine if this is a reply to a comment or reply
-        if user['comment_idx']:
+        if user['reply_idx'] is not None:   # This is set when replying to a reply
+            parent_comment_id = user['reply_idx']
+        elif user['comment_idx'] is not None:   # This is set when replying to a top-level comment
             parent_comment_id = user['comment_idx']
         
         # Determine content type
