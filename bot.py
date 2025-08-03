@@ -83,6 +83,7 @@ def init_db():
         )''')
         
         conn.commit()
+    logging.info("Database initialized successfully")
 
 # Initialize database on startup
 init_db()
@@ -206,16 +207,10 @@ def format_stars(rating, max_stars=5):
     empty = '☆' * max(0, max_stars - rating)
     return full + empty
 
-# Helper function to count all comments for a post
+# FIXED: Properly count all comments for a post
 def count_all_comments(post_id):
-    count = db_fetch_one(
-        "SELECT COUNT(*) FROM comments WHERE post_id = ?",
-        (post_id,)
-    )[0] if db_fetch_one(
-        "SELECT COUNT(*) FROM comments WHERE post_id = ?",
-        (post_id,)
-    ) else 0
-    return count
+    result = db_fetch_one("SELECT COUNT(*) FROM comments WHERE post_id = ?", (post_id,))
+    return result[0] if result else 0
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
@@ -344,9 +339,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reply_to_message_id=context.user_data.get('comment_header_id')
                     )
                     
-                    # Store the message ID for this comment for future replies
-                    # (We don't store message IDs in DB to avoid complexity)
-                    
                     # Display replies to this comment as threaded replies
                     replies = db_fetch_all(
                         "SELECT * FROM comments WHERE parent_comment_id = ?",
@@ -391,7 +383,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # Send as threaded reply
                         reply_msg = await context.bot.send_message(
                             chat_id=update.effective_chat.id,
-                            text=f"{safe_reply}\n\n{reply_author_text}",
+                            text=f"{safe_reply}\n\n[{reply_anon}]({profile_url_reply}) {reply_sex} {stars_reply}",
                             parse_mode=ParseMode.MARKDOWN_V2,
                             reply_to_message_id=msg.message_id,
                             reply_markup=reply_kb
@@ -1075,16 +1067,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (post_id, parent_comment_id, user_id, content, comment_type, file_id)
         )
         
-        # Update comment count in channel
+        # FIXED: Update comment count in channel
         total_comments = count_all_comments(post_id)
         try:
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"💬 Comments ({total_comments})", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
-            ])
-            await context.bot.edit_message_reply_markup(
-                chat_id=CHANNEL_ID,
-                message_id=db_fetch_one("SELECT channel_message_id FROM posts WHERE post_id = ?", (post_id,))['channel_message_id'],
-                reply_markup=keyboard)
+            # Get the channel message ID for this post
+            post_data = db_fetch_one("SELECT channel_message_id FROM posts WHERE post_id = ?", (post_id,))
+            if post_data and post_data['channel_message_id']:
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f"💬 Comments ({total_comments})", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
+                ])
+                await context.bot.edit_message_reply_markup(
+                    chat_id=CHANNEL_ID,
+                    message_id=post_data['channel_message_id'],
+                    reply_markup=keyboard
+                )
         except Exception as e:
             logger.error(f"Failed to update comment count: {e}")
         
