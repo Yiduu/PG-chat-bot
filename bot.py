@@ -761,6 +761,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=ForceReply(selective=True),
                 parse_mode=ParseMode.MARKDOWN_V2
             )
+    # FIXED REACTION HANDLING SECTION
     elif query.data.startswith(("likecomment_", "dislikecomment_", "likereply_", "dislikereply_")):
         # Extract comment ID from callback data
         parts = query.data.split('_')
@@ -792,24 +793,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         dislikes = dislikes_row['cnt'] if dislikes_row and 'cnt' in dislikes_row else 0
         
-        # Build new keyboard with updated counts
-        if 'reply' in parts[0]:  # For replies
+        # Get comment to determine if it's top-level or reply
+        comment = db_fetch_one("SELECT post_id, parent_comment_id FROM comments WHERE comment_id = ?", (comment_id,))
+        if not comment:
+            await query.answer("Comment not found")
+            return
+        
+        post_id = comment['post_id']
+        parent_comment_id = comment['parent_comment_id']
+        
+        # Build new keyboard based on comment type
+        if parent_comment_id != 0:  # This is a reply
+            # For replies, build callback data for Reply button
             new_kb = InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(f"👍 {likes}", callback_data=f"likereply_{comment_id}"),
                     InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikereply_{comment_id}"),
-                    InlineKeyboardButton("Reply", callback_data=f"replytoreply_{comment_id}")
+                    InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{comment_id}")
                 ]
             ])
-        else:  # For top-level comments
+        else:  # Top-level comment
             new_kb = InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(f"👍 {likes}", callback_data=f"likecomment_{comment_id}"),
                     InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikecomment_{comment_id}"),
-                    InlineKeyboardButton("Reply", callback_data=f"reply_{comment_id}")
+                    InlineKeyboardButton("Reply", callback_data=f"reply_{post_id}_{comment_id}")
                 ]
-            ]) 
-
+            ])
+        
         try:
             # Update the message with new counts
             await query.message.edit_reply_markup(reply_markup=new_kb)
