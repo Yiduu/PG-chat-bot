@@ -127,6 +127,9 @@ CATEGORIES = [
     ("🔖 Other", "Other"),
 ] 
 
+# Pagination settings
+COMMENTS_PER_PAGE = 5
+
 def build_category_buttons():
     buttons = []
     for i in range(0, len(CATEGORIES), 2):
@@ -159,8 +162,9 @@ def uptimerobot_ping():
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton("🙏 Ask Question")],
-        [KeyboardButton("👤 View Profile")],
-        [KeyboardButton("❓ Help"), KeyboardButton("ℹ️ About Us")]
+        [KeyboardButton("👤 View Profile"), KeyboardButton("🏆 Leaderboard")],
+        [KeyboardButton("⚙️ Settings"), KeyboardButton("❓ Help")],
+        [KeyboardButton("ℹ️ About Us")]
     ],
     resize_keyboard=True,
     one_time_keyboard=False
@@ -242,7 +246,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 comment_count = count_all_comments(post_id)
                 keyboard = [
                     [
-                        InlineKeyboardButton(f"👁 View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}"),
+                        InlineKeyboardButton(f"👁 View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_0"),
                         InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")
                     ]
                 ] 
@@ -455,6 +459,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("👤 View Profile 🎖", callback_data='profile')
         ],
         [
+            InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard'),
+            InlineKeyboardButton("⚙️ Settings", callback_data='settings')
+        ],
+        [
             InlineKeyboardButton("❓ Help", callback_data='help'),
             InlineKeyboardButton("ℹ️ About Us", callback_data='about')
         ]
@@ -463,7 +471,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌟✝️ *እንኳን ወደ Christian Chat Bot በሰላም መጡ* ✝️🌟\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
+        "ማንነታችሁ ሳይገለጽ �ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN)
     
@@ -478,6 +486,10 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton("✍️ Ask Question 🙏", callback_data='ask'),
             InlineKeyboardButton("👤 View Profile 🎖", callback_data='profile')
+        ],
+        [
+            InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard'),
+            InlineKeyboardButton("⚙️ Settings", callback_data='settings')
         ],
         [
             InlineKeyboardButton("❓ Help", callback_data='help'),
@@ -559,6 +571,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("👤 View Profile 🎖", callback_data='profile')
             ],
             [
+                InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard'),
+                InlineKeyboardButton("⚙️ Settings", callback_data='settings')
+            ],
+            [
                 InlineKeyboardButton("❓ Help", callback_data='help'),
                 InlineKeyboardButton("ℹ️ About Us", callback_data='about')
             ]
@@ -571,6 +587,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == 'profile':
         await send_updated_profile(user_id, query.message.chat_id, context) 
+
+    elif query.data == 'leaderboard':
+        # Get top 10 users by rating
+        top_users = db_fetch_all('''
+            SELECT u.user_id, u.anonymous_name, 
+                   (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id) +
+                   (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) AS rating
+            FROM users u
+            ORDER BY rating DESC
+            LIMIT 10
+        ''')
+        
+        leaderboard_text = "🏆 *Top 10 Contributors*\n\n"
+        for idx, user in enumerate(top_users):
+            stars = format_stars(user['rating'])
+            leaderboard_text += f"{idx+1}. {user['anonymous_name']} - {stars}\n"
+        
+        leaderboard_text += "\n_Keep contributing to climb the leaderboard!_"
+        
+        keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
+        await query.message.reply_text(
+            leaderboard_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+    elif query.data == 'settings':
+        settings_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
+            [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
+            [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
+        ])
+        await query.message.reply_text(
+            "⚙️ *Settings*\nChoose what you want to update:",
+            reply_markup=settings_keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
 
     elif query.data == 'help':
         help_text = (
@@ -636,141 +689,169 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_updated_profile(target_uid, query.message.chat_id, context)
     elif query.data.startswith('viewcomments_'):
         try:
-            post_id_str = query.data.split('_', 1)[1]
-            if post_id_str.isdigit():
-                post_id = int(post_id_str)
-                post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
-                if not post:
-                    await query.answer("❌ Post not found.")
-                    return
+            parts = query.data.split('_')
+            post_id = int(parts[1])
+            page = int(parts[2]) if len(parts) > 2 else 0
+            
+            post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+            if not post:
+                await query.answer("❌ Post not found.")
+                return
     
-                comments = db_fetch_all(
-                    "SELECT * FROM comments WHERE post_id = ? AND parent_comment_id = 0",
-                    (post_id,)
-                ) 
+            # Get top-level comments for this page
+            offset = page * COMMENTS_PER_PAGE
+            comments = db_fetch_all(
+                "SELECT * FROM comments WHERE post_id = ? AND parent_comment_id = 0 ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                (post_id, COMMENTS_PER_PAGE, offset)
+            ) 
 
-                if not comments:
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text="_No comments yet._",
-                        parse_mode=ParseMode.MARKDOWN_V2
-                    )
-                    return
-    
-                # Store header message ID for threading
-                header_msg = await context.bot.send_message(
+            # Get total top-level comments
+            total_comments = db_fetch_one(
+                "SELECT COUNT(*) FROM comments WHERE post_id = ? AND parent_comment_id = 0",
+                (post_id,)
+            )[0] if db_fetch_one(
+                "SELECT COUNT(*) FROM comments WHERE post_id = ? AND parent_comment_id = 0",
+                (post_id,)
+            ) else 0
+            
+            total_pages = (total_comments + COMMENTS_PER_PAGE - 1) // COMMENTS_PER_PAGE
+            if total_pages == 0:
+                total_pages = 1
+            
+            # Create pagination buttons
+            pagination_buttons = []
+            if page > 0:
+                pagination_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"viewcomments_{post_id}_{page-1}"))
+            
+            pagination_buttons.append(InlineKeyboardButton(f"Page {page+1}/{total_pages}", callback_data="ignore"))
+            
+            if page < total_pages - 1:
+                pagination_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"viewcomments_{post_id}_{page+1}"))
+            
+            # Send header with pagination
+            header_text = f"💬 *Comments (Page {page+1} of {total_pages})*"
+            header_msg = await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=header_text,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=InlineKeyboardMarkup([pagination_buttons]) if pagination_buttons else None
+            )
+            context.user_data['comment_header_id'] = header_msg.message_id
+            
+            if not comments:
+                await context.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text="💬 *Comments:*",
+                    text="_No comments yet._",
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
-                context.user_data['comment_header_id'] = header_msg.message_id 
-
-                # Send each comment as a reply to the header message
-                for comment in comments:
-                    try:
-                        commenter_id = comment['author_id']
-                        commenter = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (commenter_id,))
-                        anon = commenter['anonymous_name'] if commenter else "Unknown"
-                        sex = commenter['sex'] if commenter else '❓'
-                        rating = calculate_user_rating(commenter_id)
-                        stars = format_stars(rating)
-                        profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{anon}"
+                return
     
-                        likes = db_fetch_one(
+            # Send each comment as a reply to the header message
+            for comment in comments:
+                try:
+                    commenter_id = comment['author_id']
+                    commenter = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (commenter_id,))
+                    anon = commenter['anonymous_name'] if commenter else "Unknown"
+                    sex = commenter['sex'] if commenter else '❓'
+                    rating = calculate_user_rating(commenter_id)
+                    stars = format_stars(rating)
+                    profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{anon}"
+    
+                    likes = db_fetch_one(
+                        "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
+                        (comment['comment_id'],)
+                    )[0] if db_fetch_one(
+                        "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
+                        (comment['comment_id'],)
+                    ) else 0
+    
+                    dislikes = db_fetch_one(
+                        "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
+                        (comment['comment_id'],)
+                    )[0] if db_fetch_one(
+                        "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
+                        (comment['comment_id'],)
+                    ) else 0
+    
+                    # Get comment text safely
+                    comment_text = comment['content']
+                    safe_comment = escape_markdown(comment_text, version=2)
+    
+                    # Build clean comment message with clickable name
+                    comment_msg = f"{safe_comment}\n\n[{anon}]({profile_url}) {sex} {stars}"
+    
+                    # Build keyboard
+                    kb = InlineKeyboardMarkup([[
+                        InlineKeyboardButton(f"👍 {likes}", callback_data=f"likecomment_{comment['comment_id']}"),
+                        InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikecomment_{comment['comment_id']}"),
+                        InlineKeyboardButton("Reply", callback_data=f"reply_{post_id}_{comment['comment_id']}")
+                    ]])
+    
+                    # Send comment as a reply to the header
+                    msg = await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=comment_msg,
+                        reply_markup=kb,
+                        parse_mode=ParseMode.MARKDOWN_V2,
+                        reply_to_message_id=context.user_data['comment_header_id'],
+                        disable_web_page_preview=True
+                    )
+                    
+                    # Display replies to this comment
+                    replies = db_fetch_all(
+                        "SELECT * FROM comments WHERE parent_comment_id = ?",
+                        (comment['comment_id'],)
+                    )
+                    for reply in replies:
+                        reply_user_id = reply['author_id']
+                        reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (reply_user_id,))
+                        reply_anon = reply_user['anonymous_name'] if reply_user else 'Unknown'
+                        reply_sex = reply_user['sex'] if reply_user else '❓'
+                        rating_reply = calculate_user_rating(reply_user_id)
+                        stars_reply = format_stars(rating_reply)
+                        profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_anon}"
+                        safe_reply = escape_markdown(reply['content'], version=2)
+                        
+                        # Get like/dislike counts for this reply
+                        reply_likes = db_fetch_one(
                             "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
-                            (comment['comment_id'],)
+                            (reply['comment_id'],)
                         )[0] if db_fetch_one(
                             "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
-                            (comment['comment_id'],)
+                            (reply['comment_id'],)
                         ) else 0
-    
-                        dislikes = db_fetch_one(
+                        
+                        reply_dislikes = db_fetch_one(
                             "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-                            (comment['comment_id'],)
+                            (reply['comment_id'],)
                         )[0] if db_fetch_one(
                             "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-                            (comment['comment_id'],)
+                            (reply['comment_id'],)
                         ) else 0
-    
-                        # Get comment text safely
-                        comment_text = comment['content']
-                        safe_comment = escape_markdown(comment_text, version=2)
-    
-                        # Build clean comment message with clickable name
-                        comment_msg = f"{safe_comment}\n\n[{anon}]({profile_url}) {sex} {stars}"
-    
-                        # Build keyboard
-                        kb = InlineKeyboardMarkup([[
-                            InlineKeyboardButton(f"👍 {likes}", callback_data=f"likecomment_{comment['comment_id']}"),
-                            InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikecomment_{comment['comment_id']}"),
-                            InlineKeyboardButton("Reply", callback_data=f"reply_{post_id}_{comment['comment_id']}")
-                        ]])
-    
-                        # Send comment as a reply to the header
-                        msg = await context.bot.send_message(
+                        
+                        # Create reply author text as clickable link
+                        reply_author_text = f"[{reply_anon}]({profile_url_reply}) {reply_sex} {stars_reply}"
+                        
+                        # Create keyboard for the reply
+                        reply_kb = InlineKeyboardMarkup([
+                            [
+                                InlineKeyboardButton(f"👍 {reply_likes}", callback_data=f"likereply_{reply['comment_id']}"),
+                                InlineKeyboardButton(f"👎 {reply_dislikes}", callback_data=f"dislikereply_{reply['comment_id']}"),
+                                InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{comment['comment_id']}_{reply['comment_id']}")
+                            ]
+                        ])
+                        
+                        # Send as threaded reply
+                        await context.bot.send_message(
                             chat_id=query.message.chat_id,
-                            text=comment_msg,
-                            reply_markup=kb,
+                            text=f"{safe_reply}\n\n{reply_author_text}",
                             parse_mode=ParseMode.MARKDOWN_V2,
-                            reply_to_message_id=context.user_data['comment_header_id'],
+                            reply_to_message_id=msg.message_id,
+                            reply_markup=reply_kb,
                             disable_web_page_preview=True
                         )
-                        
-                        # Display replies as threaded messages
-                        replies = db_fetch_all(
-                            "SELECT * FROM comments WHERE parent_comment_id = ?",
-                            (comment['comment_id'],)
-                        )
-                        for reply in replies:
-                            reply_user_id = reply['author_id']
-                            reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (reply_user_id,))
-                            reply_anon = reply_user['anonymous_name'] if reply_user else 'Unknown'
-                            reply_sex = reply_user['sex'] if reply_user else '❓'
-                            rating_reply = calculate_user_rating(reply_user_id)
-                            stars_reply = format_stars(rating_reply)
-                            profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_anon}"
-                            safe_reply = escape_markdown(reply['content'], version=2)
-                            
-                            # Get like/dislike counts for this reply
-                            reply_likes = db_fetch_one(
-                                "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
-                                (reply['comment_id'],)
-                            )[0] if db_fetch_one(
-                                "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'like'",
-                                (reply['comment_id'],)
-                            ) else 0
-                            
-                            reply_dislikes = db_fetch_one(
-                                "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-                                (reply['comment_id'],)
-                            )[0] if db_fetch_one(
-                                "SELECT COUNT(*) FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-                                (reply['comment_id'],)
-                            ) else 0
-                            
-                            # Create reply author text as clickable link
-                            reply_author_text = f"[{reply_anon}]({profile_url_reply}) {reply_sex} {stars_reply}"
-                            
-                            # Create keyboard for the reply
-                            reply_kb = InlineKeyboardMarkup([
-                                [
-                                    InlineKeyboardButton(f"👍 {reply_likes}", callback_data=f"likereply_{reply['comment_id']}"),
-                                    InlineKeyboardButton(f"👎 {reply_dislikes}", callback_data=f"dislikereply_{reply['comment_id']}"),
-                                    InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{comment['comment_id']}_{reply['comment_id']}")
-                                ]
-                            ])
-                            
-                            # Send as threaded reply
-                            await context.bot.send_message(
-                                chat_id=query.message.chat_id,
-                                text=f"{safe_reply}\n\n{reply_author_text}",
-                                parse_mode=ParseMode.MARKDOWN_V2,
-                                reply_to_message_id=msg.message_id,
-                                reply_markup=reply_kb,
-                                disable_web_page_preview=True
-                            )
-                    except Exception as e:
-                        logger.error(f"Error sending comment: {e}")
+                except Exception as e:
+                    logger.error(f"Error sending comment: {e}")
         except Exception as e:
             logger.error(f"ViewComments error: {e}")
             await query.answer("❌ Error loading comments")
@@ -1119,6 +1200,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "👤 View Profile":
         await send_updated_profile(user_id, update.message.chat_id, context)
         return 
+
+    elif text == "🏆 Leaderboard":
+        # Get top 10 users by rating
+        top_users = db_fetch_all('''
+            SELECT u.user_id, u.anonymous_name, 
+                   (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id) +
+                   (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) AS rating
+            FROM users u
+            ORDER BY rating DESC
+            LIMIT 10
+        ''')
+        
+        leaderboard_text = "🏆 *Top 10 Contributors*\n\n"
+        for idx, user in enumerate(top_users):
+            stars = format_stars(user['rating'])
+            leaderboard_text += f"{idx+1}. {user['anonymous_name']} - {stars}\n"
+        
+        leaderboard_text += "\n_Keep contributing to climb the leaderboard!_"
+        await update.message.reply_text(leaderboard_text, parse_mode=ParseMode.MARKDOWN)
+        return 
+
+    elif text == "⚙️ Settings":
+        settings_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
+            [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
+            [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
+        ])
+        await update.message.reply_text(
+            "⚙️ *Settings*\nChoose what you want to update:",
+            reply_markup=settings_keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
 
     elif text == "❓ Help":
         help_text = (
