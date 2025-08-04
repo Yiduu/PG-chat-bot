@@ -18,6 +18,7 @@ import threading
 from flask import Flask, jsonify 
 from contextlib import closing
 from datetime import datetime
+import random
 
 # Initialize database
 DB_FILE = 'bot.db'
@@ -364,53 +365,49 @@ async def show_comments_menu(update, context, post_id, page=1):
     )
 
 async def show_comments_page(update, context, post_id, page=1):
-    # Get chat ID from effective_chat
     if update.effective_chat is None:
         logger.error("Cannot determine chat from update: %s", update)
         return
     chat_id = update.effective_chat.id
-        
+
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
     if not post:
         await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=main_menu)
-        return 
+        return
 
-    # Pagination settings
     per_page = 5
     offset = (page - 1) * per_page
-    
-    # Get top-level comments for this page
+
     comments = db_fetch_all(
         "SELECT * FROM comments WHERE post_id = ? AND parent_comment_id = 0 LIMIT ? OFFSET ?",
         (post_id, per_page, offset)
     )
-    
-    # Get total comment count for pagination
+
     total_comments = count_all_comments(post_id)
     total_pages = (total_comments + per_page - 1) // per_page
-    
+
     post_text = post['content']
-    # Escape the original post content properly
-    header = f"{escape_markdown(post_text, version=2)}\n\n" 
+    header = f"{escape_markdown(post_text, version=2)}\n\n"
 
     if not comments and page == 1:
         await context.bot.send_message(
             chat_id=chat_id,
-            text=header + "_No comments yet._", 
+            text=header + "_No comments yet._",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=main_menu
         )
-        return 
+        return
 
-    # Send header message
     header_msg = await context.bot.send_message(
         chat_id=chat_id,
-        text=header, 
+        text=header,
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=main_menu
     )
     header_message_id = header_msg.message_id
-    
+
+    user_id = str(update.effective_user.id)
+
     for comment in comments:
         commenter_id = comment['author_id']
         commenter = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (commenter_id,))
@@ -418,7 +415,7 @@ async def show_comments_page(update, context, post_id, page=1):
         display_sex = get_display_sex(commenter)
         rating = calculate_user_rating(commenter_id)
         stars = format_stars(rating)
-        profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{display_name}" 
+        profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{display_name}"
 
         # Get like/dislike counts
         likes_row = db_fetch_one(
@@ -426,28 +423,32 @@ async def show_comments_page(update, context, post_id, page=1):
             (comment['comment_id'],)
         )
         likes = likes_row['cnt'] if likes_row and 'cnt' in likes_row else 0
-        
+
         dislikes_row = db_fetch_one(
             "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
             (comment['comment_id'],)
         )
         dislikes = dislikes_row['cnt'] if dislikes_row and 'cnt' in dislikes_row else 0
-        
-        # Create clean comment text
+
+        # Get current user's reaction for this comment
+        user_reaction = db_fetch_one(
+            "SELECT type FROM reactions WHERE comment_id = ? AND user_id = ?",
+            (comment['comment_id'], user_id)
+        )
+        like_btn = "✅❤️" if user_reaction and user_reaction['type'] == 'like' else "❤️"
+        angry_btn = "✅😡" if user_reaction and user_reaction['type'] == 'dislike' else "😡"
+
         comment_text = escape_markdown(comment['content'], version=2)
-        
-        # Create author text as clickable link
-        author_text = f"[{escape_markdown(display_name, version=2)}]({profile_url}) {display_sex} {stars}" 
+        author_text = f"[{escape_markdown(display_name, version=2)}]({profile_url}) {display_sex} {stars}"
 
         kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton(f"👍 {likes}", callback_data=f"likecomment_{comment['comment_id']}"),
-                InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikecomment_{comment['comment_id']}"),
+                InlineKeyboardButton(f"{like_btn} {likes}", callback_data=f"likecomment_{comment['comment_id']}"),
+                InlineKeyboardButton(f"{angry_btn} {dislikes}", callback_data=f"dislikecomment_{comment['comment_id']}"),
                 InlineKeyboardButton("Reply", callback_data=f"reply_{post_id}_{comment['comment_id']}")
             ]
-        ]) 
+        ])
 
-        # Send comment as a reply to the header message for proper threading
         msg = await context.bot.send_message(
             chat_id=chat_id,
             text=f"{comment_text}\n\n{author_text}",
@@ -455,8 +456,8 @@ async def show_comments_page(update, context, post_id, page=1):
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_to_message_id=header_message_id
         )
-        
-        # Display replies to this comment as threaded replies
+
+        # Replies
         replies = db_fetch_all(
             "SELECT * FROM comments WHERE parent_comment_id = ?",
             (comment['comment_id'],)
@@ -470,30 +471,35 @@ async def show_comments_page(update, context, post_id, page=1):
             stars_reply = format_stars(rating_reply)
             profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_display_name}"
             safe_reply = escape_markdown(reply['content'], version=2)
-            
-            # Get like/dislike counts for this reply
+
             reply_likes_row = db_fetch_one(
                 "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
                 (reply['comment_id'],)
             )
             reply_likes = reply_likes_row['cnt'] if reply_likes_row and 'cnt' in reply_likes_row else 0
-            
+
             reply_dislikes_row = db_fetch_one(
                 "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
                 (reply['comment_id'],)
             )
             reply_dislikes = reply_dislikes_row['cnt'] if reply_dislikes_row and 'cnt' in reply_dislikes_row else 0
-            
-            # Create keyboard for the reply
+
+            # Get current user's reaction for this reply
+            reply_user_reaction = db_fetch_one(
+                "SELECT type FROM reactions WHERE comment_id = ? AND user_id = ?",
+                (reply['comment_id'], user_id)
+            )
+            reply_like_btn = "✅❤️" if reply_user_reaction and reply_user_reaction['type'] == 'like' else "❤️"
+            reply_angry_btn = "✅😡" if reply_user_reaction and reply_user_reaction['type'] == 'dislike' else "😡"
+
             reply_kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton(f"👍 {reply_likes}", callback_data=f"likereply_{reply['comment_id']}"),
-                    InlineKeyboardButton(f"👎 {reply_dislikes}", callback_data=f"dislikereply_{reply['comment_id']}"),
+                    InlineKeyboardButton(f"{reply_like_btn} {reply_likes}", callback_data=f"likereply_{reply['comment_id']}"),
+                    InlineKeyboardButton(f"{reply_angry_btn} {reply_dislikes}", callback_data=f"dislikereply_{reply['comment_id']}"),
                     InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{comment['comment_id']}_{reply['comment_id']}")
                 ]
             ])
-            
-            # Send as threaded reply
+
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=f"{safe_reply}\n\n[{reply_display_name}]({profile_url_reply}) {reply_display_sex} {stars_reply}",
@@ -501,15 +507,13 @@ async def show_comments_page(update, context, post_id, page=1):
                 reply_to_message_id=msg.message_id,
                 reply_markup=reply_kb
             )
-    
-    # Add pagination buttons
+
+    # Pagination
     pagination_buttons = []
     if page > 1:
         pagination_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"viewcomments_{post_id}_{page-1}"))
-    
     if page < total_pages:
         pagination_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"viewcomments_{post_id}_{page+1}"))
-    
     if pagination_buttons:
         pagination_markup = InlineKeyboardMarkup([pagination_buttons])
         await context.bot.send_message(
@@ -599,15 +603,20 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leaderboard_text += "\n_Keep contributing to climb the leaderboard!_"
     
     keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
-    if isinstance(update, Update):
-        await update.message.reply_text(leaderboard_text, 
-                                      reply_markup=InlineKeyboardMarkup(keyboard),
-                                      parse_mode=ParseMode.MARKDOWN)
-    else:  # CallbackQuery
-        query = update
-        await query.message.reply_text(leaderboard_text, 
-                                     reply_markup=InlineKeyboardMarkup(keyboard),
-                                     parse_mode=ParseMode.MARKDOWN)
+
+    # Fix: handle both message and callback_query
+    if getattr(update, "message", None):
+        await update.message.reply_text(
+            leaderboard_text, 
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+    elif getattr(update, "callback_query", None):
+        await update.callback_query.message.reply_text(
+            leaderboard_text, 
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -764,76 +773,111 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     
     # REACTION HANDLING WITH ERROR FIXES
+        # REACTION HANDLING WITH ERROR FIXES
     elif query.data.startswith(("likecomment_", "dislikecomment_", "likereply_", "dislikereply_")):
-        # Extract comment ID from callback data
-        parts = query.data.split('_')
-        comment_id = int(parts[1])
-        reaction_type = 'like' if 'like' in parts[0] else 'dislike'
-        
-        # Remove existing reaction
-        db_execute(
-            "DELETE FROM reactions WHERE comment_id = ? AND user_id = ?",
-            (comment_id, user_id)
-        )
-        
-        # Add new reaction
-        db_execute(
-            "INSERT INTO reactions (comment_id, user_id, type) VALUES (?, ?, ?)",
-            (comment_id, user_id, reaction_type)
-        )
-        
-        # Get updated counts
-        likes_row = db_fetch_one(
-            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
-            (comment_id,)
-        )
-        likes = likes_row['cnt'] if likes_row and 'cnt' in likes_row else 0
-        
-        dislikes_row = db_fetch_one(
-            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-            (comment_id,)
-        )
-        dislikes = dislikes_row['cnt'] if dislikes_row and 'cnt' in dislikes_row else 0
-        
-        # Get comment to determine if it's top-level or reply
-        comment = db_fetch_one("SELECT post_id, parent_comment_id FROM comments WHERE comment_id = ?", (comment_id,))
-        if not comment:
-            await query.answer("Comment not found")
-            return
-        
-        post_id = comment['post_id']
-        parent_comment_id = comment['parent_comment_id']
-        
-        # Build new keyboard based on comment type
-        if parent_comment_id != 0:  # This is a reply
-            # For replies, build callback data for Reply button
-            new_kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(f"👍 {likes}", callback_data=f"likereply_{comment_id}"),
-                    InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikereply_{comment_id}"),
-                    InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{comment_id}")
-                ]
-            ])
-        else:  # Top-level comment
-            new_kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(f"👍 {likes}", callback_data=f"likecomment_{comment_id}"),
-                    InlineKeyboardButton(f"👎 {dislikes}", callback_data=f"dislikecomment_{comment_id}"),
-                    InlineKeyboardButton("Reply", callback_data=f"reply_{post_id}_{comment_id}")
-                ]
-            ])
-        
         try:
-            # Update the message with new counts
-            await query.message.edit_reply_markup(reply_markup=new_kb)
-        except BadRequest as e:
-            if "Message is not modified" in str(e):
-                # Silently ignore "not modified" errors
-                pass
+            parts = query.data.split('_')
+            comment_id = int(parts[1])
+            # FIX: Use exact match for reaction type
+            reaction_type = 'like' if parts[0] in ('likecomment', 'likereply') else 'dislike'
+
+            # Remove any previous reaction for this user on this comment
+            db_execute(
+                "DELETE FROM reactions WHERE comment_id = ? AND user_id = ?",
+                (comment_id, user_id)
+            )
+            # Add the new reaction
+            try:
+                db_execute(
+                    "INSERT INTO reactions (comment_id, user_id, type) VALUES (?, ?, ?)",
+                    (comment_id, user_id, reaction_type)
+                )
+            except sqlite3.IntegrityError:
+                pass  # Already exists, ignore
+
+            # Get updated counts
+            likes_row = db_fetch_one(
+                "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
+                (comment_id,)
+            )
+            likes = likes_row['cnt'] if likes_row and 'cnt' in likes_row else 0
+
+            dislikes_row = db_fetch_one(
+                "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
+                (comment_id,)
+            )
+            dislikes = dislikes_row['cnt'] if dislikes_row and 'cnt' in dislikes_row else 0
+
+            comment = db_fetch_one("SELECT post_id, parent_comment_id FROM comments WHERE comment_id = ?", (comment_id,))
+            if not comment:
+                await query.answer("Comment not found", show_alert=True)
+                return
+
+            post_id = comment['post_id']
+            parent_comment_id = comment['parent_comment_id']
+
+            # Fetch the user's latest reaction after DB update
+            user_reaction = db_fetch_one(
+                "SELECT type FROM reactions WHERE comment_id = ? AND user_id = ?",
+                (comment_id, user_id)
+            )
+            zws = "\u200b"
+            like_btn = f"✅❤️{zws}" if user_reaction and user_reaction['type'] == 'like' else f"❤️{zws}"
+            angry_btn = f"✅😡{zws}" if user_reaction and user_reaction['type'] == 'dislike' else f"😡{zws}"
+
+            if parent_comment_id != 0:
+                # This is a reply
+                new_kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(f"{like_btn} {likes}", callback_data=f"likereply_{comment_id}"),
+                        InlineKeyboardButton(f"{angry_btn} {dislikes}", callback_data=f"dislikereply_{comment_id}"),
+                        InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{comment_id}")
+                    ]
+                ])
             else:
-                logger.warning(f"Could not update buttons: {e}")
+                # Top-level comment
+                new_kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(f"{like_btn} {likes}", callback_data=f"likecomment_{comment_id}"),
+                        InlineKeyboardButton(f"{angry_btn} {dislikes}", callback_data=f"dislikecomment_{comment_id}"),
+                        InlineKeyboardButton("Reply", callback_data=f"reply_{post_id}_{comment_id}")
+                    ]
+                ])
+
+            # Try to edit the markup if possible, otherwise resend the message
+            try:
+                await context.bot.edit_message_reply_markup(
+    chat_id=query.message.chat_id,
+    message_id=query.message.message_id,
+    reply_markup=new_kb
+)
+
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    pass
+                elif "message can't be edited" in str(e).lower() or "message is not modified" in str(e).lower():
+                    # Fallback: resend the message with updated buttons
+                    try:
+                        await query.message.reply_text(
+                            query.message.text or "",
+                            reply_markup=new_kb,
+                            parse_mode=ParseMode.MARKDOWN_V2
+                        )
+                    except Exception as e2:
+                        logger.error(f"Failed to resend message with updated reactions: {e2}")
+                else:
+                    logger.warning(f"Could not update buttons: {e}")
+                    await query.answer("Failed to update reaction", show_alert=True)
+                    return
+            except Exception as e:
+                logger.error(f"Error updating message: {e}")
+                await query.answer("Error processing reaction", show_alert=True)
+                return
+
+            await query.answer("Reaction recorded!")
         except Exception as e:
-            logger.warning(f"Could not update buttons: {e}")
+            logger.error(f"Reaction processing error: {e}")
+            await query.answer("Error processing reaction", show_alert=True)
             
     elif query.data.startswith("reply_"):
         parts = query.data.split("_")
@@ -1097,8 +1141,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🙏 This bot helps you share your thoughts anonymously with the Christian community."
         )
         await update.message.reply_text(about_text, parse_mode=ParseMode.MARKDOWN)
-        return 
-
+        return
 async def error_handler(update, context):
     logger.error(f"Update {update} caused error: {context.error}", exc_info=True) 
 
