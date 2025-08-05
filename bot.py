@@ -773,7 +773,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     
     # REACTION HANDLING WITH ERROR FIXES
-        # REACTION HANDLING WITH ERROR FIXES
     elif query.data.startswith(("likecomment_", "dislikecomment_", "likereply_", "dislikereply_")):
         try:
             parts = query.data.split('_')
@@ -821,9 +820,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "SELECT type FROM reactions WHERE comment_id = ? AND user_id = ?",
                 (comment_id, user_id)
             )
-            zws = "\u200b"
-            like_btn = f"✅❤️{zws}" if user_reaction and user_reaction['type'] == 'like' else f"❤️{zws}"
-            angry_btn = f"✅😡{zws}" if user_reaction and user_reaction['type'] == 'dislike' else f"😡{zws}"
+            like_btn = "✅❤️" if user_reaction and user_reaction['type'] == 'like' else "❤️"
+            angry_btn = "✅😡" if user_reaction and user_reaction['type'] == 'dislike' else "😡"
 
             if parent_comment_id != 0:
                 # This is a reply
@@ -844,18 +842,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ]
                 ])
 
-            # Try to edit the markup if possible, otherwise resend the message
+            # Try to edit the markup if possible
             try:
                 await context.bot.edit_message_reply_markup(
-    chat_id=query.message.chat_id,
-    message_id=query.message.message_id,
-    reply_markup=new_kb
-)
-
+                    chat_id=query.message.chat_id,
+                    message_id=query.message.message_id,
+                    reply_markup=new_kb
+                )
             except BadRequest as e:
                 if "Message is not modified" in str(e):
                     pass
-                elif "message can't be edited" in str(e).lower() or "message is not modified" in str(e).lower():
+                elif "message can't be edited" in str(e).lower():
                     # Fallback: resend the message with updated buttons
                     try:
                         await query.message.reply_text(
