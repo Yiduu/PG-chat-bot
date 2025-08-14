@@ -707,8 +707,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 display_name = get_display_name(user_data)
                 display_sex = get_display_sex(user_data)
                 await update.message.reply_text(
-                    f"👤 *{display_name}* 🎖 Verified\n"
-                    f"📌 Sex: {display_sex}\n"
+                    f"👤 *{display_name}* 🎖 \n"
+                    f"📌 Sex: {display_sex}\n\n"
                     f"👥 Followers: {len(followers)}\n"
                     f"🎖 Batch: User\n"
                     f"⭐️ Contributions: {rating} {stars}\n"
@@ -734,9 +734,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await update.message.reply_text(
-        "🌟✝️ *እንኳን ወደ Christian Chat Bot በሰላም መጡ* ✝️🌟\n"
+        "🌟✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️🌟\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጁ :",
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN)
     
@@ -818,8 +818,9 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     for idx, comment in enumerate(comments):
         commenter_id = comment['author_id']
         commenter = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (commenter_id,))
-        display_name = get_display_name(commenter)
         display_sex = get_display_sex(commenter)
+        display_name = get_display_name(commenter)
+        
         rating = calculate_user_rating(commenter_id)
         stars = format_stars(rating)
         profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{display_name}"
