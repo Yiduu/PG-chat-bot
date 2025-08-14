@@ -1001,7 +1001,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            f"👤 *{display_name}* 🎖 Verified\n"
+            f"👤 *{display_name}* 🎖 \n"
             f"📌 Sex: {display_sex}\n"
             f"⭐️ Rating: {rating} {stars}\n"
             f"🎖 Batch: User\n"
@@ -1089,13 +1089,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data == 'help':
             help_text = (
-                "ℹ️ *How to Use This Bot:*\n"
-                "• Use the menu buttons to navigate.\n"
-                "• Tap 'Ask Question' to share your thoughts anonymously.\n"
-                "• Choose a category and type or send your message (text, photo, or voice).\n"
-                "• After posting, others can comment on your posts.\n"
-                "• View your profile, set your name and sex anytime.\n"
-                "• Use the comments button on channel posts to join the conversation here."
+                "ℹ️ *የዚህ ቦት አጠቃቀም:*\n"
+                "•  menu button በመጠቀም የተለያዩ አማራጮችን ማየት ይችላሉ.\n"
+                "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
+                "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
+                "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
+                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
+                "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለውን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
             )
             keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
             await query.message.reply_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
