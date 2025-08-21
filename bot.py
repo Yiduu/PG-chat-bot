@@ -50,7 +50,9 @@ def init_db():
             nested_idx INTEGER,
             notifications_enabled BOOLEAN DEFAULT 1,
             privacy_public BOOLEAN DEFAULT 1,
-            is_admin BOOLEAN DEFAULT 0
+            is_admin BOOLEAN DEFAULT 0,
+            waiting_for_private_message BOOLEAN DEFAULT 0,
+            private_message_target TEXT
         )''')
         
         c.execute('''
@@ -95,6 +97,18 @@ def init_db():
             UNIQUE(comment_id, user_id)
         )''')
         
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS private_messages (
+            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id TEXT,
+            receiver_id TEXT,
+            content TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            is_read BOOLEAN DEFAULT 0,
+            FOREIGN KEY (sender_id) REFERENCES users (user_id),
+            FOREIGN KEY (receiver_id) REFERENCES users (user_id)
+        )''')
+        
         # Check for missing columns and add them
         c.execute("PRAGMA table_info(users)")
         user_columns = [col[1] for col in c.fetchall()]
@@ -104,6 +118,10 @@ def init_db():
             c.execute("ALTER TABLE users ADD COLUMN privacy_public BOOLEAN DEFAULT 1")
         if 'is_admin' not in user_columns:
             c.execute("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0")
+        if 'waiting_for_private_message' not in user_columns:
+            c.execute("ALTER TABLE users ADD COLUMN waiting_for_private_message BOOLEAN DEFAULT 0")
+        if 'private_message_target' not in user_columns:
+            c.execute("ALTER TABLE users ADD COLUMN private_message_target TEXT")
         
         # Create admin user if specified
         ADMIN_ID = os.getenv('ADMIN_ID')
@@ -479,6 +497,32 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
     except Exception as e:
         logger.error(f"Error notifying admin: {e}")
 
+async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sender_id: str, receiver_id: str, message_content: str):
+    try:
+        receiver = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (receiver_id,))
+        if not receiver or not receiver['notifications_enabled']:
+            return
+        
+        sender = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (sender_id,))
+        sender_name = get_display_name(sender)
+        
+        # Truncate long messages for the notification
+        preview_content = message_content[:100] + '...' if len(message_content) > 100 else message_content
+        
+        notification_text = (
+            f"📩 You received a private message from {sender_name}:\n\n"
+            f"{escape_markdown(preview_content, version=2)}\n\n"
+            f"[View messages](https://t.me/{BOT_USERNAME}?start=inbox)"
+        )
+        
+        await context.bot.send_message(
+            chat_id=receiver_id,
+            text=notification_text,
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+    except Exception as e:
+        logger.error(f"Error sending private message notification: {e}")
+
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
@@ -702,6 +746,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     if is_following:
                         btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
+                        # Add message button if following
+                        btn.append([InlineKeyboardButton("✉️ Send Message", callback_data=f'message_{user_data["user_id"]}')])
                     else:
                         btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
                 display_name = get_display_name(user_data)
@@ -717,6 +763,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=InlineKeyboardMarkup(btn) if btn else None,
                     parse_mode=ParseMode.MARKDOWN)
                 return
+                
+        elif arg == "inbox":
+            await show_inbox(update, context)
+            return
 
     keyboard = [
         [
@@ -744,6 +794,131 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "You can use the buttons below to navigate:",
         reply_markup=main_menu
     )
+
+async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    
+    # Get unread messages count
+    unread_count = db_fetch_one(
+        "SELECT COUNT(*) FROM private_messages WHERE receiver_id = ? AND is_read = 0",
+        (user_id,)
+    )[0]
+    
+    # Get recent messages
+    messages = db_fetch_all('''
+        SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex
+        FROM private_messages pm
+        JOIN users u ON pm.sender_id = u.user_id
+        WHERE pm.receiver_id = ?
+        ORDER BY pm.timestamp DESC
+        LIMIT 10
+    ''', (user_id,))
+    
+    if not messages:
+        await update.message.reply_text(
+            "📭 *Your Inbox*\n\nYou don't have any messages yet.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    inbox_text = f"📭 *Your Inbox* ({unread_count} unread)\n\n"
+    
+    for msg in messages:
+        status = "🔵" if not msg['is_read'] else "⚪️"
+        timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d')
+        preview = msg['content'][:30] + '...' if len(msg['content']) > 30 else msg['content']
+        inbox_text += f"{status} *{msg['sender_name']}* {msg['sender_sex']} - {preview} ({timestamp})\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("📝 View Messages", callback_data='view_messages')],
+        [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
+    ]
+    
+    await update.message.reply_text(
+        inbox_text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
+    user_id = str(update.effective_user.id)
+    
+    # Mark messages as read when viewing
+    db_execute(
+        "UPDATE private_messages SET is_read = 1 WHERE receiver_id = ?",
+        (user_id,)
+    )
+    
+    # Get messages with pagination
+    per_page = 5
+    offset = (page - 1) * per_page
+    
+    messages = db_fetch_all('''
+        SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex
+        FROM private_messages pm
+        JOIN users u ON pm.sender_id = u.user_id
+        WHERE pm.receiver_id = ?
+        ORDER BY pm.timestamp DESC
+        LIMIT ? OFFSET ?
+    ''', (user_id, per_page, offset))
+    
+    total_messages = db_fetch_one(
+        "SELECT COUNT(*) FROM private_messages WHERE receiver_id = ?",
+        (user_id,)
+    )[0]
+    total_pages = (total_messages + per_page - 1) // per_page
+    
+    if not messages:
+        await update.message.reply_text(
+            "📭 *Your Messages*\n\nYou don't have any messages yet.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    messages_text = f"📭 *Your Messages* (Page {page}/{total_pages})\n\n"
+    
+    for msg in messages:
+        timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d, %H:%M')
+        messages_text += f"👤 *{msg['sender_name']}* {msg['sender_sex']} ({timestamp}):\n"
+        messages_text += f"{escape_markdown(msg['content'], version=2)}\n\n"
+        messages_text += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Build keyboard with pagination and reply options
+    keyboard_buttons = []
+    
+    # Pagination buttons
+    pagination_row = []
+    if page > 1:
+        pagination_row.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"messages_page_{page-1}"))
+    if page < total_pages:
+        pagination_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"messages_page_{page+1}"))
+    if pagination_row:
+        keyboard_buttons.append(pagination_row)
+    
+    # Reply buttons for each message
+    for msg in messages:
+        keyboard_buttons.append([
+            InlineKeyboardButton(f"↩️ Reply to {msg['sender_name']}", callback_data=f"reply_msg_{msg['sender_id']}")
+        ])
+    
+    keyboard_buttons.append([InlineKeyboardButton("📱 Main Menu", callback_data='menu')])
+    
+    try:
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                messages_text,
+                reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+        else:
+            await update.message.reply_text(
+                messages_text,
+                reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+    except Exception as e:
+        logger.error(f"Error showing messages: {e}")
+        await update.message.reply_text("❌ Error loading messages. Please try again.")
 
 async def show_comments_menu(update, context, post_id, page=1):
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
@@ -995,6 +1170,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
         [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
+        [InlineKeyboardButton("📭 Inbox", callback_data='inbox')],
         [InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
         [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
     ])
@@ -1095,7 +1271,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
                 "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
                 "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
-                "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለውን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
+                "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
             )
             keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
             await query.message.reply_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
@@ -1401,6 +1577,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             post_id = int(query.data.split('_')[-1])
             await reject_post(update, context, post_id)
             
+        # Private messaging functionality
+        elif query.data == 'inbox':
+            await show_inbox(update, context)
+            
+        elif query.data == 'view_messages':
+            await show_messages(update, context)
+            
+        elif query.data.startswith('messages_page_'):
+            page = int(query.data.split('_')[-1])
+            await show_messages(update, context, page)
+            
+        elif query.data.startswith('message_'):
+            target_id = query.data.split('_', 1)[1]
+            db_execute(
+                "UPDATE users SET waiting_for_private_message = 1, private_message_target = ? WHERE user_id = ?",
+                (target_id, user_id)
+            )
+            
+            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (target_id,))
+            target_name = target_user['anonymous_name'] if target_user else "this user"
+            
+            await query.message.reply_text(
+                f"✉️ *Composing message to {target_name}*\n\nPlease type your message:",
+                reply_markup=ForceReply(selective=True),
+                parse_mode=ParseMode.MARKDOWN
+            )
+            
+        elif query.data.startswith('reply_msg_'):
+            target_id = query.data.split('_', 2)[2]
+            db_execute(
+                "UPDATE users SET waiting_for_private_message = 1, private_message_target = ? WHERE user_id = ?",
+                (target_id, user_id)
+            )
+            
+            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (target_id,))
+            target_name = target_user['anonymous_name'] if target_user else "this user"
+            
+            await query.message.reply_text(
+                f"↩️ *Replying to {target_name}*\n\nPlease type your message:",
+                reply_markup=ForceReply(selective=True),
+                parse_mode=ParseMode.MARKDOWN
+            )
+            
     except Exception as e:
         logger.error(f"Error in button_handler: {e}")
         try:
@@ -1420,7 +1639,8 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (SELECT COUNT(*) FROM users) as total_users,
             (SELECT COUNT(*) FROM posts WHERE approved = 1) as approved_posts,
             (SELECT COUNT(*) FROM posts WHERE approved = 0) as pending_posts,
-            (SELECT COUNT(*) FROM comments) as total_comments
+            (SELECT COUNT(*) FROM comments) as total_comments,
+            (SELECT COUNT(*) FROM private_messages) as total_messages
     ''')
     
     text = (
@@ -1428,7 +1648,8 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👥 Total Users: {stats['total_users']}\n"
         f"📝 Approved Posts: {stats['approved_posts']}\n"
         f"🕒 Pending Posts: {stats['pending_posts']}\n"
-        f"💬 Total Comments: {stats['total_comments']}"
+        f"💬 Total Comments: {stats['total_comments']}\n"
+        f"📩 Private Messages: {stats['total_messages']}"
     )
     
     keyboard = InlineKeyboardMarkup([
@@ -1564,6 +1785,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Your comment has been added!", reply_markup=main_menu)
         return
 
+    elif user and user['waiting_for_private_message']:
+        target_id = user['private_message_target']
+        message_content = text
+        
+        # Save the private message
+        db_execute(
+            "INSERT INTO private_messages (sender_id, receiver_id, content) VALUES (?, ?, ?)",
+            (user_id, target_id, message_content)
+        )
+        
+        # Reset the user state
+        db_execute(
+            "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = ?",
+            (user_id,)
+        )
+        
+        # Notify the receiver
+        await notify_user_of_private_message(context, user_id, target_id, message_content)
+        
+        await update.message.reply_text(
+            "✅ Your message has been sent!",
+            reply_markup=main_menu
+        )
+        return
+
     if user and user['awaiting_name']:
         new_name = text.strip()
         if new_name and len(new_name) <= 30:
@@ -1605,7 +1851,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Choose a category and type or send your message (text, photo, or voice).\n"
             "• After posting, others can comment on your posts.\n"
             "• View your profile, set your name and sex anytime.\n"
-            "• Use the comments button on channel posts to join the conversation here."
+            "• Use the comments button on channel posts to join the conversation here.\n"
+            "• Follow users to send them private messages."
         )
         await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
         return 
@@ -1634,6 +1881,7 @@ async def set_bot_commands(app):
         BotCommand("settings", "Configure your preferences"),
         BotCommand("help", "How to use the bot"),
         BotCommand("about", "About the bot"),
+        BotCommand("inbox", "View your private messages"),
     ]
     
     if ADMIN_ID:
@@ -1648,6 +1896,7 @@ def main():
     app.add_handler(CommandHandler("leaderboard", show_leaderboard))
     app.add_handler(CommandHandler("settings", show_settings))
     app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("inbox", show_inbox))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
