@@ -1447,7 +1447,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     new_kb = InlineKeyboardMarkup([
                         [
                             InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likereply_{comment_id}"),
-                            InlineKeyboardButton(f"{dislike_emoji} {dislikes", callback_data=f"dislikereply_{comment_id}"),
+                            InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikereply_{comment_id}"),
                             InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{comment_id}")
                         ]
                     ])
