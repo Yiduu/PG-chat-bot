@@ -52,8 +52,7 @@ def init_db():
             privacy_public BOOLEAN DEFAULT 1,
             is_admin BOOLEAN DEFAULT 0,
             waiting_for_private_message BOOLEAN DEFAULT 0,
-            private_message_target TEXT,
-            editing_post_id INTEGER DEFAULT NULL
+            private_message_target TEXT
         )''')
         
         c.execute('''
@@ -106,7 +105,6 @@ def init_db():
             content TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             is_read BOOLEAN DEFAULT 0,
-            reply_to_message_id INTEGER DEFAULT NULL,
             FOREIGN KEY (sender_id) REFERENCES users (user_id),
             FOREIGN KEY (receiver_id) REFERENCES users (user_id)
         )''')
@@ -124,14 +122,6 @@ def init_db():
             c.execute("ALTER TABLE users ADD COLUMN waiting_for_private_message BOOLEAN DEFAULT 0")
         if 'private_message_target' not in user_columns:
             c.execute("ALTER TABLE users ADD COLUMN private_message_target TEXT")
-        if 'editing_post_id' not in user_columns:
-            c.execute("ALTER TABLE users ADD COLUMN editing_post_id INTEGER DEFAULT NULL")
-        
-        # Check for missing columns in private_messages
-        c.execute("PRAGMA table_info(private_messages)")
-        pm_columns = [col[1] for col in c.fetchall()]
-        if 'reply_to_message_id' not in pm_columns:
-            c.execute("ALTER TABLE private_messages ADD COLUMN reply_to_message_id INTEGER DEFAULT NULL")
         
         # Create admin user if specified
         ADMIN_ID = os.getenv('ADMIN_ID')
@@ -330,8 +320,8 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = str(update.effective_user.id)
     user_rank = get_user_rank(user_id)
-    user_data = db_fetch_one("SELECT anonymous_name, sex FROM users WHERE user_id = ?", (user_id,))
-    if user_data and user_rank > 10:
+    if user_rank > 10:
+        user_data = db_fetch_one("SELECT anonymous_name, sex FROM users WHERE user_id = ?", (user_id,))
         user_contributions = calculate_user_rating(user_id)
         leaderboard_text += (
             f"\n...\n"
@@ -407,29 +397,27 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in show_settings: {e}")
         await update.message.reply_text("❌ Error loading settings. Please try again.")
 
-async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, post_id: Optional[int] = None):
+async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str):
     keyboard = [
         [
-            InlineKeyboardButton("✏️ Edit", callback_data=f'edit_post_{post_id}' if post_id else 'edit_post'),
+            InlineKeyboardButton("✏️ Edit", callback_data='edit_post'),
             InlineKeyboardButton("❌ Cancel", callback_data='cancel_post')
         ],
         [
-            InlineKeyboardButton("✅ Submit", callback_data=f'confirm_post_{post_id}' if post_id else 'confirm_post')
+            InlineKeyboardButton("✅ Submit", callback_data='confirm_post')
         ]
     ]
     
-    action = "update" if post_id else "new"
     preview_text = (
         f"📝 *Post Preview* [{category}]\n\n"
         f"{escape_markdown(post_content, version=2)}\n\n"
-        f"Please confirm your post {action}:"
+        f"Please confirm your post:"
     )
     
     context.user_data['pending_post'] = {
         'content': post_content,
         'category': category,
-        'timestamp': time.time(),
-        'post_id': post_id
+        'timestamp': time.time()
     }
     
     try:
@@ -509,7 +497,7 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
     except Exception as e:
         logger.error(f"Error notifying admin: {e}")
 
-async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sender_id: str, receiver_id: str, message_content: str, reply_to_msg_id: Optional[int] = None):
+async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sender_id: str, receiver_id: str, message_content: str):
     try:
         receiver = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (receiver_id,))
         if not receiver or not receiver['notifications_enabled']:
@@ -526,24 +514,6 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
             f"{escape_markdown(preview_content, version=2)}\n\n"
             f"[View messages](https://t.me/{BOT_USERNAME}?start=inbox)"
         )
-        
-        # If it's a reply, add context about what's being replied to
-        if reply_to_msg_id:
-            original_msg = db_fetch_one('''
-                SELECT pm.content, u.anonymous_name as sender_name
-                FROM private_messages pm
-                JOIN users u ON pm.sender_id = u.user_id
-                WHERE pm.message_id = ?
-            ''', (reply_to_msg_id,))
-            
-            if original_msg:
-                original_preview = original_msg['content'][:50] + '...' if len(original_msg['content']) > 50 else original_msg['content']
-                notification_text = (
-                    f"↩️ {sender_name} replied to your message:\n\n"
-                    f"💬 {escape_markdown(original_preview, version=2)}\n\n"
-                    f"📝 Reply: {escape_markdown(preview_content, version=2)}\n\n"
-                    f"[View conversation](https://t.me/{BOT_USERNAME}?start=inbox)"
-                )
         
         await context.bot.send_message(
             chat_id=receiver_id,
@@ -782,7 +752,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
                 display_name = get_display_name(user_data)
                 display_sex = get_display_sex(user_data)
-                await update.message.reppy_text(
+                await update.message.reply_text(
                     f"👤 *{display_name}* 🎖 \n"
                     f"📌 Sex: {display_sex}\n\n"
                     f"👥 Followers: {len(followers)}\n"
@@ -911,20 +881,6 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
         timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d, %H:%M')
         messages_text += f"👤 *{msg['sender_name']}* {msg['sender_sex']} ({timestamp}):\n"
         messages_text += f"{escape_markdown(msg['content'], version=2)}\n\n"
-        
-        # Add reply context if this is a reply to another message
-        if msg['reply_to_message_id']:
-            replied_msg = db_fetch_one('''
-                SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex
-                FROM private_messages pm
-                JOIN users u ON pm.sender_id = u.user_id
-                WHERE pm.message_id = ?
-            ''', (msg['reply_to_message_id'],))
-            
-            if replied_msg:
-                replied_content = replied_msg['content'][:50] + '...' if len(replied_msg['content']) > 50 else replied_msg['content']
-                messages_text += f"↩️ *In reply to {replied_msg['sender_name']}:*\n{escape_markdown(replied_content, version=2)}\n\n"
-        
         messages_text += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
     
     # Build keyboard with pagination and reply options
@@ -942,7 +898,7 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     # Reply buttons for each message
     for msg in messages:
         keyboard_buttons.append([
-            InlineKeyboardButton(f"↩️ Reply to {msg['sender_name']}", callback_data=f"reply_msg_{msg['sender_id']}_{msg['message_id']}")
+            InlineKeyboardButton(f"↩️ Reply to {msg['sender_name']}", callback_data=f"reply_msg_{msg['sender_id']}")
         ])
     
     keyboard_buttons.append([InlineKeyboardButton("📱 Main Menu", callback_data='menu')])
@@ -1312,9 +1268,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "ℹ️ *የዚህ ቦት አጠቃቀም:*\n"
                 "•  menu button በመጠቀም የተለያዩ አማራጮችን ማየት ይችላሉ.\n"
                 "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
-                "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን �ማንሳት ይችላሉ.\n"
+                "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
                 "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
-                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት �ማየት ይችላሉ.\n"
+                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
                 "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
             )
             keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
@@ -1563,45 +1519,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await show_comments_page(update, context, post_id, comment_page, reply_pages={comment_id: reply_page})
             return
 
-        elif query.data.startswith('edit_post'):
-            # Handle edit post button
-            if query.data == 'edit_post':
-                # New post editing
-                pending_post = context.user_data.get('pending_post')
-                if not pending_post:
-                    await query.message.edit_text("❌ Post data not found. Please start over.")
-                    return
-                
-                if time.time() - pending_post.get('timestamp', 0) > 300:
-                    await query.message.edit_text("❌ Edit time expired. Please start a new post.")
-                    del context.user_data['pending_post']
-                    return
-                
-                # Set user state to editing
-                db_execute(
-                    "UPDATE users SET waiting_for_post = 1, selected_category = ? WHERE user_id = ?",
-                    (pending_post['category'], user_id)
-                )
-                
-                await query.message.reply_text(
-                    "✏️ Please edit your post:",
-                    reply_markup=ForceReply(selective=True)
-                )
-            else:
-                # Editing existing post (not implemented yet)
-                await query.answer("Editing existing posts is not available yet", show_alert=True)
-            
-        elif query.data.startswith('confirm_post'):
+        elif query.data in ('edit_post', 'cancel_post', 'confirm_post'):
             pending_post = context.user_data.get('pending_post')
             if not pending_post:
                 await query.message.edit_text("❌ Post data not found. Please start over.")
                 return
             
-            category = pending_post['category']
-            post_content = pending_post['content']
+            if query.data == 'edit_post':
+                if time.time() - pending_post.get('timestamp', 0) > 300:
+                    await query.message.edit_text("❌ Edit time expired. Please start a new post.")
+                    del context.user_data['pending_post']
+                    return
+                    
+                await query.message.edit_text(
+                    "✏️ Please edit your post:",
+                    reply_markup=ForceReply(selective=True)
+                )
+                return
             
-            if query.data == 'confirm_post':
-                # New post
+            elif query.data == 'cancel_post':
+                await query.message.edit_text("❌ Post cancelled.")
+                del context.user_data['pending_post']
+                return
+            
+            elif query.data == 'confirm_post':
+                category = pending_post['category']
+                post_content = pending_post['content']
+                del context.user_data['pending_post']
+                
                 post_id = db_execute(
                     "INSERT INTO posts (content, author_id, category) VALUES (?, ?, ?)",
                     (post_content, user_id, category)
@@ -1613,19 +1558,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "✅ Your post has been submitted for admin approval!\n"
                     "You'll be notified when it's approved and published."
                 )
-            else:
-                # Update existing post (not implemented yet)
-                await query.answer("Updating existing posts is not available yet", show_alert=True)
-            
-            # Clean up
-            if 'pending_post' in context.user_data:
-                del context.user_data['pending_post']
-            
-        elif query.data == 'cancel_post':
-            if 'pending_post' in context.user_data:
-                del context.user_data['pending_post']
-            await query.message.edit_text("❌ Post cancelled.")
-            
+                return
+
         elif query.data == 'admin_panel':
             await admin_panel(update, context)
             
@@ -1671,27 +1605,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
         elif query.data.startswith('reply_msg_'):
-            parts = query.data.split('_')
-            if len(parts) >= 3:
-                target_id = parts[2]
-                reply_to_msg_id = int(parts[3]) if len(parts) > 3 else None
-                
-                db_execute(
-                    "UPDATE users SET waiting_for_private_message = 1, private_message_target = ? WHERE user_id = ?",
-                    (target_id, user_id)
-                )
-                
-                # Store reply context in user_data
-                context.user_data['reply_to_msg_id'] = reply_to_msg_id
-                
-                target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (target_id,))
-                target_name = target_user['anonymous_name'] if target_user else "this user"
-                
-                await query.message.reply_text(
-                    f"↩️ *Replying to {target_name}*\n\nPlease type your message:",
-                    reply_markup=ForceReply(selective=True),
-                    parse_mode=ParseMode.MARKDOWN
-                )
+            target_id = query.data.split('_', 2)[2]
+            db_execute(
+                "UPDATE users SET waiting_for_private_message = 1, private_message_target = ? WHERE user_id = ?",
+                (target_id, user_id)
+            )
+            
+            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (target_id,))
+            target_name = target_user['anonymous_name'] if target_user else "this user"
+            
+            await query.message.reply_text(
+                f"↩️ *Replying to {target_name}*\n\nPlease type your message:",
+                reply_markup=ForceReply(selective=True),
+                parse_mode=ParseMode.MARKDOWN
+            )
             
     except Exception as e:
         logger.error(f"Error in button_handler: {e}")
@@ -1862,26 +1789,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = user['private_message_target']
         message_content = text
         
-        # Check if this is a reply to another message
-        reply_to_msg_id = context.user_data.get('reply_to_msg_id')
-        
         # Save the private message
         db_execute(
-            "INSERT INTO private_messages (sender_id, receiver_id, content, reply_to_message_id) VALUES (?, ?, ?, ?)",
-            (user_id, target_id, message_content, reply_to_msg_id)
+            "INSERT INTO private_messages (sender_id, receiver_id, content) VALUES (?, ?, ?)",
+            (user_id, target_id, message_content)
         )
         
-        # Reset the user state and context
+        # Reset the user state
         db_execute(
             "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = ?",
             (user_id,)
         )
         
-        if 'reply_to_msg_id' in context.user_data:
-            del context.user_data['reply_to_msg_id']
-        
         # Notify the receiver
-        await notify_user_of_private_message(context, user_id, target_id, message_content, reply_to_msg_id)
+        await notify_user_of_private_message(context, user_id, target_id, message_content)
         
         await update.message.reply_text(
             "✅ Your message has been sent!",
