@@ -527,6 +527,24 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
             f"[View messages](https://t.me/{BOT_USERNAME}?start=inbox)"
         )
         
+        # If it's a reply, add context about what's being replied to
+        if reply_to_msg_id:
+            original_msg = db_fetch_one('''
+                SELECT pm.content, u.anonymous_name as sender_name
+                FROM private_messages pm
+                JOIN users u ON pm.sender_id = u.user_id
+                WHERE pm.message_id = ?
+            ''', (reply_to_msg_id,))
+            
+            if original_msg:
+                original_preview = original_msg['content'][:50] + '...' if len(original_msg['content']) > 50 else original_msg['content']
+                notification_text = (
+                    f"↩️ {sender_name} replied to your message:\n\n"
+                    f"💬 {escape_markdown(original_preview, version=2)}\n\n"
+                    f"📝 Reply: {escape_markdown(preview_content, version=2)}\n\n"
+                    f"[View conversation](https://t.me/{BOT_USERNAME}?start=inbox)"
+                )
+        
         await context.bot.send_message(
             chat_id=receiver_id,
             text=notification_text,
@@ -764,7 +782,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
                 display_name = get_display_name(user_data)
                 display_sex = get_display_sex(user_data)
-                await update.message.reply_text(
+                await update.message.reppy_text(
                     f"👤 *{display_name}* 🎖 \n"
                     f"📌 Sex: {display_sex}\n\n"
                     f"👥 Followers: {len(followers)}\n"
@@ -1294,9 +1312,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "ℹ️ *የዚህ ቦት አጠቃቀም:*\n"
                 "•  menu button በመጠቀም የተለያዩ አማራጮችን ማየት ይችላሉ.\n"
                 "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
-                "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
+                "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን �ማንሳት ይችላሉ.\n"
                 "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
-                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
+                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት �ማየት ይችላሉ.\n"
                 "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
             )
             keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
