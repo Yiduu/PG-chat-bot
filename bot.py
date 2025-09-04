@@ -786,7 +786,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌟✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️🌟\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጁ :",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN)
     
@@ -815,10 +815,22 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ''', (user_id,))
     
     if not messages:
-        await update.message.reply_text(
-            "📭 *Your Inbox*\n\nYou don't have any messages yet.",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        if update.callback_query:
+            try:
+                await update.callback_query.edit_message_text(
+                    "📭 *Your Inbox*\n\nYou don't have any messages yet.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except BadRequest:
+                await update.callback_query.message.reply_text(
+                    "📭 *Your Inbox*\n\nYou don't have any messages yet.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        else:
+            await update.message.reply_text(
+                "📭 *Your Inbox*\n\nYou don't have any messages yet.",
+                parse_mode=ParseMode.MARKDOWN
+            )
         return
     
     inbox_text = f"📭 *Your Inbox* ({unread_count} unread)\n\n"
@@ -829,16 +841,35 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
         preview = msg['content'][:30] + '...' if len(msg['content']) > 30 else msg['content']
         inbox_text += f"{status} *{msg['sender_name']}* {msg['sender_sex']} - {preview} ({timestamp})\n"
     
-    keyboard = [
-        [InlineKeyboardButton("📝 View Messages", callback_data='view_messages')],
-        [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
-    ]
+    # Build keyboard with reply buttons for each message
+    keyboard = []
+    for msg in messages:
+        keyboard.append([InlineKeyboardButton(f"↩️ Reply to {msg['sender_name']}", callback_data=f"reply_msg_{msg['sender_id']}")])
     
-    await update.message.reply_text(
-        inbox_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    keyboard.append([InlineKeyboardButton("📝 View Messages", callback_data='view_messages')])
+    keyboard.append([InlineKeyboardButton("📱 Main Menu", callback_data='menu')])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(
+                inbox_text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except BadRequest:
+            await update.callback_query.message.reply_text(
+                inbox_text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
+    else:
+        await update.message.reply_text(
+            inbox_text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
     user_id = str(update.effective_user.id)
@@ -869,10 +900,22 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     total_pages = (total_messages + per_page - 1) // per_page
     
     if not messages:
-        await update.message.reply_text(
-            "📭 *Your Messages*\n\nYou don't have any messages yet.",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        if update.callback_query:
+            try:
+                await update.callback_query.edit_message_text(
+                    "📭 *Your Messages*\n\nYou don't have any messages yet.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except BadRequest:
+                await update.callback_query.message.reply_text(
+                    "📭 *Your Messages*\n\nYou don't have any messages yet.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        else:
+            await update.message.reply_text(
+                "📭 *Your Messages*\n\nYou don't have any messages yet.",
+                parse_mode=ParseMode.MARKDOWN
+            )
         return
     
     messages_text = f"📭 *Your Messages* (Page {page}/{total_pages})\n\n"
@@ -1270,7 +1313,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
                 "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
                 "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
-                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
+                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ �ሰዎች ብዛት ማየት ይችላሉ.\n"
                 "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
             )
             keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
