@@ -71,7 +71,9 @@ def init_db():
             channel_message_id INTEGER,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             approved BOOLEAN DEFAULT 0,
-            admin_approved_by TEXT
+            admin_approved_by TEXT,
+            media_type TEXT DEFAULT 'text',
+            media_id TEXT
         )''')
         
         c.execute('''
@@ -81,7 +83,7 @@ def init_db():
             parent_comment_id INTEGER DEFAULT 0,
             author_id TEXT,
             content TEXT,
-            type TEXT,
+            type TEXT DEFAULT 'text',
             file_id TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (post_id) REFERENCES posts (post_id)
@@ -123,6 +125,14 @@ def init_db():
         if 'private_message_target' not in user_columns:
             c.execute("ALTER TABLE users ADD COLUMN private_message_target TEXT")
         
+        # Check for media columns in posts
+        c.execute("PRAGMA table_info(posts)")
+        post_columns = [col[1] for col in c.fetchall()]
+        if 'media_type' not in post_columns:
+            c.execute("ALTER TABLE posts ADD COLUMN media_type TEXT DEFAULT 'text'")
+        if 'media_id' not in post_columns:
+            c.execute("ALTER TABLE posts ADD COLUMN media_id TEXT")
+            
         # Create admin user if specified
         ADMIN_ID = os.getenv('ADMIN_ID')
         if ADMIN_ID:
@@ -397,7 +407,7 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in show_settings: {e}")
         await update.message.reply_text("❌ Error loading settings. Please try again.")
 
-async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str):
+async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None):
     keyboard = [
         [
             InlineKeyboardButton("✏️ Edit", callback_data='edit_post'),
@@ -417,22 +427,48 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data['pending_post'] = {
         'content': post_content,
         'category': category,
+        'media_type': media_type,
+        'media_id': media_id,
         'timestamp': time.time()
     }
     
     try:
         if update.callback_query:
-            await update.callback_query.edit_message_text(
-                preview_text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
+            if media_type == 'text':
+                await update.callback_query.edit_message_text(
+                    preview_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+            else:
+                await update.callback_query.edit_message_caption(
+                    caption=preview_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
         else:
-            await update.message.reply_text(
-                preview_text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
+            if media_type == 'text':
+                await update.message.reply_text(
+                    preview_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+            else:
+                # For media posts, we need to resend the media with the confirmation
+                if media_type == 'photo':
+                    await update.message.reply_photo(
+                        photo=media_id,
+                        caption=preview_text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode=ParseMode.MARKDOWN_V2
+                    )
+                elif media_type == 'voice':
+                    await update.message.reply_voice(
+                        voice=media_id,
+                        caption=preview_text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode=ParseMode.MARKDOWN_V2
+                    )
     except Exception as e:
         logger.error(f"Error in send_post_confirmation: {e}")
         await update.message.reply_text("❌ Error showing confirmation. Please try again.")
@@ -565,7 +601,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     
     posts = db_fetch_all("""
-        SELECT p.post_id, p.content, p.category, u.anonymous_name 
+        SELECT p.post_id, p.content, p.category, u.anonymous_name, p.media_type, p.media_id
         FROM posts p
         JOIN users u ON p.author_id = u.user_id
         WHERE p.approved = 0
@@ -588,12 +624,29 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text = f"📝 *Pending Post* [{post['category']}]\n\n{preview}\n\n👤 {post['anonymous_name']}"
         
         try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=text,
-                reply_markup=keyboard,
-                parse_mode=ParseMode.MARKDOWN
-            )
+            if post['media_type'] == 'text':
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            elif post['media_type'] == 'photo':
+                await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=post['media_id'],
+                    caption=text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            elif post['media_type'] == 'voice':
+                await context.bot.send_voice(
+                    chat_id=user_id,
+                    voice=post['media_id'],
+                    caption=text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.MARKDOWN
+                )
         except Exception as e:
             logger.error(f"Error sending pending post: {e}")
 
@@ -622,12 +675,30 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             [InlineKeyboardButton(f"💬 Comments (0)", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
         ])
         
-        msg = await context.bot.send_message(
-            chat_id=CHANNEL_ID,
-            text=caption_text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=kb
-        )
+        # Send post to channel based on media type
+        if post['media_type'] == 'text':
+            msg = await context.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=caption_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=kb
+            )
+        elif post['media_type'] == 'photo':
+            msg = await context.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=post['media_id'],
+                caption=caption_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=kb
+            )
+        elif post['media_type'] == 'voice':
+            msg = await context.bot.send_voice(
+                chat_id=CHANNEL_ID,
+                voice=post['media_id'],
+                caption=caption_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=kb
+            )
         
         db_execute(
             "UPDATE posts SET approved = 1, admin_approved_by = ?, channel_message_id = ? WHERE post_id = ?",
@@ -786,7 +857,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌟✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️🌟\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጁ :",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN)
     
@@ -1421,7 +1492,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     new_kb = InlineKeyboardMarkup([
                         [
                             InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likereply_{comment_id}"),
-                            InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikereply_{comment_id}"),
+                            InlineKeyboardButton(f"{dislike_emoji} {dislikes", callback_data=f"dislikereply_{comment_id}"),
                             InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{comment_id}")
                         ]
                     ])
@@ -1545,11 +1616,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif query.data == 'confirm_post':
                 category = pending_post['category']
                 post_content = pending_post['content']
+                media_type = pending_post.get('media_type', 'text')
+                media_id = pending_post.get('media_id')
                 del context.user_data['pending_post']
                 
                 post_id = db_execute(
-                    "INSERT INTO posts (content, author_id, category) VALUES (?, ?, ?)",
-                    (post_content, user_id, category)
+                    "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (?, ?, ?, ?, ?)",
+                    (post_content, user_id, category, media_type, media_id)
                 )
                 
                 await notify_admin_of_new_post(context, post_id)
@@ -1688,7 +1761,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         display_name = get_display_name(user)
         
         post_content = ""
-        media_to_send = None
+        media_type = 'text'
+        media_id = None
+        
         try:
             if update.message.text:
                 post_content = update.message.text
@@ -1696,13 +1771,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             elif update.message.photo:
                 photo = update.message.photo[-1]
-                file_id = photo.file_id
-                media_to_send = ('photo', file_id)
+                media_id = photo.file_id
+                media_type = 'photo'
                 post_content = update.message.caption or ""
             elif update.message.voice:
                 voice = update.message.voice
-                file_id = voice.file_id
-                media_to_send = ('voice', file_id)
+                media_id = voice.file_id
+                media_type = 'voice'
                 post_content = update.message.caption or ""
             else:
                 post_content = "(Unsupported content type)"
@@ -1710,20 +1785,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error reading media: {e}")
             post_content = "(Unsupported content type)" 
 
-        if media_to_send:
-            post_id = db_execute(
-                "INSERT INTO posts (content, author_id, category) VALUES (?, ?, ?)",
-                (post_content, user_id, category)
-            )
-            
-            await notify_admin_of_new_post(context, post_id)
-            
-            await update.message.reply_text(
-                "✅ Your post has been submitted for admin approval!\n"
-                "You'll be notified when it's approved and published.",
-                reply_markup=main_menu
-            )
-            return 
+        await send_post_confirmation(update, context, post_content, category, media_type, media_id)
+        return
 
     elif user and user['waiting_for_comment']:
         post_id = user['comment_post_id']
