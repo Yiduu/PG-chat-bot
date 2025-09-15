@@ -73,7 +73,8 @@ def init_db():
             approved BOOLEAN DEFAULT 0,
             admin_approved_by TEXT,
             media_type TEXT DEFAULT 'text',
-            media_id TEXT
+            media_id TEXT,
+            comment_count INTEGER DEFAULT 0
         )''')
         
         c.execute('''
@@ -132,6 +133,8 @@ def init_db():
             c.execute("ALTER TABLE posts ADD COLUMN media_type TEXT DEFAULT 'text'")
         if 'media_id' not in post_columns:
             c.execute("ALTER TABLE posts ADD COLUMN media_id TEXT")
+        if 'comment_count' not in post_columns:
+            c.execute("ALTER TABLE posts ADD COLUMN comment_count INTEGER DEFAULT 0")
             
         # Create admin user if specified
         ADMIN_ID = os.getenv('ADMIN_ID')
@@ -306,6 +309,37 @@ def get_user_rank(user_id):
         if user['user_id'] == user_id:
             return rank
     return None
+
+async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, post_id: int):
+    """Update the comment count on the channel post"""
+    try:
+        # Get the post details
+        post = db_fetch_one("SELECT channel_message_id, comment_count FROM posts WHERE post_id = ?", (post_id,))
+        if not post or not post['channel_message_id']:
+            return
+        
+        # Count all comments for this post
+        total_comments = count_all_comments(post_id)
+        
+        # Update the database with the new count
+        db_execute("UPDATE posts SET comment_count = ? WHERE post_id = ?", (total_comments, post_id))
+        
+        # Update the channel message button
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"💬 Comments ({total_comments})", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
+        ])
+        
+        # Try to edit the message in the channel
+        await context.bot.edit_message_reply_markup(
+            chat_id=CHANNEL_ID,
+            message_id=post['channel_message_id'],
+            reply_markup=keyboard
+        )
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            logger.error(f"Failed to update comment count in channel: {e}")
+    except Exception as e:
+        logger.error(f"Error updating channel post comment count: {e}")
 
 async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top_users = db_fetch_all('''
@@ -705,6 +739,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             f"[Telegram](https://t.me/gospelyrics)| [Bot](https://t.me/{BOT_USERNAME})"
         )
         
+        # Initial comment count is 0
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(f"💬 Comments (0)", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
         ])
@@ -1347,7 +1382,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "ℹ️ *የዚህ ቦት አጠቃቀም:*\n"
                 "•  menu button በመጠቀም የተለያዩ አማራጮችን ማየት ይችላሉ.\n"
                 "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
-                "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
+                "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን �ማንሳት ይችላሉ.\n"
                 "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
                 "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ �ሰዎች ብዛት ማየት ይችላሉ.\n"
                 "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
@@ -1851,6 +1886,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
         await update.message.reply_text("✅ Your comment has been posted!", reply_markup=main_menu)
+        
+        # Update the comment count on the channel post
+        await update_channel_post_comment_count(context, post_id)
         
         # Notify parent comment author if this is a reply
         if parent_comment_id != 0:
