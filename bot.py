@@ -1703,7 +1703,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del context.user_data['pending_post']
                 
                 post_id = db_execute(
-                    "INSERT INTO posts (content, author极d, category, media_type, media_id) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (?, ?, ?, ?, ?)",
                     (post_content, user_id, category, media_type, media_id)
                 )
                 
