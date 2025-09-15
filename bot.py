@@ -112,6 +112,17 @@ def init_db():
             FOREIGN KEY (receiver_id) REFERENCES users (user_id)
         )''')
         
+        # Add blocks table for blocking users
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS blocks (
+            blocker_id TEXT,
+            blocked_id TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (blocker_id, blocked_id),
+            FOREIGN KEY (blocker_id) REFERENCES users (user_id),
+            FOREIGN KEY (blocked_id) REFERENCES users (user_id)
+        )''')
+        
         # Check for missing columns and add them
         c.execute("PRAGMA table_info(users)")
         user_columns = [col[1] for col in c.fetchall()]
@@ -181,6 +192,14 @@ def db_fetch_all(query, params=()):
         c = conn.cursor()
         c.execute(query, params)
         return c.fetchall()
+
+# Check if a user is blocked
+def is_blocked(blocker_id, blocked_id):
+    row = db_fetch_one(
+        "SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ?",
+        (blocker_id, blocked_id)
+    )
+    return row is not None
 
 # Categories
 CATEGORIES = [
@@ -588,8 +607,13 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
     except Exception as e:
         logger.error(f"Error notifying admin: {e}")
 
-async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sender_id: str, receiver_id: str, message_content: str):
+async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sender_id: str, receiver_id: str, message_content: str, message_id: int):
     try:
+        # Check if receiver has blocked the sender
+        if is_blocked(receiver_id, sender_id):
+            logger.info(f"Not sending message to {receiver_id} as they blocked {sender_id}")
+            return
+            
         receiver = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (receiver_id,))
         if not receiver or not receiver['notifications_enabled']:
             return
@@ -600,16 +624,26 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         # Truncate long messages for the notification
         preview_content = message_content[:100] + '...' if len(message_content) > 100 else message_content
         
+        # Create inline keyboard with reply and block options
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("💬 Reply", callback_data=f"reply_msg_{sender_id}"),
+                InlineKeyboardButton("⛔ Block", callback_data=f"block_user_{sender_id}")
+            ]
+        ])
+        
         notification_text = (
-            f"📩 You received a private message from {sender_name}:\n\n"
-            f"{escape_markdown(preview_content, version=2)}\n\n"
-            f"[View messages](https://t.me/{BOT_USERNAME}?start=inbox)"
+            f"📩 *New Private Message*\n\n"
+            f"👤 *From:* {sender_name}\n"
+            f"💬 *Message:* {escape_markdown(preview_content, version=2)}\n\n"
+            f"_Use the buttons below to respond or block this user_"
         )
         
         await context.bot.send_message(
             chat_id=receiver_id,
             text=notification_text,
-            parse_mode=ParseMode.MARKDOWN_V2
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=keyboard
         )
     except Exception as e:
         logger.error(f"Error sending private message notification: {e}")
@@ -1040,7 +1074,8 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     # Reply buttons for each message
     for msg in messages:
         keyboard_buttons.append([
-            InlineKeyboardButton(f"↩️ Reply to {msg['sender_name']}", callback_data=f"reply_msg_{msg['sender_id']}")
+            InlineKeyboardButton(f"💬 Reply to {msg['sender_name']}", callback_data=f"reply_msg_{msg['sender_id']}"),
+            InlineKeyboardButton(f"⛔ Block {msg['sender_name']}", callback_data=f"block_user_{msg['sender_id']}")
         ])
     
     keyboard_buttons.append([InlineKeyboardButton("📱 Main Menu", callback_data='menu')])
@@ -1382,9 +1417,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "ℹ️ *የዚህ ቦት አጠቃቀም:*\n"
                 "•  menu button በመጠቀም የተለያዩ አማራጮችን ማየት ይችላሉ.\n"
                 "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
-                "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን �ማንሳት ይችላሉ.\n"
+                "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
                 "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
-                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ �ሰዎች ብዛት ማየት ይችላሉ.\n"
+                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
                 "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
             )
             keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
@@ -1565,10 +1600,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
                         
                         notification_text = (
-                            f"❤️ {reactor_name} reacted to your comment:\n\n"
+                            f"❤️ {reactor_name} reacted to your comment:\极"
                             f"🗨 {escape_markdown(comment['content'][:100], version=2)}\n\n"
                             f"📝 Post: {escape_markdown(post_preview, version=2)}\n\n"
-                            f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+                            f"[View conversation](https://t.me/{BOT_USERNAME}?极tart=comments_{post_id})"
                         )
                         
                         await context.bot.send_message(
@@ -1586,14 +1621,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 post_id = int(parts[1])
                 comment_id = int(parts[2])
                 db_execute(
-                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = ?, comment_idx = ? WHERE user_id = ?",
+                    "极PDATE users SET waiting_for_comment = 1, comment_post_id = ?, comment_idx = ? WHERE user_id = ?",
                     (post_id, comment_id, user_id)
                 )
                 
                 comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = ?", (comment_id,))
                 preview_text = "Original comment not found"
                 if comment:
-                    content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
+                    content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment极content']
                     preview_text = f"💬 *Replying to:*\n{escape_markdown(content, version=2)}"
                 
                 await query.message.reply_text(
@@ -1614,7 +1649,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (post_id, comment_id, user_id)
                 )
         
-                comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = ?", (comment_id,))
+                comment = db极fetch_one("SELECT * FROM comments WHERE comment_id = ?", (comment_id,))
                 preview_text = "Original reply not found"
                 if comment:
                     content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
@@ -1630,7 +1665,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith("replypage_"):
             parts = query.data.split("_")
             if len(parts) == 5:
-                post_id = int(parts[1])
+                post_id =极int(parts[1])
                 comment_id = int(parts[2])
                 reply_page = int(parts[3])
                 comment_page = int(parts[4])
@@ -1668,7 +1703,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del context.user_data['pending_post']
                 
                 post_id = db_execute(
-                    "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO posts (content, author极d, category, media_type, media_id) VALUES (?, ?, ?, ?, ?)",
                     (post_content, user_id, category, media_type, media_id)
                 )
                 
@@ -1710,6 +1745,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         elif query.data.startswith('message_'):
             target_id = query.data.split('_', 1)[1]
+            
+            # Check if the target has blocked the user
+            if is_blocked(target_id, user_id):
+                await query.message.reply_text("❌ You cannot message this user as they have blocked you.")
+                return
+                
             db_execute(
                 "UPDATE users SET waiting_for_private_message = 1, private_message_target = ? WHERE user_id = ?",
                 (target_id, user_id)
@@ -1726,9 +1767,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         elif query.data.startswith('reply_msg_'):
             target_id = query.data.split('_', 2)[2]
+            
+            # Check if the target has blocked the user
+            if is_blocked(target_id, user_id):
+                await query.message.reply_text("❌ You cannot message this user as they have blocked you.")
+                return
+                
             db_execute(
                 "UPDATE users SET waiting_for_private_message = 1, private_message_target = ? WHERE user_id = ?",
-                (target_id, user_id)
+                (极arget_id, user_id)
             )
             
             target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (target_id,))
@@ -1739,6 +1786,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=ForceReply(selective=True),
                 parse_mode=ParseMode.MARKDOWN
             )
+            
+        elif query.data.startswith('block_user_'):
+            target_id = query.data.split('_', 2)[2]
+            
+            # Add to blocks table
+            try:
+                db_execute(
+                    "INSERT OR IGNORE INTO blocks (blocker_id, blocked_id) VALUES (?, ?)",
+                    (user_id, target_id)
+                )
+                
+                target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (target_id,))
+                target_name = target_user['anonymous_name'] if target_user else "this user"
+                
+                await query.message.reply_text(f"⛔ You have blocked {target_name}. They can no longer send you messages.")
+                
+                # Update the message to remove the block button
+                try:
+                    await query.edit_message_reply_markup(
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("💬 Reply", callback_data=f"reply_msg_{target_id}")],
+                            [InlineKeyboardButton("✅ Blocked", callback_data="already_blocked")]
+                        ])
+                    )
+                except:
+                    pass
+                    
+            except Exception as e:
+                logger.error(f"Error blocking user: {e}")
+                await query.message.reply_text("❌ Error blocking user. Please try again.")
             
     except Exception as e:
         logger.error(f"Error in button_handler: {e}")
@@ -1761,9 +1838,10 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         SELECT 
             (SELECT COUNT(*) FROM users) as total_users,
             (SELECT COUNT(*) FROM posts WHERE approved = 1) as approved_posts,
-            (SELECT COUNT(*) FROM posts WHERE approved = 0) as pending_posts,
+            (SELECT COUNT(*) FROM posts WHERE approved = 0)极 pending_posts,
             (SELECT COUNT(*) FROM comments) as total_comments,
-            (SELECT COUNT(*) FROM private_messages) as total_messages
+            (SELECT COUNT(*) FROM private_messages) as total_messages,
+            (SELECT COUNT(*) FROM blocks) as total_blocks
     ''')
     
     text = (
@@ -1772,7 +1850,8 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📝 Approved Posts: {stats['approved_posts']}\n"
         f"🕒 Pending Posts: {stats['pending_posts']}\n"
         f"💬 Total Comments: {stats['total_comments']}\n"
-        f"📩 Private Messages: {stats['total_messages']}"
+        f"📩 Private Messages: {stats['total_messages']}\n"
+        f"⛔ Total Blocks: {stats['total_blocks']}"
     )
     
     keyboard = InlineKeyboardMarkup([
@@ -1784,7 +1863,7 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.edit_message_text(
                 text,
                 reply_markup=keyboard,
-                parse_mode=ParseMode.MARKDOWN
+                parse_mode=ParseMode极MARKDOWN
             )
         else:
             await update.message.reply_text(
@@ -1857,7 +1936,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
         if update.message.text:
             content = update.message.text
-        elif update.message.photo:
+        elif update.message极photo:
             photo = update.message.photo[-1]
             file_id = photo.file_id
             comment_type = 'photo'
@@ -1899,20 +1978,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = user['private_message_target']
         message_content = text
         
+        # Check if the user is blocked by the target
+        if is_blocked(target_id, user_id):
+            await update.message.reply_text(
+                "❌ You cannot message this user as they have blocked you.",
+                reply_markup=main_menu
+            )
+            # Reset the user state
+            db_execute(
+                "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = ?",
+                (user_id,)
+            )
+            return
+        
         # Save the private message
-        db_execute(
+        message_id = db_execute(
             "INSERT INTO private_messages (sender_id, receiver_id, content) VALUES (?, ?, ?)",
             (user_id, target_id, message_content)
         )
         
         # Reset the user state
         db_execute(
-            "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = ?",
+            "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id极 ?",
             (user_id,)
         )
         
         # Notify the receiver
-        await notify_user_of_private_message(context, user_id, target_id, message_content)
+        await notify_user_of_private_message(context, user_id, target_id, message_content, message_id)
         
         await update.message.reply_text(
             "✅ Your message has been sent!",
@@ -1936,7 +2028,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "🙏 Ask Question":
         await update.message.reply_text(
             "📚 *Choose a category:*",
-            reply_markup=build_category_buttons(),
+            reply_markup极build_category_buttons(),
             parse_mode=ParseMode.MARKDOWN
         )
         return 
@@ -1959,7 +2051,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Use the menu buttons to navigate.\n"
             "• Tap 'Ask Question' to share your thoughts anonymously.\n"
             "• Choose a category and type or send your message (text, photo, or voice).\n"
-            "• After posting, others can comment on your posts.\n"
+            "• After posting, others can comment on your posts.\极"
             "• View your profile, set your name and sex anytime.\n"
             "• Use the comments button on channel posts to join the conversation here.\n"
             "• Follow users to send them private messages."
@@ -2004,7 +2096,7 @@ def main():
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("leaderboard", show_leaderboard))
-    app.add_handler(CommandHandler("settings", show_settings))
+    app.add_handler(CommandHandler("settings极 show_settings))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("inbox", show_inbox))
     app.add_handler(CallbackQueryHandler(button_handler))
