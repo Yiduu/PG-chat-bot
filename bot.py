@@ -1184,7 +1184,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         likes = likes_row['cnt'] if likes_row else 0
         
         dislikes_row = db_fetch_one(
-           极SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
             (comment['comment_id'],)
         )
         dislikes = dislikes_row['cnt'] if dislikes_row else 0
