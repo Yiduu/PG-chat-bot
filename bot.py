@@ -1649,7 +1649,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (post_id, comment_id, user_id)
                 )
         
-                comment = db极fetch_one("SELECT * FROM comments WHERE comment_id = ?", (comment_id,))
+                comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = ?", (comment_id,))
                 preview_text = "Original reply not found"
                 if comment:
                     content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
@@ -1665,7 +1665,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith("replypage_"):
             parts = query.data.split("_")
             if len(parts) == 5:
-                post_id =极int(parts[1])
+                post_id =int(parts[1])
                 comment_id = int(parts[2])
                 reply_page = int(parts[3])
                 comment_page = int(parts[4])
