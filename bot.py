@@ -1628,7 +1628,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = ?", (comment_id,))
                 preview_text = "Original comment not found"
                 if comment:
-                    content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment极content']
+                    content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
                     preview_text = f"💬 *Replying to:*\n{escape_markdown(content, version=2)}"
                 
                 await query.message.reply_text(
