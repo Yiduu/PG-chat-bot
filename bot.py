@@ -1108,81 +1108,48 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             reply_to_message_id=header_message_id
         )
 
-        reply_page = reply_pages.get(comment['comment_id'], 1)
-        reply_per_page = 5
-        reply_offset = (reply_page - 1) * reply_per_page
-
-        replies = db_fetch_all(
-            "SELECT * FROM comments WHERE parent_comment_id = ? ORDER BY timestamp LIMIT ? OFFSET ?",
-            (comment['comment_id'], reply_per_page, reply_offset)
-        )
-        total_replies = db_fetch_one(
-            "SELECT COUNT(*) as cnt FROM comments WHERE parent_comment_id = ?",
-            (comment['comment_id'],)
-        )['cnt']
-        total_reply_pages = (total_replies + reply_per_page - 1) // reply_per_page
-
-        for reply in replies:
-            reply_user_id = reply['author_id']
-            reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (reply_user_id,))
-            reply_display_name = get_display_name(reply_user)
-            reply_display_sex = get_display_sex(reply_user)
-            rating_reply = calculate_user_rating(reply_user_id)
-            stars_reply = format_stars(rating_reply)
-            profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_display_name}"
-            safe_reply = escape_markdown(reply['content'], version=2)
-
-            reply_likes = db_fetch_one(
-                "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
-                (reply['comment_id'],)
-            )['cnt']
-            
-            reply_dislikes = db_fetch_one(
-                "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
-                (reply['comment_id'],)
-            )['cnt']
-
-            reply_user_reaction = db_fetch_one(
-                "SELECT type FROM reactions WHERE comment_id = ? AND user_id = ?",
-                (reply['comment_id'], user_id)
-            )
-
-            reply_like_emoji = "👍" if reply_user_reaction and reply_user_reaction['type'] == 'like' else "👍"
-            reply_dislike_emoji = "👎" if reply_user_reaction and reply_user_reaction['type'] == 'dislike' else "👎"
-
-            reply_kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(f"{reply_like_emoji} {reply_likes}", callback_data=f"likereply_{reply['comment_id']}"),
-                    InlineKeyboardButton(f"{reply_dislike_emoji} {reply_dislikes}", callback_data=f"dislikereply_{reply['comment_id']}"),
-                    InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{comment['comment_id']}_{reply['comment_id']}")
-                ]
-            ])
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"{safe_reply}\n\n[{reply_display_name}]({profile_url_reply}) {reply_display_sex} {stars_reply}",
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_to_message_id=msg.message_id,
-                reply_markup=reply_kb
-            )
-
-        if total_reply_pages > 1:
-            reply_pagination_buttons = []
-            if reply_page > 1:
-                reply_pagination_buttons.append(
-                    InlineKeyboardButton("⬅️ Prev Replies", callback_data=f"replypage_{post_id}_{comment['comment_id']}_{reply_page-1}_{page}")
-                )
-            if reply_page < total_reply_pages:
-                reply_pagination_buttons.append(
-                    InlineKeyboardButton("Next Replies ➡️", callback_data=f"replypage_{post_id}_{comment['comment_id']}_{reply_page+1}_{page}")
-                )
-            if reply_pagination_buttons:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"Replies page {reply_page}/{total_reply_pages}",
-                    reply_markup=InlineKeyboardMarkup([reply_pagination_buttons]),
-                    reply_to_message_id=msg.message_id
-                )
+                # Recursive function to display replies under this comment
+                MAX_REPLY_DEPTH = 6  # avoid infinite nesting
+        
+                async def send_replies_recursive(parent_comment_id, parent_msg_id, depth=1):
+                    if depth > MAX_REPLY_DEPTH:
+                        return
+                    children = db_fetch_all(
+                        "SELECT * FROM comments WHERE parent_comment_id = ? ORDER BY timestamp",
+                        (parent_comment_id,)
+                    )
+                    for child in children:
+                        reply_user_id = child['author_id']
+                        reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (reply_user_id,))
+                        reply_display_name = get_display_name(reply_user)
+                        reply_display_sex = get_display_sex(reply_user)
+                        rating_reply = calculate_user_rating(reply_user_id)
+                        stars_reply = format_stars(rating_reply)
+                        profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_display_name}"
+                        safe_reply = escape_markdown(child['content'], version=2)
+        
+                        reply_kb = InlineKeyboardMarkup([
+                            [
+                                InlineKeyboardButton("👍", callback_data=f"likereply_{child['comment_id']}"),
+                                InlineKeyboardButton("👎", callback_data=f"dislikereply_{child['comment_id']}"),
+                                InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{child['comment_id']}")
+                            ]
+                        ])
+        
+                        # Send this reply under its parent message
+                        child_msg = await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"{safe_reply}\n\n[{reply_display_name}]({profile_url_reply}) {reply_display_sex} {stars_reply}",
+                            parse_mode=ParseMode.MARKDOWN_V2,
+                            reply_to_message_id=parent_msg_id,
+                            reply_markup=reply_kb
+                        )
+        
+                        # Recursively show this child's own replies
+                        await send_replies_recursive(child['comment_id'], child_msg.message_id, depth + 1)
+        
+                # Start recursion for this top-level comment
+                await send_replies_recursive(comment['comment_id'], msg.message_id, depth=1)
 
     pagination_buttons = []
     if page > 1:
@@ -1561,24 +1528,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts = query.data.split("_")
             if len(parts) == 4:
                 post_id = int(parts[1])
-                parent_comment_id = int(parts[2])
-                comment_id = int(parts[3])
+                # parts[2] is the immediate parent id (not needed for storage)
+                comment_id = int(parts[3])   # this is the comment/reply the user is replying TO
+                # Store the exact comment id being replied to in comment_idx
                 db_execute(
-                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = ?, comment_idx = ?, reply_idx = ? WHERE user_id = ?",
-                    (post_id, parent_comment_id, comment_id, user_id)
+                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = ?, comment_idx = ? WHERE user_id = ?",
+                    (post_id, comment_id, user_id)
                 )
-                
+        
                 comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = ?", (comment_id,))
                 preview_text = "Original reply not found"
                 if comment:
                     content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
                     preview_text = f"💬 *Replying to:*\n{escape_markdown(content, version=2)}"
-                
+        
                 await query.message.reply_text(
                     f"{preview_text}\n\n↩️ Please type your *reply*:",
                     reply_markup=ForceReply(selective=True),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
+
         
         elif query.data.startswith("replypage_"):
             parts = query.data.split("_")
@@ -1790,15 +1759,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif user and user['waiting_for_comment']:
         post_id = user['comment_post_id']
+    
+        # Always use comment_idx as the parent
         parent_comment_id = 0
+        if user['comment_idx']:
+            try:
+                parent_comment_id = int(user['comment_idx'])
+            except Exception:
+                parent_comment_id = 0
+    
         comment_type = 'text'
         file_id = None
-        
-        if user['reply_idx'] is not None:
-            parent_comment_id = user['reply_idx']
-        elif user['comment_idx'] is not None:
-            parent_comment_id = user['comment_idx']
-        
+    
         if update.message.text:
             content = update.message.text
         elif update.message.photo:
@@ -1814,38 +1786,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Unsupported comment type. Please send text, photo, or voice message.")
             return
-        
+    
+        # Insert new comment
         comment_id = db_execute(
             """INSERT INTO comments 
             (post_id, parent_comment_id, author_id, content, type, file_id) 
             VALUES (?, ?, ?, ?, ?, ?)""",
             (post_id, parent_comment_id, user_id, content, comment_type, file_id)
         )
-        
-        total_comments = count_all_comments(post_id)
-        try:
-            post_data = db_fetch_one("SELECT channel_message_id FROM posts WHERE post_id = ?", (post_id,))
-            if post_data and post_data['channel_message_id']:
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f"💬 Comments ({total_comments})", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
-                ])
-                await context.bot.edit_message_reply_markup(
-                    chat_id=CHANNEL_ID,
-                    message_id=post_data['channel_message_id'],
-                    reply_markup=keyboard
-                )
-        except Exception as e:
-            logger.error(f"Failed to update comment count: {e}")
-        
+    
+        # Reset state so the user can continue normally
         db_execute(
-            "UPDATE users SET waiting_for_comment = 0, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL, nested_idx = NULL WHERE user_id = ?",
+            "UPDATE users SET waiting_for_comment = 0, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = ?",
             (user_id,)
         )
-        
-        if parent_comment_id != 0:
-            await notify_user_of_reply(context, post_id, parent_comment_id, user_id)
-        
-        await update.message.reply_text("✅ Your comment has been added!", reply_markup=main_menu)
+    
+        await update.message.reply_text("✅ Your comment has been posted!", reply_markup=main_menu)
         return
 
     elif user and user['waiting_for_private_message']:
