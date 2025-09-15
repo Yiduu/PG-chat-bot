@@ -2096,7 +2096,7 @@ def main():
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("leaderboard", show_leaderboard))
-    app.add_handler(CommandHandler("settings极 show_settings))
+    app.add_handler(CommandHandler("settings" , show_settings))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("inbox", show_inbox))
     app.add_handler(CallbackQueryHandler(button_handler))
