@@ -1796,6 +1796,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (post_id, parent_comment_id, user_id, content, comment_type, file_id)
         )
     
+        # ✅ Fix: increment comment counter on the post
+        db_execute(
+            "UPDATE posts SET comments = comments + 1 WHERE post_id = ?",
+            (post_id,)
+        )
+    
         # Reset state so the user can continue normally
         db_execute(
             "UPDATE users SET waiting_for_comment = 0, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = ?",
