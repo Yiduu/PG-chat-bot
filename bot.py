@@ -1109,47 +1109,48 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         )
 
                 # Recursive function to display replies under this comment
-                MAX_REPLY_DEPTH = 6  # avoid infinite nesting
-        
-                async def send_replies_recursive(parent_comment_id, parent_msg_id, depth=1):
-                    if depth > MAX_REPLY_DEPTH:
-                        return
-                    children = db_fetch_all(
-                        "SELECT * FROM comments WHERE parent_comment_id = ? ORDER BY timestamp",
-                        (parent_comment_id,)
-                    )
-                    for child in children:
-                        reply_user_id = child['author_id']
-                        reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (reply_user_id,))
-                        reply_display_name = get_display_name(reply_user)
-                        reply_display_sex = get_display_sex(reply_user)
-                        rating_reply = calculate_user_rating(reply_user_id)
-                        stars_reply = format_stars(rating_reply)
-                        profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_display_name}"
-                        safe_reply = escape_markdown(child['content'], version=2)
-        
-                        reply_kb = InlineKeyboardMarkup([
-                            [
-                                InlineKeyboardButton("👍", callback_data=f"likereply_{child['comment_id']}"),
-                                InlineKeyboardButton("👎", callback_data=f"dislikereply_{child['comment_id']}"),
-                                InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{child['comment_id']}")
-                            ]
-                        ])
-        
-                        # Send this reply under its parent message
-                        child_msg = await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=f"{safe_reply}\n\n[{reply_display_name}]({profile_url_reply}) {reply_display_sex} {stars_reply}",
-                            parse_mode=ParseMode.MARKDOWN_V2,
-                            reply_to_message_id=parent_msg_id,
-                            reply_markup=reply_kb
-                        )
-        
-                        # Recursively show this child's own replies
-                        await send_replies_recursive(child['comment_id'], child_msg.message_id, depth + 1)
-        
-                # Start recursion for this top-level comment
-                await send_replies_recursive(comment['comment_id'], msg.message_id, depth=1)
+        MAX_REPLY_DEPTH = 6  # avoid infinite nesting
+
+        async def send_replies_recursive(parent_comment_id, parent_msg_id, depth=1):
+            if depth > MAX_REPLY_DEPTH:
+                return
+            children = db_fetch_all(
+                "SELECT * FROM comments WHERE parent_comment_id = ? ORDER BY timestamp",
+                (parent_comment_id,)
+            )
+            for child in children:
+                reply_user_id = child['author_id']
+                reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (reply_user_id,))
+                reply_display_name = get_display_name(reply_user)
+                reply_display_sex = get_display_sex(reply_user)
+                rating_reply = calculate_user_rating(reply_user_id)
+                stars_reply = format_stars(rating_reply)
+                profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_display_name}"
+                safe_reply = escape_markdown(child['content'], version=2)
+
+                reply_kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("👍", callback_data=f"likereply_{child['comment_id']}"),
+                        InlineKeyboardButton("👎", callback_data=f"dislikereply_{child['comment_id']}"),
+                        InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{child['comment_id']}")
+                    ]
+                ])
+
+                # Send this reply under its parent message
+                child_msg = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"{safe_reply}\n\n[{reply_display_name}]({profile_url_reply}) {reply_display_sex} {stars_reply}",
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    reply_to_message_id=parent_msg_id,
+                    reply_markup=reply_kb
+                )
+
+                # Recursively show this child's own replies
+                await send_replies_recursive(child['comment_id'], child_msg.message_id, depth + 1)
+
+        # Start recursion for this top-level comment
+        await send_replies_recursive(comment['comment_id'], msg.message_id, depth=1)
+
 
     pagination_buttons = []
     if page > 1:
