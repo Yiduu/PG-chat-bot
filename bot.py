@@ -248,28 +248,24 @@ def create_anonymous_name(user_id):
     return f"{names[uid_int % len(names)]}{uid_int % 1000}"
 
 def calculate_user_rating(user_id):
-    post_count = db_fetch_one(
-        "SELECT COUNT(*) FROM posts WHERE author_id = ? AND approved = 1",
+    post_row = db_fetch_one(
+        "SELECT COUNT(*) as count FROM posts WHERE author_id = ? AND approved = 1",
         (user_id,)
-    )[0] if db_fetch_one(
-        "SELECT COUNT(*) FROM posts WHERE author_id = ? AND approved = 1",
-        (user_id,)
-    ) else 0
+    )
+    post_count = post_row['count'] if post_row else 0
     
-    comment_count = db_fetch_one(
-        "SELECT COUNT(*) FROM comments WHERE author_id = ?",
+    comment_row = db_fetch_one(
+        "SELECT COUNT(*) as count FROM comments WHERE author_id = ?",
         (user_id,)
-    )[0] if db_fetch_one(
-        "SELECT COUNT(*) FROM comments WHERE author_id = ?",
-        (user_id,)
-    ) else 0
+    )
+    comment_count = comment_row['count'] if comment_row else 0
     
     return post_count + comment_count
 
 def format_stars(rating, max_stars=5):
-    full = '⭐️' * min(rating, max_stars)
-    empty = '☆' * max(0, max_stars - rating)
-    return full + empty
+    full_stars = min(rating // 5, max_stars)
+    empty_stars = max(0, max_stars - full_stars)
+    return '⭐️' * full_stars + '☆' * empty_stars
 
 def count_all_comments(post_id):
     def count_replies(parent_id=None):
@@ -306,8 +302,8 @@ def get_user_rank(user_id):
         ORDER BY total DESC
     ''')
     
-    for rank, (uid, _) in enumerate(users, start=1):
-        if uid == user_id:
+    for rank, user in enumerate(users, start=1):
+        if user['user_id'] == user_id:
             return rank
     return None
 
@@ -330,24 +326,40 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = str(update.effective_user.id)
     user_rank = get_user_rank(user_id)
-    if user_rank > 10:
+    
+    if user_rank and user_rank > 10:
         user_data = db_fetch_one("SELECT anonymous_name, sex FROM users WHERE user_id = ?", (user_id,))
-        user_contributions = calculate_user_rating(user_id)
-        leaderboard_text += (
-            f"\n...\n"
-            f"{user_rank}. {user_data['anonymous_name']} {user_data['sex']} - {user_contributions} contributions\n"
-        )
+        if user_data:
+            user_contributions = calculate_user_rating(user_id)
+            leaderboard_text += (
+                f"\n...\n"
+                f"{user_rank}. {user_data['anonymous_name']} {user_data['sex']} - {user_contributions} contributions\n"
+            )
     
     keyboard = [
         [InlineKeyboardButton("📱 Main Menu", callback_data='menu')],
         [InlineKeyboardButton("👤 My Profile", callback_data='profile')]
     ]
     
-    await update.message.reply_text(
-        leaderboard_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    if update.message:
+        await update.message.reply_text(
+            leaderboard_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+    elif update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(
+                leaderboard_text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except BadRequest:
+            await update.callback_query.message.reply_text(
+                leaderboard_text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN
+            )
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -356,7 +368,10 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = db_fetch_one("SELECT notifications_enabled, privacy_public, is_admin FROM users WHERE user_id = ?", (user_id,))
         
         if not user:
-            await update.message.reply_text("Please use /start first to initialize your profile.")
+            if update.message:
+                await update.message.reply_text("Please use /start first to initialize your profile.")
+            elif update.callback_query:
+                await update.callback_query.message.reply_text("Please use /start first to initialize your profile.")
             return
         
         notifications_status = "✅ ON" if user['notifications_enabled'] else "❌ OFF"
@@ -405,7 +420,10 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         logger.error(f"Error in show_settings: {e}")
-        await update.message.reply_text("❌ Error loading settings. Please try again.")
+        if update.message:
+            await update.message.reply_text("❌ Error loading settings. Please try again.")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("❌ Error loading settings. Please try again.")
 
 async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None):
     keyboard = [
@@ -471,7 +489,10 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
                     )
     except Exception as e:
         logger.error(f"Error in send_post_confirmation: {e}")
-        await update.message.reply_text("❌ Error showing confirmation. Please try again.")
+        if update.message:
+            await update.message.reply_text("❌ Error showing confirmation. Please try again.")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("❌ Error showing confirmation. Please try again.")
 
 async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str):
     try:
@@ -563,13 +584,17 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
     if not user or not user['is_admin']:
-        await update.message.reply_text("❌ You don't have permission to access this.")
+        if update.message:
+            await update.message.reply_text("❌ You don't have permission to access this.")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("❌ You don't have permission to access this.")
         return
     
-    pending_posts = db_fetch_all("SELECT COUNT(*) FROM posts WHERE approved = 0")[0][0]
+    pending_posts = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE approved = 0")
+    pending_count = pending_posts['count'] if pending_posts else 0
     
     keyboard = [
-        [InlineKeyboardButton(f"📝 Pending Posts ({pending_posts})", callback_data='admin_pending')],
+        [InlineKeyboardButton(f"📝 Pending Posts ({pending_count})", callback_data='admin_pending')],
         [InlineKeyboardButton("📊 Statistics", callback_data='admin_stats')],
         [InlineKeyboardButton("👥 User Management", callback_data='admin_users')],
         [InlineKeyboardButton("📢 Broadcast", callback_data='admin_broadcast')],
@@ -591,13 +616,19 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     except Exception as e:
         logger.error(f"Error in admin_panel: {e}")
-        await update.message.reply_text("❌ Error loading admin panel.")
+        if update.message:
+            await update.message.reply_text("❌ Error loading admin panel.")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("❌ Error loading admin panel.")
 
 async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
     if not user or not user['is_admin']:
-        await update.message.reply_text("❌ You don't have permission to access this.")
+        if update.message:
+            await update.message.reply_text("❌ You don't have permission to access this.")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("❌ You don't have permission to access this.")
         return
     
     posts = db_fetch_all("""
@@ -609,7 +640,10 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """)
     
     if not posts:
-        await update.message.reply_text("✅ No pending posts!")
+        if update.callback_query:
+            await update.callback_query.message.reply_text("✅ No pending posts!")
+        else:
+            await update.message.reply_text("✅ No pending posts!")
         return
     
     for post in posts[:10]:
@@ -654,12 +688,12 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
     if not user or not user['is_admin']:
-        await update.message.reply_text("❌ You don't have permission to do this.")
+        await update.callback_query.message.reply_text("❌ You don't have permission to do this.")
         return
     
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
     if not post:
-        await update.message.reply_text("❌ Post not found.")
+        await update.callback_query.message.reply_text("❌ Post not found.")
         return
     
     try:
@@ -723,12 +757,12 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
     if not user or not user['is_admin']:
-        await update.message.reply_text("❌ You don't have permission to do this.")
+        await update.callback_query.message.reply_text("❌ You don't have permission to do this.")
         return
     
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
     if not post:
-        await update.message.reply_text("❌ Post not found.")
+        await update.callback_query.message.reply_text("❌ Post not found.")
         return
     
     try:
@@ -870,10 +904,11 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
     # Get unread messages count
-    unread_count = db_fetch_one(
-        "SELECT COUNT(*) FROM private_messages WHERE receiver_id = ? AND is_read = 0",
+    unread_count_row = db_fetch_one(
+        "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = ? AND is_read = 0",
         (user_id,)
-    )[0]
+    )
+    unread_count = unread_count_row['count'] if unread_count_row else 0
     
     # Get recent messages
     messages = db_fetch_all('''
@@ -933,10 +968,11 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
         LIMIT ? OFFSET ?
     ''', (user_id, per_page, offset))
     
-    total_messages = db_fetch_one(
-        "SELECT COUNT(*) FROM private_messages WHERE receiver_id = ?",
+    total_messages_row = db_fetch_one(
+        "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = ?",
         (user_id,)
-    )[0]
+    )
+    total_messages = total_messages_row['count'] if total_messages_row else 0
     total_pages = (total_messages + per_page - 1) // per_page
     
     if not messages:
@@ -1071,15 +1107,17 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         stars = format_stars(rating)
         profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{display_name}"
 
-        likes = db_fetch_one(
+        likes_row = db_fetch_one(
             "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
             (comment['comment_id'],)
-        )['cnt']
+        )
+        likes = likes_row['cnt'] if likes_row else 0
         
-        dislikes = db_fetch_one(
+        dislikes_row = db_fetch_one(
             "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
             (comment['comment_id'],)
-        )['cnt']
+        )
+        dislikes = dislikes_row['cnt'] if dislikes_row else 0
 
         user_reaction = db_fetch_one(
             "SELECT type FROM reactions WHERE comment_id = ? AND user_id = ?",
@@ -1108,7 +1146,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             reply_to_message_id=header_message_id
         )
 
-                # Recursive function to display replies under this comment
+        # Recursive function to display replies under this comment
         MAX_REPLY_DEPTH = 6  # avoid infinite nesting
 
         async def send_replies_recursive(parent_comment_id, parent_msg_id, depth=1):
@@ -1287,19 +1325,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_settings(update, context)
 
         elif query.data == 'toggle_notifications':
-            current = db_fetch_one("SELECT notifications_enabled FROM users WHERE user_id = ?", (user_id,))['notifications_enabled']
-            db_execute(
-                "UPDATE users SET notifications_enabled = ? WHERE user_id = ?",
-                (not current, user_id)
-            )
+            current = db_fetch_one("SELECT notifications_enabled FROM users WHERE user_id = ?", (user_id,))
+            if current:
+                db_execute(
+                    "UPDATE users SET notifications_enabled = ? WHERE user_id = ?",
+                    (not current['notifications_enabled'], user_id)
+                )
             await show_settings(update, context)
         
         elif query.data == 'toggle_privacy':
-            current = db_fetch_one("SELECT privacy_public FROM users WHERE user_id = ?", (user_id,))['privacy_public']
-            db_execute(
-                "UPDATE users SET privacy_public = ? WHERE user_id = ?",
-                (not current, user_id)
-            )
+            current = db_fetch_one("SELECT privacy_public FROM users WHERE user_id = ?", (user_id,))
+            if current:
+                db_execute(
+                    "UPDATE users SET privacy_public = ? WHERE user_id = ?",
+                    (not current['privacy_public'], user_id)
+                )
             await show_settings(update, context)
 
         elif query.data == 'help':
@@ -1309,7 +1349,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
                 "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
                 "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
-                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
+                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ �ሰዎች ብዛት ማየት ይችላሉ.\n"
                 "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
             )
             keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
@@ -1419,15 +1459,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         (comment_id, user_id, reaction_type)
                     )
 
-                likes = db_fetch_one(
+                likes_row = db_fetch_one(
                     "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
                     (comment_id,)
-                )['cnt']
+                )
+                likes = likes_row['cnt'] if likes_row else 0
                 
-                dislikes = db_fetch_one(
+                dislikes_row = db_fetch_one(
                     "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
                     (comment_id,)
-                )['cnt']
+                )
+                dislikes = dislikes_row['cnt'] if dislikes_row else 0
 
                 comment = db_fetch_one(
                     "SELECT post_id, parent_comment_id FROM comments WHERE comment_id = ?",
@@ -1674,7 +1716,10 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
     if not user or not user['is_admin']:
-        await update.message.reply_text("❌ You don't have permission to access this.")
+        if update.message:
+            await update.message.reply_text("❌ You don't have permission to access this.")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("❌ You don't have permission to access this.")
         return
     
     stats = db_fetch_one('''
@@ -1714,7 +1759,10 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     except Exception as e:
         logger.error(f"Error showing admin stats: {e}")
-        await update.message.reply_text("❌ Error loading statistics.")
+        if update.message:
+            await update.message.reply_text("❌ Error loading statistics.")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("❌ Error loading statistics.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or update.message.caption or ""
@@ -1796,12 +1844,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (post_id, parent_comment_id, user_id, content, comment_type, file_id)
         )
     
-        # ✅ Fix: increment comment counter on the post
-        db_execute(
-            "UPDATE posts SET comments = comments + 1 WHERE post_id = ?",
-            (post_id,)
-        )
-    
         # Reset state so the user can continue normally
         db_execute(
             "UPDATE users SET waiting_for_comment = 0, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = ?",
@@ -1809,6 +1851,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
         await update.message.reply_text("✅ Your comment has been posted!", reply_markup=main_menu)
+        
+        # Notify parent comment author if this is a reply
+        if parent_comment_id != 0:
+            await notify_user_of_reply(context, post_id, parent_comment_id, user_id)
         return
 
     elif user and user['waiting_for_private_message']:
