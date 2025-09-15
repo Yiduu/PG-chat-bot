@@ -1999,7 +1999,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Reset the user state
         db_execute(
-            "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id极 ?",
+            "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id ?",
             (user_id,)
         )
         
