@@ -1621,7 +1621,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 post_id = int(parts[1])
                 comment_id = int(parts[2])
                 db_execute(
-                    "极PDATE users SET waiting_for_comment = 1, comment_post_id = ?, comment_idx = ? WHERE user_id = ?",
+                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = ?, comment_idx = ? WHERE user_id = ?",
                     (post_id, comment_id, user_id)
                 )
                 
