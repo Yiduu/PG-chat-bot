@@ -868,7 +868,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif arg.startswith("viewcomments_"):
             parts = arg.split("_")
             if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
-                post_id = int(parts[1])
+                post_id = int(parts[-1])
                 page = int(parts[2])
                 await show_comments_page(update, context, post_id, page)
             return
@@ -1502,7 +1502,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 parts = query.data.split('_')
                 if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
-                    post_id = int(parts[1])
+                    post_id = int(parts[-1])
                     page = int(parts[2])
                     await show_comments_page(update, context, post_id, page)
             except Exception as e:
@@ -1533,7 +1533,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith(("likecomment_", "dislikecomment_", "likereply_", "dislikereply_")):
             try:
                 parts = query.data.split('_')
-                comment_id = int(parts[1])
+                comment_id = int(parts[-1])
                 reaction_type = 'like' if parts[0] in ('likecomment', 'likereply') else 'dislike'
 
                 db_execute(
@@ -1641,7 +1641,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith("reply_"):
             parts = query.data.split("_")
             if len(parts) == 3:
-                post_id = int(parts[1])
+                post_id = int(parts[-1])
                 comment_id = int(parts[2])
                 db_execute(
                     "UPDATE users SET waiting_for_comment = 1, comment_post_id = ?, comment_idx = ? WHERE user_id = ?",
@@ -1663,7 +1663,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith("replytoreply_"):
             parts = query.data.split("_")
             if len(parts) == 4:
-                post_id = int(parts[1])
+                post_id = int(parts[-1])
                 # parts[2] is the immediate parent id (not needed for storage)
                 comment_id = int(parts[3])   # this is the comment/reply the user is replying TO
                 # Store the exact comment id being replied to in comment_idx
@@ -1688,7 +1688,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith("replypage_"):
             parts = query.data.split("_")
             if len(parts) == 5:
-                post_id = int(parts[1])
+                post_id = int(parts[-1])
                 comment_id = int(parts[2])
                 reply_page = int(parts[3])
                 comment_page = int(parts[4])
