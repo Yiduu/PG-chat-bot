@@ -2016,9 +2016,69 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Notify the receiver
         await notify_user_of_private_message(context, user_id, target_id, message_content, message_id)
         
-        await update.message.reply_text(
-            "✅ Your message has been sent!",
-            reply_markup=main_menu
+        # --- START private-reply delivery block ---
+user_id = update.effective_user.id
+
+# check DB to see who this user is replying to
+waiting_row = db_fetch_one(
+    "SELECT waiting_for_private_message, private_message_target FROM users WHERE user_id = ?",
+    (user_id,)
+)
+
+if waiting_row and waiting_row.get("waiting_for_private_message"):
+    target_raw = waiting_row.get("private_message_target")
+    if target_raw:
+        try:
+            target_id = int(target_raw)
+        except (ValueError, TypeError):
+            # bad target id, clear flags and inform sender
+            db_execute(
+                "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = ?",
+                (user_id,)
+            )
+            await update.message.reply_text("❌ Invalid reply target. Please try again.", reply_markup=main_menu)
+            return
+
+        # find a display name for the sender
+        sender_row = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (user_id,))
+        sender_name = (sender_row and sender_row.get("anonymous_name")) or (update.effective_user.first_name or "Someone")
+
+        delivered = False
+        try:
+            if update.message.text:
+                # send as text
+                await context.bot.send_message(
+                    chat_id=target_id,
+                    text=f"💌 Reply from {sender_name}:\n\n{update.message.text}"
+                )
+                delivered = True
+            else:
+                # forward the whole message (for photos, voice, etc.)
+                await context.bot.forward_message(
+                    chat_id=target_id,
+                    from_chat_id=update.message.chat.id,
+                    message_id=update.message.message_id
+                )
+                delivered = True
+        except Exception as e:
+            logger.error(f"Failed to deliver reply from {user_id} to {target_id}: {e}")
+            delivered = False
+
+        # clear waiting flags
+        db_execute(
+            "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = ?",
+            (user_id,)
+        )
+
+        if delivered:
+            await update.message.reply_text("✅ Your message has been sent!", reply_markup=main_menu)
+        else:
+            await update.message.reply_text(
+                "❌ Could not deliver the message. The recipient may not have started the bot or has blocked it.",
+                reply_markup=main_menu
+          
+# --- END private-reply delivery block ---
+
         )
         return
 
