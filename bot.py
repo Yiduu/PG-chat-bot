@@ -2035,9 +2035,9 @@ if waiting_row and waiting_row.get("waiting_for_private_message"):
             db_execute(
                 "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = ?",
                 (user_id,)
-        )
-        await update.message.reply_text("❌ Invalid reply target. Please try again.", reply_markup=main_menu)
-        return
+            )
+                await update.message.reply_text("❌ Invalid reply target. Please try again.", reply_markup=main_menu)
+                return
 
         # find a display name for the sender
         sender_row = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (user_id,))
