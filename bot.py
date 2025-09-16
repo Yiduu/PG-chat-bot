@@ -2016,7 +2016,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Notify the receiver
         await notify_user_of_private_message(context, user_id, target_id, message_content, message_id)
         
-        await update.message.reppy_text(
+        await update.message.reply_text(
             "✅ Your message has been sent!",
             reply_markup=main_menu
         )
