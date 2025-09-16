@@ -984,10 +984,24 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ''', (user_id,))
     
     if not messages:
-        await update.message.reply_text(
-            "📭 *Your Inbox*\n\nYou don't have any messages yet.",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        text = "📭 *Your Inbox*\n\nYou don't have any messages yet."
+        if update.callback_query:
+            try:
+                await update.callback_query.edit_message_text(
+                    text,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except BadRequest:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=text,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        else:
+            await update.message.reply_text(
+                text,
+                parse_mode=ParseMode.MARKDOWN
+            )
         return
     
     inbox_text = f"📭 *Your Inbox* ({unread_count} unread)\n\n"
@@ -1003,11 +1017,26 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
     ]
     
-    await update.message.reply_text(
-        inbox_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(
+                inbox_text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except BadRequest:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=inbox_text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN
+            )
+    else:
+        await update.message.reply_text(
+            inbox_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
     user_id = str(update.effective_user.id)
@@ -1412,8 +1441,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "•  menu button በመጠቀም የተለያዩ አማራጮችን ማየት ይችላሉ.\n"
                 "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
                 "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
-                "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
-                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
+                "• እርስዎ ባነሱት �ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
+                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ �ሰዎች ብዛት ማየት ይችላሉ.\n"
                 "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
             )
             keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
@@ -1754,20 +1783,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
         elif query.data.startswith('reply_msg_'):
-            target_id = query.data.split('_', 2)[2]
-            db_execute(
-                "UPDATE users SET waiting_for_private_message = 1, private_message_target = ? WHERE user_id = ?",
-                (target_id, user_id)
-            )
-            
-            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (target_id,))
-            target_name = target_user['anonymous_name'] if target_user else "this user"
-            
-            await query.message.reply_text(
-                f"↩️ *Replying to {target_name}*\n\nPlease type your message:",
-                reply_markup=ForceReply(selective=True),
-                parse_mode=ParseMode.MARKDOWN
-            )
+            try:
+                target_id = query.data[len("reply_msg_"):]
+                db_execute(
+                    "UPDATE users SET waiting_for_private_message = 1, private_message_target = ? WHERE user_id = ?",
+                    (target_id, user_id)
+                )
+                
+                target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (target_id,))
+                target_name = target_user['anonymous_name'] if target_user else "this user"
+                
+                prompt_text = f"↩️ *Replying to {target_name}*\n\nPlease type your reply message below 👇"
+                
+                try:
+                    await query.message.reply_text(
+                        prompt_text,
+                        reply_markup=ForceReply(selective=True),
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                except AttributeError:
+                    await context.bot.send_message(
+                        chat_id=query.from_user.id,
+                        text=prompt_text,
+                        reply_markup=ForceReply(selective=True),
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+            except Exception as e:
+                logger.error(f"Error in reply_msg handler: {e}")
+                await query.answer("❌ Error starting reply. Please try again.")
             
         elif query.data.startswith('block_user_'):
             target_id = query.data.split('_', 2)[2]
@@ -1973,7 +2016,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Notify the receiver
         await notify_user_of_private_message(context, user_id, target_id, message_content, message_id)
         
-        await update.message.reply_text(
+        await update.message.reppy_text(
             "✅ Your message has been sent!",
             reply_markup=main_menu
         )
