@@ -1,6 +1,7 @@
 import os 
-import sqlite3
 import logging
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from pathlib import Path
 from dotenv import load_dotenv
 from telegram import (
@@ -23,174 +24,175 @@ import time
 from typing import Optional
 
 # Initialize database
-DB_FILE = 'bot.db'
-
+import os
+DATABASE_URL = os.getenv("postgresql://christianbot_vqm3_user:iK1W8dvgJzeCnqzNdG2577JHAdulOrpN@dpg-d35pu1nfte5s7394tb0g-a/christianbot_vqm3")
 # Initialize database tables with schema migration
 def init_db():
-    with closing(sqlite3.connect(DB_FILE)) as conn:
-        # Enable WAL mode for better concurrency
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        
-        c = conn.cursor()
-        
-        # Create tables if they don't exist
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id TEXT PRIMARY KEY,
-            anonymous_name TEXT,
-            sex TEXT DEFAULT '👤',
-            awaiting_name BOOLEAN DEFAULT 0,
-            waiting_for_post BOOLEAN DEFAULT 0,
-            waiting_for_comment BOOLEAN DEFAULT 0,
-            selected_category TEXT,
-            comment_post_id INTEGER,
-            comment_idx INTEGER,
-            reply_idx INTEGER,
-            nested_idx INTEGER,
-            notifications_enabled BOOLEAN DEFAULT 1,
-            privacy_public BOOLEAN DEFAULT 1,
-            is_admin BOOLEAN DEFAULT 0,
-            waiting_for_private_message BOOLEAN DEFAULT 0,
-            private_message_target TEXT
-        )''')
-        
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS followers (
-            follower_id TEXT,
-            followed_id TEXT,
-            PRIMARY KEY (follower_id, followed_id)
-        )''')
-        
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS posts (
-            post_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            content TEXT,
-            author_id TEXT,
-            category TEXT,
-            channel_message_id INTEGER,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            approved BOOLEAN DEFAULT 0,
-            admin_approved_by TEXT,
-            media_type TEXT DEFAULT 'text',
-            media_id TEXT,
-            comment_count INTEGER DEFAULT 0
-        )''')
-        
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS comments (
-            comment_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            post_id INTEGER,
-            parent_comment_id INTEGER DEFAULT 0,
-            author_id TEXT,
-            content TEXT,
-            type TEXT DEFAULT 'text',
-            file_id TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (post_id) REFERENCES posts (post_id)
-        )''')
-        
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS reactions (
-            reaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            comment_id INTEGER,
-            user_id TEXT,
-            type TEXT,
-            FOREIGN KEY (comment_id) REFERENCES comments (comment_id),
-            UNIQUE(comment_id, user_id)
-        )''')
-        
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS private_messages (
-            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_id TEXT,
-            receiver_id TEXT,
-            content TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            is_read BOOLEAN DEFAULT 0,
-            FOREIGN KEY (sender_id) REFERENCES users (user_id),
-            FOREIGN KEY (receiver_id) REFERENCES users (user_id)
-        )''')
-        
-        # Add blocks table for private messaging
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS blocks (
-            blocker_id TEXT,
-            blocked_id TEXT,
-            PRIMARY KEY (blocker_id, blocked_id),
-            FOREIGN KEY (blocker_id) REFERENCES users (user_id),
-            FOREIGN KEY (blocked_id) REFERENCES users (user_id)
-        )''')
-        
-        # Check for missing columns and add them
-        c.execute("PRAGMA table_info(users)")
-        user_columns = [col[1] for col in c.fetchall()]
-        if 'notifications_enabled' not in user_columns:
-            c.execute("ALTER TABLE users ADD COLUMN notifications_enabled BOOLEAN DEFAULT 1")
-        if 'privacy_public' not in user_columns:
-            c.execute("ALTER TABLE users ADD COLUMN privacy_public BOOLEAN DEFAULT 1")
-        if 'is_admin' not in user_columns:
-            c.execute("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0")
-        if 'waiting_for_private_message' not in user_columns:
-            c.execute("ALTER TABLE users ADD COLUMN waiting_for_private_message BOOLEAN DEFAULT 0")
-        if 'private_message_target' not in user_columns:
-            c.execute("ALTER TABLE users ADD COLUMN private_message_target TEXT")
-        
-        # Check for media columns in posts
-        c.execute("PRAGMA table_info(posts)")
-        post_columns = [col[1] for col in c.fetchall()]
-        if 'media_type' not in post_columns:
-            c.execute("ALTER TABLE posts ADD COLUMN media_type TEXT DEFAULT 'text'")
-        if 'media_id' not in post_columns:
-            c.execute("ALTER TABLE posts ADD COLUMN media_id TEXT")
-        if 'comment_count' not in post_columns:
-            c.execute("ALTER TABLE posts ADD COLUMN comment_count INTEGER DEFAULT 0")
+    with psycopg2.connect(DB_URL) as conn:
+        with conn.cursor() as c:
             
-        # Create admin user if specified
-        ADMIN_ID = os.getenv('ADMIN_ID')
-        if ADMIN_ID:
+            # ---------------- Create Tables ----------------
             c.execute('''
-            INSERT OR IGNORE INTO users (user_id, anonymous_name, is_admin) 
-            VALUES (?, ?, 1)
-            ''', (ADMIN_ID, "Admin"))
-            c.execute('''
-            UPDATE users SET is_admin = 1 WHERE user_id = ?
-            ''', (ADMIN_ID,))
-        
-        conn.commit()
-    logging.info("Database initialized successfully")
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                anonymous_name TEXT,
+                sex TEXT DEFAULT '👤',
+                awaiting_name BOOLEAN DEFAULT FALSE,
+                waiting_for_post BOOLEAN DEFAULT FALSE,
+                waiting_for_comment BOOLEAN DEFAULT FALSE,
+                selected_category TEXT,
+                comment_post_id INTEGER,
+                comment_idx INTEGER,
+                reply_idx INTEGER,
+                nested_idx INTEGER
+            )
+            ''')
 
-# Initialize database on startup
-init_db()
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS followers (
+                follower_id TEXT,
+                followed_id TEXT,
+                PRIMARY KEY (follower_id, followed_id)
+            )
+            ''')
+
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS posts (
+                post_id SERIAL PRIMARY KEY,
+                content TEXT,
+                author_id TEXT,
+                category TEXT,
+                channel_message_id BIGINT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS comments (
+                comment_id SERIAL PRIMARY KEY,
+                post_id INTEGER REFERENCES posts(post_id),
+                parent_comment_id INTEGER DEFAULT 0,
+                author_id TEXT,
+                content TEXT,
+                type TEXT DEFAULT 'text',
+                file_id TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS reactions (
+                reaction_id SERIAL PRIMARY KEY,
+                comment_id INTEGER REFERENCES comments(comment_id),
+                user_id TEXT,
+                type TEXT,
+                UNIQUE(comment_id, user_id)
+            )
+            ''')
+
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS private_messages (
+                message_id SERIAL PRIMARY KEY,
+                sender_id TEXT REFERENCES users(user_id),
+                receiver_id TEXT REFERENCES users(user_id),
+                content TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_read BOOLEAN DEFAULT FALSE
+            )
+            ''')
+
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS blocks (
+                blocker_id TEXT REFERENCES users(user_id),
+                blocked_id TEXT REFERENCES users(user_id),
+                PRIMARY KEY (blocker_id, blocked_id)
+            )
+            ''')
+
+            # ---------------- Add missing columns to users ----------------
+            user_extra_columns = {
+                "notifications_enabled": "BOOLEAN DEFAULT TRUE",
+                "privacy_public": "BOOLEAN DEFAULT TRUE",
+                "is_admin": "BOOLEAN DEFAULT FALSE",
+                "waiting_for_private_message": "BOOLEAN DEFAULT FALSE",
+                "private_message_target": "TEXT"
+            }
+
+            for col, definition in user_extra_columns.items():
+                c.execute(f"""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name='users' AND column_name='{col}'
+                        ) THEN
+                            ALTER TABLE users ADD COLUMN {col} {definition};
+                        END IF;
+                    END
+                    $$;
+                """)
+
+            # ---------------- Add missing columns to posts ----------------
+            post_extra_columns = {
+                "media_type": "TEXT DEFAULT 'text'",
+                "media_id": "TEXT",
+                "comment_count": "INTEGER DEFAULT 0"
+            }
+
+            for col, definition in post_extra_columns.items():
+                c.execute(f"""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name='posts' AND column_name='{col}'
+                        ) THEN
+                            ALTER TABLE posts ADD COLUMN {col} {definition};
+                        END IF;
+                    END
+                    $$;
+                """)
+
+            # ---------------- Create admin user if specified ----------------
+            ADMIN_ID = os.getenv('ADMIN_ID')
+            if ADMIN_ID:
+                c.execute('''
+                    INSERT INTO users (user_id, anonymous_name, is_admin)
+                    VALUES (%s, %s, TRUE)
+                    ON CONFLICT (user_id) DO UPDATE SET is_admin = TRUE
+                ''', (ADMIN_ID, "Admin"))
+
+        conn.commit()
+    logging.info("PostgreSQL database initialized successfully")
 
 # Database helper functions
+def get_conn():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
 def db_execute(query, params=(), fetch=False):
-    with sqlite3.connect(DB_FILE) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        c.execute(query, params)
-        conn.commit()
-        if fetch:
-            return c.fetchall()
-        return c.lastrowid if c.lastrowid else True
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            conn.commit()
+            if fetch:
+                return cur.fetchall()
+            try:
+                return cur.fetchone()
+            except:
+                return None
 
 def db_fetch_one(query, params=()):
-    with sqlite3.connect(DB_FILE) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        c.execute(query, params)
-        return c.fetchone()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            return cur.fetchone()
 
 def db_fetch_all(query, params=()):
-    with sqlite3.connect(DB_FILE) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        c.execute(query, params)
-        return c.fetchall()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            return cur.fetchall()
+
 
 # Categories
 CATEGORIES = [
@@ -262,13 +264,13 @@ def create_anonymous_name(user_id):
 
 def calculate_user_rating(user_id):
     post_row = db_fetch_one(
-        "SELECT COUNT(*) as count FROM posts WHERE author_id = ? AND approved = 1",
+        "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = 1",
         (user_id,)
     )
     post_count = post_row['count'] if post_row else 0
     
     comment_row = db_fetch_one(
-        "SELECT COUNT(*) as count FROM comments WHERE author_id = ?",
+        "SELECT COUNT(*) as count FROM comments WHERE author_id = %s",
         (user_id,)
     )
     comment_count = comment_row['count'] if comment_row else 0
@@ -284,12 +286,12 @@ def count_all_comments(post_id):
     def count_replies(parent_id=None):
         if parent_id is None:
             comments = db_fetch_all(
-                "SELECT comment_id FROM comments WHERE post_id = ? AND parent_comment_id = 0",
+                "SELECT comment_id FROM comments WHERE post_id = %s AND parent_comment_id = 0",
                 (post_id,)
             )
         else:
             comments = db_fetch_all(
-                "SELECT comment_id FROM comments WHERE parent_comment_id = ?",
+                "SELECT comment_id FROM comments WHERE parent_comment_id = %s",
                 (parent_id,)
             )
         
@@ -324,7 +326,7 @@ async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, 
     """Update the comment count on the channel post"""
     try:
         # Get the post details
-        post = db_fetch_one("SELECT channel_message_id, comment_count FROM posts WHERE post_id = ?", (post_id,))
+        post = db_fetch_one("SELECT channel_message_id, comment_count FROM posts WHERE post_id = %s", (post_id,))
         if not post or not post['channel_message_id']:
             return
         
@@ -332,7 +334,7 @@ async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, 
         total_comments = count_all_comments(post_id)
         
         # Update the database with the new count
-        db_execute("UPDATE posts SET comment_count = ? WHERE post_id = ?", (total_comments, post_id))
+        db_execute("UPDATE posts SET comment_count = %s WHERE post_id = %s", (total_comments, post_id))
         
         # Update the channel message button
         keyboard = InlineKeyboardMarkup([
@@ -372,7 +374,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_rank = get_user_rank(user_id)
     
     if user_rank and user_rank > 10:
-        user_data = db_fetch_one("SELECT anonymous_name, sex FROM users WHERE user_id = ?", (user_id,))
+        user_data = db_fetch_one("SELECT anonymous_name, sex FROM users WHERE user_id = %s", (user_id,))
         if user_data:
             user_contributions = calculate_user_rating(user_id)
             leaderboard_text += (
@@ -409,7 +411,7 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
     try:
-        user = db_fetch_one("SELECT notifications_enabled, privacy_public, is_admin FROM users WHERE user_id = ?", (user_id,))
+        user = db_fetch_one("SELECT notifications_enabled, privacy_public, is_admin FROM users WHERE user_id = %s", (user_id,))
         
         if not user:
             if update.message:
@@ -540,18 +542,18 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
 
 async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str):
     try:
-        comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = ?", (comment_id,))
+        comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
         if not comment:
             return
         
-        original_author = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (comment['author_id'],))
+        original_author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (comment['author_id'],))
         if not original_author or not original_author['notifications_enabled']:
             return
         
-        replier = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (replier_id,))
+        replier = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (replier_id,))
         replier_name = get_display_name(replier)
         
-        post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
         
         notification_text = (
@@ -573,11 +575,11 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
     if not ADMIN_ID:
         return
     
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post:
         return
     
-    author = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (post['author_id'],))
+    author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (post['author_id'],))
     author_name = get_display_name(author)
     
     post_preview = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
@@ -602,17 +604,17 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
     try:
         # Check if receiver has blocked the sender
         is_blocked = db_fetch_one(
-            "SELECT * FROM blocks WHERE blocker_id = ? AND blocked_id = ?",
+            "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
             (receiver_id, sender_id)
         )
         if is_blocked:
             return  # Don't notify if blocked
         
-        receiver = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (receiver_id,))
+        receiver = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (receiver_id,))
         if not receiver or not receiver['notifications_enabled']:
             return
         
-        sender = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (sender_id,))
+        sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
         sender_name = get_display_name(sender)
         
         # Truncate long messages for the notification
@@ -644,7 +646,7 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         if update.message:
             await update.message.reply_text("❌ You don't have permission to access this.")
@@ -685,7 +687,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         if update.message:
             await update.message.reply_text("❌ You don't have permission to access this.")
@@ -748,12 +750,12 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         await update.callback_query.message.reply_text("❌ You don't have permission to do this.")
         return
     
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post:
         await update.callback_query.message.reply_text("❌ Post not found.")
         return
@@ -798,7 +800,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             )
         
         db_execute(
-            "UPDATE posts SET approved = 1, admin_approved_by = ?, channel_message_id = ? WHERE post_id = ?",
+            "UPDATE posts SET approved = 1, admin_approved_by = %s, channel_message_id = %s WHERE post_id = %s",
             (user_id, msg.message_id, post_id)
         )
         
@@ -818,12 +820,12 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
 
 async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         await update.callback_query.message.reply_text("❌ You don't have permission to do this.")
         return
     
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post:
         await update.callback_query.message.reply_text("❌ Post not found.")
         return
@@ -834,7 +836,7 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
             text="❌ Your post was not approved by the admin."
         )
         
-        db_execute("DELETE FROM posts WHERE post_id = ?", (post_id,))
+        db_execute("DELETE FROM posts WHERE post_id = %s", (post_id,))
         await update.callback_query.edit_message_text("❌ Post rejected and deleted")
         
     except Exception as e:
@@ -845,11 +847,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     
     # Check if user exists
-    user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
     if not user:
         anon = create_anonymous_name(user_id)
         db_execute(
-            "INSERT INTO users (user_id, anonymous_name, sex, is_admin) VALUES (?, ?, ?, ?)",
+            "INSERT INTO users (user_id, anonymous_name, sex, is_admin) VALUES (%s, %s, %s, %s)",
             (user_id, anon, '👤', 1 if user_id == ADMIN_ID else 0)
         )
     
@@ -878,11 +880,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if post_id_str.isdigit():
                 post_id = int(post_id_str)
                 db_execute(
-                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = ? WHERE user_id = ?",
+                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = %s WHERE user_id = %s",
                     (post_id, user_id)
                 )
                 
-                post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
                 preview_text = "Original content not found"
                 if post:
                     content = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
@@ -897,10 +899,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif arg.startswith("profile_"):
             target_name = arg.split("_", 1)[1]
-            user_data = db_fetch_one("SELECT * FROM users WHERE anonymous_name = ?", (target_name,))
+            user_data = db_fetch_one("SELECT * FROM users WHERE anonymous_name = %s", (target_name,))
             if user_data:
                 followers = db_fetch_all(
-                    "SELECT * FROM followers WHERE followed_id = ?",
+                    "SELECT * FROM followers WHERE followed_id = %s",
                     (user_data['user_id'],)
                 )
                 rating = calculate_user_rating(user_data['user_id'])
@@ -909,7 +911,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 btn = []
                 if user_data['user_id'] != current:
                     is_following = db_fetch_one(
-                        "SELECT * FROM followers WHERE follower_id = ? AND followed_id = ?",
+                        "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
                         (current, user_data['user_id'])
                     )
                     if is_following:
@@ -968,7 +970,7 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Get unread messages count
     unread_count_row = db_fetch_one(
-        "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = ? AND is_read = 0",
+        "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = %s AND is_read = 0",
         (user_id,)
     )
     unread_count = unread_count_row['count'] if unread_count_row else 0
@@ -978,7 +980,7 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
         SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex
         FROM private_messages pm
         JOIN users u ON pm.sender_id = u.user_id
-        WHERE pm.receiver_id = ?
+        WHERE pm.receiver_id = %s
         ORDER BY pm.timestamp DESC
         LIMIT 10
     ''', (user_id,))
@@ -1014,7 +1016,7 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     
     # Mark messages as read when viewing
     db_execute(
-        "UPDATE private_messages SET is_read = 1 WHERE receiver_id = ?",
+        "UPDATE private_messages SET is_read = 1 WHERE receiver_id = %s",
         (user_id,)
     )
     
@@ -1026,13 +1028,13 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
         SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex
         FROM private_messages pm
         JOIN users u ON pm.sender_id = u.user_id
-        WHERE pm.receiver_id = ?
+        WHERE pm.receiver_id = %s
         ORDER BY pm.timestamp DESC
-        LIMIT ? OFFSET ?
+        LIMIT %s OFFSET %s
     ''', (user_id, per_page, offset))
     
     total_messages_row = db_fetch_one(
-        "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = ?",
+        "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = %s",
         (user_id,)
     )
     total_messages = total_messages_row['count'] if total_messages_row else 0
@@ -1092,7 +1094,7 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
         await update.message.reply_text("❌ Error loading messages. Please try again.")
 
 async def show_comments_menu(update, context, post_id, page=1):
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post:
         await update.message.reply_text("❌ Post not found.", reply_markup=main_menu)
         return
@@ -1120,7 +1122,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         return
     chat_id = update.effective_chat.id
 
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post:
         await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=main_menu)
         return
@@ -1129,7 +1131,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     offset = (page - 1) * per_page
 
     comments = db_fetch_all(
-        "SELECT * FROM comments WHERE post_id = ? AND parent_comment_id = 0 ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+        "SELECT * FROM comments WHERE post_id = %s AND parent_comment_id = 0 ORDER BY timestamp DESC LIMIT %s OFFSET %s",
         (post_id, per_page, offset)
     )
 
@@ -1163,7 +1165,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     for idx, comment in enumerate(comments):
         commenter_id = comment['author_id']
-        commenter = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (commenter_id,))
+        commenter = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (commenter_id,))
         display_sex = get_display_sex(commenter)
         display_name = get_display_name(commenter)
         
@@ -1172,19 +1174,19 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{display_name}"
 
         likes_row = db_fetch_one(
-            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'like'",
             (comment['comment_id'],)
         )
         likes = likes_row['cnt'] if likes_row else 0
         
         dislikes_row = db_fetch_one(
-            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'dislike'",
             (comment['comment_id'],)
         )
         dislikes = dislikes_row['cnt'] if dislikes_row else 0
 
         user_reaction = db_fetch_one(
-            "SELECT type FROM reactions WHERE comment_id = ? AND user_id = ?",
+            "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
             (comment['comment_id'], user_id)
         )
 
@@ -1217,12 +1219,12 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             if depth > MAX_REPLY_DEPTH:
                 return
             children = db_fetch_all(
-                "SELECT * FROM comments WHERE parent_comment_id = ? ORDER BY timestamp",
+                "SELECT * FROM comments WHERE parent_comment_id = %s ORDER BY timestamp",
                 (parent_comment_id,)
             )
             for child in children:
                 reply_user_id = child['author_id']
-                reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (reply_user_id,))
+                reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (reply_user_id,))
                 reply_display_name = get_display_name(reply_user)
                 reply_display_sex = get_display_sex(reply_user)
                 rating_reply = calculate_user_rating(reply_user_id)
@@ -1295,7 +1297,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE):
-    user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
     if not user:
         return
     
@@ -1305,7 +1307,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     stars = format_stars(rating)
     
     followers = db_fetch_all(
-        "SELECT * FROM followers WHERE followed_id = ?",
+        "SELECT * FROM followers WHERE followed_id = %s",
         (user_id,)
     )
     kb = InlineKeyboardMarkup([
@@ -1349,7 +1351,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('category_'):
             category = query.data.split('_', 1)[1]
             db_execute(
-                "UPDATE users SET waiting_for_post = 1, selected_category = ? WHERE user_id = ?",
+                "UPDATE users SET waiting_for_post = 1, selected_category = %s WHERE user_id = %s",
                 (category, user_id)
             )
 
@@ -1389,19 +1391,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_settings(update, context)
 
         elif query.data == 'toggle_notifications':
-            current = db_fetch_one("SELECT notifications_enabled FROM users WHERE user_id = ?", (user_id,))
+            current = db_fetch_one("SELECT notifications_enabled FROM users WHERE user_id = %s", (user_id,))
             if current:
                 db_execute(
-                    "UPDATE users SET notifications_enabled = ? WHERE user_id = ?",
+                    "UPDATE users SET notifications_enabled = %s WHERE user_id = %s",
                     (not current['notifications_enabled'], user_id)
                 )
             await show_settings(update, context)
         
         elif query.data == 'toggle_privacy':
-            current = db_fetch_one("SELECT privacy_public FROM users WHERE user_id = ?", (user_id,))
+            current = db_fetch_one("SELECT privacy_public FROM users WHERE user_id = %s", (user_id,))
             if current:
                 db_execute(
-                    "UPDATE users SET privacy_public = ? WHERE user_id = ?",
+                    "UPDATE users SET privacy_public = %s WHERE user_id = %s",
                     (not current['privacy_public'], user_id)
                 )
             await show_settings(update, context)
@@ -1430,7 +1432,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data == 'edit_name':
             db_execute(
-                "UPDATE users SET awaiting_name = 1 WHERE user_id = ?",
+                "UPDATE users SET awaiting_name = 1 WHERE user_id = %s",
                 (user_id,)
             )
             await query.message.reply_text("✏️ Please type your new anonymous name:", parse_mode=ParseMode.MARKDOWN)
@@ -1445,7 +1447,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('sex_'):
             sex = '👨' if 'male' in query.data else '👩'
             db_execute(
-                "UPDATE users SET sex = ? WHERE user_id = ?",
+                "UPDATE users SET sex = %s WHERE user_id = %s",
                 (sex, user_id)
             )
             await query.message.reply_text("✅ Sex updated!")
@@ -1456,14 +1458,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if query.data.startswith('follow_'):
                 try:
                     db_execute(
-                        "INSERT INTO followers (follower_id, followed_id) VALUES (?, ?)",
+                        "INSERT INTO followers (follower_id, followed_id) VALUES (%s, %s)",
                         (user_id, target_uid)
                     )
                 except sqlite3.IntegrityError:
                     pass
             else:
                 db_execute(
-                    "DELETE FROM followers WHERE follower_id = ? AND followed_id = ?",
+                    "DELETE FROM followers WHERE follower_id = %s AND followed_id = %s",
                     (user_id, target_uid)
                 )
             await query.message.reply_text("✅ Successfully updated!")
@@ -1485,11 +1487,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if post_id_str.isdigit():
                 post_id = int(post_id_str)
                 db_execute(
-                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = ? WHERE user_id = ?",
+                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = %s WHERE user_id = %s",
                     (post_id, user_id)
                 )
                 
-                post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
                 preview_text = "Original content not found"
                 if post:
                     content = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
@@ -1508,35 +1510,35 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reaction_type = 'like' if parts[0] in ('likecomment', 'likereply') else 'dislike'
 
                 db_execute(
-                    "DELETE FROM reactions WHERE comment_id = ? AND user_id = ?",
+                    "DELETE FROM reactions WHERE comment_id = %s AND user_id = %s",
                     (comment_id, user_id)
                 )
 
                 current_reaction = db_fetch_one(
-                    "SELECT type FROM reactions WHERE comment_id = ? AND user_id = ?",
+                    "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
                     (comment_id, user_id)
                 )
                 
                 if not current_reaction or current_reaction['type'] != reaction_type:
                     db_execute(
-                        "INSERT INTO reactions (comment_id, user_id, type) VALUES (?, ?, ?)",
+                        "INSERT INTO reactions (comment_id, user_id, type) VALUES (%s, %s, %s)",
                         (comment_id, user_id, reaction_type)
                     )
 
                 likes_row = db_fetch_one(
-                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'like'",
+                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'like'",
                     (comment_id,)
                 )
                 likes = likes_row['cnt'] if likes_row else 0
                 
                 dislikes_row = db_fetch_one(
-                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = ? AND type = 'dislike'",
+                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'dislike'",
                     (comment_id,)
                 )
                 dislikes = dislikes_row['cnt'] if dislikes_row else 0
 
                 comment = db_fetch_one(
-                    "SELECT post_id, parent_comment_id FROM comments WHERE comment_id = ?",
+                    "SELECT post_id, parent_comment_id FROM comments WHERE comment_id = %s",
                     (comment_id,)
                 )
                 if not comment:
@@ -1547,7 +1549,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parent_comment_id = comment['parent_comment_id']
 
                 user_reaction = db_fetch_one(
-                    "SELECT type FROM reactions WHERE comment_id = ? AND user_id = ?",
+                    "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
                     (comment_id, user_id)
                 )
 
@@ -1583,14 +1585,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if user_reaction and user_reaction['type'] != reaction_type:
                     comment_author = db_fetch_one(
-                        "SELECT user_id, notifications_enabled FROM users WHERE user_id = ?",
+                        "SELECT user_id, notifications_enabled FROM users WHERE user_id = %s",
                         (comment['author_id'],)
                     )
                     if comment_author and comment_author['notifications_enabled'] and comment_author['user_id'] != user_id:
                         reactor_name = get_display_name(
-                            db_fetch_one("SELECT * FROM users WHERE user_id = ?", (user_id,))
+                            db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
                         )
-                        post = db_fetch_one("SELECT * FROM posts WHERE post_id = ?", (post_id,))
+                        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
                         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
                         
                         notification_text = (
@@ -1615,11 +1617,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 post_id = int(parts[1])
                 comment_id = int(parts[2])
                 db_execute(
-                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = ?, comment_idx = ? WHERE user_id = ?",
+                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
                     (post_id, comment_id, user_id)
                 )
                 
-                comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = ?", (comment_id,))
+                comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
                 preview_text = "Original comment not found"
                 if comment:
                     content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
@@ -1639,11 +1641,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 comment_id = int(parts[3])   # this is the comment/reply the user is replying TO
                 # Store the exact comment id being replied to in comment_idx
                 db_execute(
-                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = ?, comment_idx = ? WHERE user_id = ?",
+                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
                     (post_id, comment_id, user_id)
                 )
         
-                comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = ?", (comment_id,))
+                comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
                 preview_text = "Original reply not found"
                 if comment:
                     content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
@@ -1697,7 +1699,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del context.user_data['pending_post']
                 
                 post_id = db_execute(
-                    "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s)",
                     (post_content, user_id, category, media_type, media_id)
                 )
                 
@@ -1740,11 +1742,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('message_'):
             target_id = query.data.split('_', 1)[1]
             db_execute(
-                "UPDATE users SET waiting_for_private_message = 1, private_message_target = ? WHERE user_id = ?",
+                "UPDATE users SET waiting_for_private_message = 1, private_message_target = %s WHERE user_id = %s",
                 (target_id, user_id)
             )
             
-            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (target_id,))
+            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
             target_name = target_user['anonymous_name'] if target_user else "this user"
             
             await query.message.reply_text(
@@ -1756,11 +1758,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('reply_msg_'):
             target_id = query.data.split('_', 2)[2]
             db_execute(
-                "UPDATE users SET waiting_for_private_message = 1, private_message_target = ? WHERE user_id = ?",
+                "UPDATE users SET waiting_for_private_message = 1, private_message_target = %s WHERE user_id = %s",
                 (target_id, user_id)
             )
             
-            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = ?", (target_id,))
+            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
             target_name = target_user['anonymous_name'] if target_user else "this user"
             
             await query.message.reply_text(
@@ -1775,7 +1777,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Add to blocks table
             try:
                 db_execute(
-                    "INSERT INTO blocks (blocker_id, blocked_id) VALUES (?, ?)",
+                    "INSERT INTO blocks (blocker_id, blocked_id) VALUES (%s, %s)",
                     (user_id, target_id)
                 )
                 await query.message.reply_text("✅ User has been blocked. They can no longer send you messages.")
@@ -1791,7 +1793,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         if update.message:
             await update.message.reply_text("❌ You don't have permission to access this.")
@@ -1845,12 +1847,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or update.message.caption or ""
     user_id = str(update.message.from_user.id)
     message = update.message
-    user = db_fetch_one("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
 
     if user and user['waiting_for_post']:
         category = user['selected_category']
         db_execute(
-            "UPDATE users SET waiting_for_post = 0, selected_category = NULL WHERE user_id = ?",
+            "UPDATE users SET waiting_for_post = 0, selected_category = NULL WHERE user_id = %s",
             (user_id,)
         )
         display_name = get_display_name(user)
@@ -1917,13 +1919,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         comment_id = db_execute(
             """INSERT INTO comments 
             (post_id, parent_comment_id, author_id, content, type, file_id) 
-            VALUES (?, ?, ?, ?, ?, ?)""",
+            VALUES (%s, %s, %s, %s, %s, %s)""",
             (post_id, parent_comment_id, user_id, content, comment_type, file_id)
         )
     
         # Reset state so the user can continue normally
         db_execute(
-            "UPDATE users SET waiting_for_comment = 0, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = ?",
+            "UPDATE users SET waiting_for_comment = 0, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = %s",
             (user_id,)
         )
     
@@ -1943,7 +1945,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Check if the receiver has blocked the sender
         is_blocked = db_fetch_one(
-            "SELECT * FROM blocks WHERE blocker_id = ? AND blocked_id = ?",
+            "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
             (target_id, user_id)
         )
         
@@ -1953,20 +1955,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=main_menu
             )
             db_execute(
-                "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = ?",
+                "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = %s",
                 (user_id,)
             )
             return
         
         # Save the private message
         message_id = db_execute(
-            "INSERT INTO private_messages (sender_id, receiver_id, content) VALUES (?, ?, ?)",
+            "INSERT INTO private_messages (sender_id, receiver_id, content) VALUES (%s, %s, %s)",
             (user_id, target_id, message_content)
         )
         
         # Reset the user state
         db_execute(
-            "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = ?",
+            "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = %s",
             (user_id,)
         )
         
@@ -1983,7 +1985,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_name = text.strip()
         if new_name and len(new_name) <= 30:
             db_execute(
-                "UPDATE users SET anonymous_name = ?, awaiting_name = 0 WHERE user_id = ?",
+                "UPDATE users SET anonymous_name = %s, awaiting_name = 0 WHERE user_id = %s",
                 (new_name, user_id)
             )
             await update.message.reply_text(f"✅ Name updated to *{new_name}*!", parse_mode=ParseMode.MARKDOWN)
