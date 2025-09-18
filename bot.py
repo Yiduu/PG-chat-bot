@@ -1388,9 +1388,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "•  menu button በመጠቀም የተለያዩ አማራጮችን ማየት ይችላሉ.\n"
                 "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
                 "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
-                "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
-                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
-                "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
+                "• እርስዎ ባነሱት �ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
+                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ �ሰዎች ብዛት �ማየት ይችላሉ.\n"
+                "• በተነሱ ጥያቄዎች �ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
             )
             keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
             await query.message.reply_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
@@ -2035,6 +2035,14 @@ async def set_bot_commands(app):
     await app.bot.set_my_commands(commands)
 
 def main():
+    # Initialize database before starting the bot
+    try:
+        init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        return
+    
     app = Application.builder().token(TOKEN).post_init(set_bot_commands).build()
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("start", start))
@@ -2050,6 +2058,14 @@ def main():
     app.run_polling() 
 
 if __name__ == "__main__": 
+    # Initialize database first
+    try:
+        init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        exit(1)
+    
     # Start Flask server in a separate thread for Render
     port = int(os.environ.get('PORT', 5000))
     threading.Thread(
