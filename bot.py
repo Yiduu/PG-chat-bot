@@ -1,6 +1,7 @@
 import os 
 import logging
 import psycopg2
+from psycopg2 import sql, IntegrityError, ProgrammingError
 from psycopg2.extras import RealDictCursor
 from pathlib import Path
 from dotenv import load_dotenv
@@ -23,12 +24,19 @@ import random
 import time
 from typing import Optional
 
-# Initialize database
-import os
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Load environment variables first
+load_dotenv()
+
+# Initialize database connection
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://christianbot_vqm3_user:iK1W8dvgJzeCnqzNdG2577JHAdulOrpN@dpg-d35pu1nfte5s7394tb0g-a/christianbot_vqm3')
+TOKEN = os.getenv('TOKEN')
+CHANNEL_ID = int(os.getenv('CHANNEL_ID', 0))
+BOT_USERNAME = os.getenv('BOT_USERNAME')
+ADMIN_ID = os.getenv('ADMIN_ID')
+
 # Initialize database tables with schema migration
 def init_db():
-    with psycopg2.connect(DB_URL) as conn:
+    with psycopg2.connect(DATABASE_URL) as conn:
         with conn.cursor() as c:
             
             # ---------------- Create Tables ----------------
@@ -44,7 +52,12 @@ def init_db():
                 comment_post_id INTEGER,
                 comment_idx INTEGER,
                 reply_idx INTEGER,
-                nested_idx INTEGER
+                nested_idx INTEGER,
+                notifications_enabled BOOLEAN DEFAULT TRUE,
+                privacy_public BOOLEAN DEFAULT TRUE,
+                is_admin BOOLEAN DEFAULT FALSE,
+                waiting_for_private_message BOOLEAN DEFAULT FALSE,
+                private_message_target TEXT
             )
             ''')
 
@@ -63,7 +76,12 @@ def init_db():
                 author_id TEXT,
                 category TEXT,
                 channel_message_id BIGINT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                media_type TEXT DEFAULT 'text',
+                media_id TEXT,
+                comment_count INTEGER DEFAULT 0,
+                approved BOOLEAN DEFAULT FALSE,
+                admin_approved_by TEXT
             )
             ''')
 
@@ -109,52 +127,7 @@ def init_db():
             )
             ''')
 
-            # ---------------- Add missing columns to users ----------------
-            user_extra_columns = {
-                "notifications_enabled": "BOOLEAN DEFAULT TRUE",
-                "privacy_public": "BOOLEAN DEFAULT TRUE",
-                "is_admin": "BOOLEAN DEFAULT FALSE",
-                "waiting_for_private_message": "BOOLEAN DEFAULT FALSE",
-                "private_message_target": "TEXT"
-            }
-
-            for col, definition in user_extra_columns.items():
-                c.execute(f"""
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name='users' AND column_name='{col}'
-                        ) THEN
-                            ALTER TABLE users ADD COLUMN {col} {definition};
-                        END IF;
-                    END
-                    $$;
-                """)
-
-            # ---------------- Add missing columns to posts ----------------
-            post_extra_columns = {
-                "media_type": "TEXT DEFAULT 'text'",
-                "media_id": "TEXT",
-                "comment_count": "INTEGER DEFAULT 0"
-            }
-
-            for col, definition in post_extra_columns.items():
-                c.execute(f"""
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name='posts' AND column_name='{col}'
-                        ) THEN
-                            ALTER TABLE posts ADD COLUMN {col} {definition};
-                        END IF;
-                    END
-                    $$;
-                """)
-
             # ---------------- Create admin user if specified ----------------
-            ADMIN_ID = os.getenv('ADMIN_ID')
             if ADMIN_ID:
                 c.execute('''
                     INSERT INTO users (user_id, anonymous_name, is_admin)
@@ -178,7 +151,7 @@ def db_execute(query, params=(), fetch=False):
                 return cur.fetchall()
             try:
                 return cur.fetchone()
-            except:
+            except ProgrammingError:
                 return None
 
 def db_fetch_one(query, params=()):
@@ -193,6 +166,7 @@ def db_fetch_all(query, params=()):
             cur.execute(query, params)
             return cur.fetchall()
 
+# Rest of your code remains the same but you need to replace all sqlite3.IntegrityError with psycopg2.IntegrityError
 
 # Categories
 CATEGORIES = [
@@ -1461,7 +1435,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "INSERT INTO followers (follower_id, followed_id) VALUES (%s, %s)",
                         (user_id, target_uid)
                     )
-                except sqlite3.IntegrityError:
+                except psycopg2.IntegrityError:
                     pass
             else:
                 db_execute(
@@ -1781,7 +1755,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (user_id, target_id)
                 )
                 await query.message.reply_text("✅ User has been blocked. They can no longer send you messages.")
-            except sqlite3.IntegrityError:
+            except psycopg2.IntegrityError:
                 await query.message.reply_text("❌ User is already blocked.")
             
     except Exception as e:
