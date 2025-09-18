@@ -166,8 +166,6 @@ def db_fetch_all(query, params=()):
             cur.execute(query, params)
             return cur.fetchall()
 
-# Rest of your code remains the same but you need to replace all sqlite3.IntegrityError with psycopg2.IntegrityError
-
 # Categories
 CATEGORIES = [
     ("🙏 Pray For Me", "PrayForMe"),
@@ -238,7 +236,7 @@ def create_anonymous_name(user_id):
 
 def calculate_user_rating(user_id):
     post_row = db_fetch_one(
-        "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = 1",
+        "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE",
         (user_id,)
     )
     post_count = post_row['count'] if post_row else 0
@@ -285,7 +283,7 @@ def get_display_sex(user_data):
 def get_user_rank(user_id):
     users = db_fetch_all('''
         SELECT user_id, 
-               (SELECT COUNT(*) FROM posts WHERE author_id = users.user_id AND approved = 1) + 
+               (SELECT COUNT(*) FROM posts WHERE author_id = users.user_id AND approved = TRUE) + 
                (SELECT COUNT(*) FROM comments WHERE author_id = users.user_id) AS total
         FROM users
         ORDER BY total DESC
@@ -330,7 +328,7 @@ async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, 
 async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top_users = db_fetch_all('''
         SELECT user_id, anonymous_name, sex,
-               (SELECT COUNT(*) FROM posts WHERE author_id = users.user_id AND approved = 1) + 
+               (SELECT COUNT(*) FROM posts WHERE author_id = users.user_id AND approved = TRUE) + 
                (SELECT COUNT(*) FROM comments WHERE author_id = users.user_id) AS total
         FROM users
         ORDER BY total DESC
@@ -623,12 +621,12 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         if update.message:
-            await update.message.reply_text("❌ You don't have permission to access this.")
+            await update.message.reppy_text("❌ You don't have permission to access this.")
         elif update.callback_query:
             await update.callback_query.message.reply_text("❌ You don't have permission to access this.")
         return
     
-    pending_posts = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE approved = 0")
+    pending_posts = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE approved = FALSE")
     pending_count = pending_posts['count'] if pending_posts else 0
     
     keyboard = [
@@ -673,7 +671,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         SELECT p.post_id, p.content, p.category, u.anonymous_name, p.media_type, p.media_id
         FROM posts p
         JOIN users u ON p.author_id = u.user_id
-        WHERE p.approved = 0
+        WHERE p.approved = FALSE
         ORDER BY p.timestamp
     """)
     
@@ -774,7 +772,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             )
         
         db_execute(
-            "UPDATE posts SET approved = 1, admin_approved_by = %s, channel_message_id = %s WHERE post_id = %s",
+            "UPDATE posts SET approved = TRUE, admin_approved_by = %s, channel_message_id = %s WHERE post_id = %s",
             (user_id, msg.message_id, post_id)
         )
         
@@ -854,7 +852,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if post_id_str.isdigit():
                 post_id = int(post_id_str)
                 db_execute(
-                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = %s WHERE user_id = %s",
+                    "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s WHERE user_id = %s",
                     (post_id, user_id)
                 )
                 
@@ -930,7 +928,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌟✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️🌟\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጁ :",
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን �ምረጁ :",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN)
     
@@ -944,7 +942,7 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Get unread messages count
     unread_count_row = db_fetch_one(
-        "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = %s AND is_read = 0",
+        "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = %s AND is_read = FALSE",
         (user_id,)
     )
     unread_count = unread_count_row['count'] if unread_count_row else 0
@@ -990,7 +988,7 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     
     # Mark messages as read when viewing
     db_execute(
-        "UPDATE private_messages SET is_read = 1 WHERE receiver_id = %s",
+        "UPDATE private_messages SET is_read = TRUE WHERE receiver_id = %s",
         (user_id,)
     )
     
@@ -1325,7 +1323,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('category_'):
             category = query.data.split('_', 1)[1]
             db_execute(
-                "UPDATE users SET waiting_for_post = 1, selected_category = %s WHERE user_id = %s",
+                "UPDATE users SET waiting_for_post = TRUE, selected_category = %s WHERE user_id = %s",
                 (category, user_id)
             )
 
@@ -1367,18 +1365,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data == 'toggle_notifications':
             current = db_fetch_one("SELECT notifications_enabled FROM users WHERE user_id = %s", (user_id,))
             if current:
+                new_value = not current['notifications_enabled']
                 db_execute(
                     "UPDATE users SET notifications_enabled = %s WHERE user_id = %s",
-                    (not current['notifications_enabled'], user_id)
+                    (new_value, user_id)
                 )
             await show_settings(update, context)
         
         elif query.data == 'toggle_privacy':
             current = db_fetch_one("SELECT privacy_public FROM users WHERE user_id = %s", (user_id,))
             if current:
+                new_value = not current['privacy_public']
                 db_execute(
                     "UPDATE users SET privacy_public = %s WHERE user_id = %s",
-                    (not current['privacy_public'], user_id)
+                    (new_value, user_id)
                 )
             await show_settings(update, context)
 
@@ -1388,9 +1388,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "•  menu button በመጠቀም የተለያዩ አማራጮችን ማየት ይችላሉ.\n"
                 "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
                 "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
-                "• እርስዎ ባነሱት �ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
-                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ �ሰዎች ብዛት �ማየት ይችላሉ.\n"
-                "• በተነሱ ጥያቄዎች �ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
+                "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
+                "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
+                "• በተነሱ ጥያቄዎች ላይ ከቻናሉ comments የሚለድን በመጫን አስተያየትዎን መጻፍ ይችላሉ."
             )
             keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
             await query.message.reply_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
@@ -1406,7 +1406,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data == 'edit_name':
             db_execute(
-                "UPDATE users SET awaiting_name = 1 WHERE user_id = %s",
+                "UPDATE users SET awaiting_name = TRUE WHERE user_id = %s",
                 (user_id,)
             )
             await query.message.reply_text("✏️ Please type your new anonymous name:", parse_mode=ParseMode.MARKDOWN)
@@ -1461,7 +1461,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if post_id_str.isdigit():
                 post_id = int(post_id_str)
                 db_execute(
-                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = %s WHERE user_id = %s",
+                    "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s WHERE user_id = %s",
                     (post_id, user_id)
                 )
                 
@@ -1542,7 +1542,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     new_kb = InlineKeyboardMarkup([
                         [
                             InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likereply_{comment_id}"),
-                            InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikereply_{comment_id}"),
+                            InlineKeyboardButton(f"{dislike_emoji} {dislikes", callback_data=f"dislikereply_{comment_id}"),
                             InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{comment_id}")
                         ]
                     ])
@@ -1591,7 +1591,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 post_id = int(parts[1])
                 comment_id = int(parts[2])
                 db_execute(
-                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
+                    "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
                     (post_id, comment_id, user_id)
                 )
                 
@@ -1615,7 +1615,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 comment_id = int(parts[3])   # this is the comment/reply the user is replying TO
                 # Store the exact comment id being replied to in comment_idx
                 db_execute(
-                    "UPDATE users SET waiting_for_comment = 1, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
+                    "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
                     (post_id, comment_id, user_id)
                 )
         
@@ -1673,7 +1673,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del context.user_data['pending_post']
                 
                 post_id = db_execute(
-                    "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s)",
+                    "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
                     (post_content, user_id, category, media_type, media_id)
                 )
                 
@@ -1716,7 +1716,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('message_'):
             target_id = query.data.split('_', 1)[1]
             db_execute(
-                "UPDATE users SET waiting_for_private_message = 1, private_message_target = %s WHERE user_id = %s",
+                "UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s",
                 (target_id, user_id)
             )
             
@@ -1732,7 +1732,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('reply_msg_'):
             target_id = query.data.split('_', 2)[2]
             db_execute(
-                "UPDATE users SET waiting_for_private_message = 1, private_message_target = %s WHERE user_id = %s",
+                "UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s",
                 (target_id, user_id)
             )
             
@@ -1778,8 +1778,8 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = db_fetch_one('''
         SELECT 
             (SELECT COUNT(*) FROM users) as total_users,
-            (SELECT COUNT(*) FROM posts WHERE approved = 1) as approved_posts,
-            (SELECT COUNT(*) FROM posts WHERE approved = 0) as pending_posts,
+            (SELECT COUNT(*) FROM posts WHERE approved = TRUE) as approved_posts,
+            (SELECT COUNT(*) FROM posts WHERE approved = FALSE) as pending_posts,
             (SELECT COUNT(*) FROM comments) as total_comments,
             (SELECT COUNT(*) FROM private_messages) as total_messages
     ''')
@@ -1826,7 +1826,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user and user['waiting_for_post']:
         category = user['selected_category']
         db_execute(
-            "UPDATE users SET waiting_for_post = 0, selected_category = NULL WHERE user_id = %s",
+            "UPDATE users SET waiting_for_post = FALSE, selected_category = NULL WHERE user_id = %s",
             (user_id,)
         )
         display_name = get_display_name(user)
@@ -1893,13 +1893,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         comment_id = db_execute(
             """INSERT INTO comments 
             (post_id, parent_comment_id, author_id, content, type, file_id) 
-            VALUES (%s, %s, %s, %s, %s, %s)""",
+            VALUES (%s, %s, %s, %s, %s, %s) RETURNING comment_id""",
             (post_id, parent_comment_id, user_id, content, comment_type, file_id)
         )
     
         # Reset state so the user can continue normally
         db_execute(
-            "UPDATE users SET waiting_for_comment = 0, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = %s",
+            "UPDATE users SET waiting_for_comment = FALSE, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = %s",
             (user_id,)
         )
     
@@ -1929,20 +1929,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=main_menu
             )
             db_execute(
-                "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = %s",
+                "UPDATE users SET waiting_for_private_message = FALSE, private_message_target = NULL WHERE user_id = %s",
                 (user_id,)
             )
             return
         
         # Save the private message
         message_id = db_execute(
-            "INSERT INTO private_messages (sender_id, receiver_id, content) VALUES (%s, %s, %s)",
+            "INSERT INTO private_messages (sender_id, receiver_id, content) VALUES (%s, %s, %s) RETURNING message_id",
             (user_id, target_id, message_content)
         )
         
         # Reset the user state
         db_execute(
-            "UPDATE users SET waiting_for_private_message = 0, private_message_target = NULL WHERE user_id = %s",
+            "UPDATE users SET waiting_for_private_message = FALSE, private_message_target = NULL WHERE user_id = %s",
             (user_id,)
         )
         
@@ -1959,7 +1959,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_name = text.strip()
         if new_name and len(new_name) <= 30:
             db_execute(
-                "UPDATE users SET anonymous_name = %s, awaiting_name = 0 WHERE user_id = %s",
+                "UPDATE users SET anonymous_name = %s, awaiting_name = FALSE WHERE user_id = %s",
                 (new_name, user_id)
             )
             await update.message.reply_text(f"✅ Name updated to *{new_name}*!", parse_mode=ParseMode.MARKDOWN)
