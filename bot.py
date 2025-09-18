@@ -25,7 +25,7 @@ from typing import Optional
 
 # Initialize database
 import os
-DATABASE_URL = os.getenv("postgresql://christianbot_vqm3_user:iK1W8dvgJzeCnqzNdG2577JHAdulOrpN@dpg-d35pu1nfte5s7394tb0g-a/christianbot_vqm3")
+DATABASE_URL = os.getenv("DATABASE_URL")
 # Initialize database tables with schema migration
 def init_db():
     with psycopg2.connect(DB_URL) as conn:
