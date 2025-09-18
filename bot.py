@@ -28,7 +28,7 @@ from typing import Optional
 load_dotenv()
 
 # Initialize database connection
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://christianbot_vqm3_user:iK1W8dvgJzeCnqzNdG2577JHAdulOrpN@dpg-d35pu1nfte5s7394tb0g-a/christianbot_vqm3')
+DATABASE_URL = os.getenv("DATABASE_URL")
 TOKEN = os.getenv('TOKEN')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', 0))
 BOT_USERNAME = os.getenv('BOT_USERNAME')
