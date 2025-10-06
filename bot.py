@@ -473,7 +473,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
             if media_type == 'text':
                 await update.callback_query.edit_message_text(
                     preview_text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    reply_mup=InlineKeyboardMarkup(keyboard),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
             else:
@@ -621,7 +621,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         if update.message:
-            await update.message.reppy_text("❌ You don't have permission to access this.")
+            await update.message.reply_text("❌ You don't have permission to access this.")
         elif update.callback_query:
             await update.callback_query.message.reply_text("❌ You don't have permission to access this.")
         return
@@ -928,7 +928,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌟✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️🌟\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን �ምረጁ :",
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጁ :",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN)
     
@@ -1672,17 +1672,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_id = pending_post.get('media_id')
                 del context.user_data['pending_post']
                 
-                post_id = db_execute(
+                # Fixed: Extract the post_id from the RealDictRow
+                post_row = db_execute(
                     "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
                     (post_content, user_id, category, media_type, media_id)
                 )
                 
-                await notify_admin_of_new_post(context, post_id)
-                
-                await query.message.edit_text(
-                    "✅ Your post has been submitted for admin approval!\n"
-                    "You'll be notified when it's approved and published."
-                )
+                if post_row:
+                    post_id = post_row['post_id']
+                    await notify_admin_of_new_post(context, post_id)
+                    
+                    await query.message.edit_text(
+                        "✅ Your post has been submitted for admin approval!\n"
+                        "You'll be notified when it's approved and published."
+                    )
+                    # Show main menu after submission
+                    await query.message.reply_text(
+                        "What would you like to do next?",
+                        reply_markup=main_menu
+                    )
+                else:
+                    await query.message.edit_text("❌ Failed to submit post. Please try again.")
                 return
 
         elif query.data == 'admin_panel':
@@ -1889,13 +1899,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Unsupported comment type. Please send text, photo, or voice message.")
             return
     
-        # Insert new comment
-        comment_id = db_execute(
+        # Insert new comment and extract the comment_id from the RealDictRow
+        comment_row = db_execute(
             """INSERT INTO comments 
             (post_id, parent_comment_id, author_id, content, type, file_id) 
             VALUES (%s, %s, %s, %s, %s, %s) RETURNING comment_id""",
             (post_id, parent_comment_id, user_id, content, comment_type, file_id)
         )
+        comment_id = comment_row['comment_id'] if comment_row else None
     
         # Reset state so the user can continue normally
         db_execute(
@@ -1934,11 +1945,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Save the private message
-        message_id = db_execute(
+        # Save the private message and extract the message_id from the RealDictRow
+        message_row = db_execute(
             "INSERT INTO private_messages (sender_id, receiver_id, content) VALUES (%s, %s, %s) RETURNING message_id",
             (user_id, target_id, message_content)
         )
+        message_id = message_row['message_id'] if message_row else None
         
         # Reset the user state
         db_execute(
@@ -2010,6 +2022,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(about_text, parse_mode=ParseMode.MARKDOWN)
         return
+
+    # If none of the above, show main menu
+    await update.message.reply_text(
+        "How can I help you?",
+        reply_markup=main_menu
+    )
 
 async def error_handler(update, context):
     logger.error(f"Update {update} caused error: {context.error}", exc_info=True) 
