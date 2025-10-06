@@ -146,13 +146,15 @@ def db_execute(query, params=(), fetch=False):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(query, params)
-            conn.commit()
             if fetch:
-                return cur.fetchall()
-            try:
-                return cur.fetchone()
-            except ProgrammingError:
-                return None
+                result = cur.fetchall()
+            else:
+                try:
+                    result = cur.fetchone()
+                except ProgrammingError:
+                    result = None
+            conn.commit()
+            return result
 
 def db_fetch_one(query, params=()):
     with get_conn() as conn:
@@ -194,7 +196,7 @@ def build_category_buttons():
 # Load environment variables
 load_dotenv()
 TOKEN = os.getenv('TOKEN')
-CHANNEL_ID = int(os.getenv('CHANNEL_ID'))
+CHANNEL_ID = int(os.getenv('CHANNEL_ID', 0))
 BOT_USERNAME = os.getenv('BOT_USERNAME')
 ADMIN_ID = os.getenv('ADMIN_ID')
 
@@ -473,7 +475,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
             if media_type == 'text':
                 await update.callback_query.edit_message_text(
                     preview_text,
-                    reply_mup=InlineKeyboardMarkup(keyboard),
+                    reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
             else:
@@ -816,7 +818,7 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
         await update.callback_query.edit_message_text("❌ Failed to reject post. Please try again.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
+    user_id = str(update.effective_user.id)
     
     # Check if user exists
     user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
@@ -968,7 +970,7 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for msg in messages:
         status = "🔵" if not msg['is_read'] else "⚪️"
-        timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d')
+        timestamp = datetime.strptime(str(msg['timestamp']), '%Y-%m-%d %H:%M:%S').strftime('%b %d')
         preview = msg['content'][:30] + '...' if len(msg['content']) > 30 else msg['content']
         inbox_text += f"{status} *{msg['sender_name']}* {msg['sender_sex']} - {preview} ({timestamp})\n"
     
@@ -1022,7 +1024,7 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     messages_text = f"📭 *Your Messages* (Page {page}/{total_pages})\n\n"
     
     for msg in messages:
-        timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d, %H:%M')
+        timestamp = datetime.strptime(str(msg['timestamp']), '%Y-%m-%d %H:%M:%S').strftime('%b %d, %H:%M')
         messages_text += f"👤 *{msg['sender_name']}* {msg['sender_sex']} ({timestamp}):\n"
         messages_text += f"{escape_markdown(msg['content'], version=2)}\n\n"
         messages_text += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -1672,7 +1674,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_id = pending_post.get('media_id')
                 del context.user_data['pending_post']
                 
-                # Fixed: Extract the post_id from the RealDictRow
+                # Insert post and get post_id
                 post_row = db_execute(
                     "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
                     (post_content, user_id, category, media_type, media_id)
@@ -1829,7 +1831,7 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or update.message.caption or ""
-    user_id = str(update.message.from_user.id)
+    user_id = str(update.effective_user.id)
     message = update.message
     user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
 
@@ -1899,7 +1901,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Unsupported comment type. Please send text, photo, or voice message.")
             return
     
-        # Insert new comment and extract the comment_id from the RealDictRow
+        # Insert new comment and get the comment_id
         comment_row = db_execute(
             """INSERT INTO comments 
             (post_id, parent_comment_id, author_id, content, type, file_id) 
@@ -1945,7 +1947,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Save the private message and extract the message_id from the RealDictRow
+        # Save the private message and get the message_id
         message_row = db_execute(
             "INSERT INTO private_messages (sender_id, receiver_id, content) VALUES (%s, %s, %s) RETURNING message_id",
             (user_id, target_id, message_content)
