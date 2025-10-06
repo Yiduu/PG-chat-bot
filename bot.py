@@ -1064,17 +1064,27 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ''', (user_id,))
     
     if not messages:
-        await update.message.reply_text(
-            "📭 *Your Inbox*\n\nYou don't have any messages yet.",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        if hasattr(update, 'message') and update.message:
+            await update.message.reply_text(
+                "📭 *Your Inbox*\n\nYou don't have any messages yet.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        elif hasattr(update, 'callback_query') and update.callback_query:
+            await update.callback_query.message.reply_text(
+                "📭 *Your Inbox*\n\nYou don't have any messages yet.",
+                parse_mode=ParseMode.MARKDOWN
+            )
         return
     
     inbox_text = f"📭 *Your Inbox* ({unread_count} unread)\n\n"
     
     for msg in messages:
         status = "🔵" if not msg['is_read'] else "⚪️"
-        timestamp = datetime.strptime(str(msg['timestamp']), '%Y-%m-%d %H:%M:%S').strftime('%b %d')
+        # Handle timestamp whether it's string or datetime object
+        if isinstance(msg['timestamp'], str):
+            timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d')
+        else:
+            timestamp = msg['timestamp'].strftime('%b %d')
         preview = msg['content'][:30] + '...' if len(msg['content']) > 30 else msg['content']
         inbox_text += f"{status} *{msg['sender_name']}* {msg['sender_sex']} - {preview} ({timestamp})\n"
     
@@ -1083,11 +1093,18 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
     ]
     
-    await update.message.reply_text(
-        inbox_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    if hasattr(update, 'message') and update.message:
+        await update.message.reply_text(
+            inbox_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+    elif hasattr(update, 'callback_query') and update.callback_query:
+        await update.callback_query.message.reply_text(
+            inbox_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
     user_id = str(update.effective_user.id)
@@ -1119,16 +1136,26 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     total_pages = (total_messages + per_page - 1) // per_page
     
     if not messages:
-        await update.message.reply_text(
-            "📭 *Your Messages*\n\nYou don't have any messages yet.",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        if hasattr(update, 'message') and update.message:
+            await update.message.reply_text(
+                "📭 *Your Messages*\n\nYou don't have any messages yet.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        elif hasattr(update, 'callback_query') and update.callback_query:
+            await update.callback_query.message.reply_text(
+                "📭 *Your Messages*\n\nYou don't have any messages yet.",
+                parse_mode=ParseMode.MARKDOWN
+            )
         return
     
     messages_text = f"📭 *Your Messages* (Page {page}/{total_pages})\n\n"
     
     for msg in messages:
-        timestamp = datetime.strptime(str(msg['timestamp']), '%Y-%m-%d %H:%M:%S').strftime('%b %d, %H:%M')
+        # Handle timestamp whether it's string or datetime object
+        if isinstance(msg['timestamp'], str):
+            timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d, %H:%M')
+        else:
+            timestamp = msg['timestamp'].strftime('%b %d, %H:%M')
         messages_text += f"👤 *{msg['sender_name']}* {msg['sender_sex']} ({timestamp}):\n"
         messages_text += f"{escape_markdown(msg['content'], version=2)}\n\n"
         messages_text += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -1155,26 +1182,29 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     keyboard_buttons.append([InlineKeyboardButton("📱 Main Menu", callback_data='menu')])
     
     try:
-        if update.callback_query:
+        if hasattr(update, 'callback_query') and update.callback_query:
             await update.callback_query.edit_message_text(
                 messages_text,
                 reply_markup=InlineKeyboardMarkup(keyboard_buttons),
                 parse_mode=ParseMode.MARKDOWN_V2
             )
         else:
-            await update.message.reply_text(
-                messages_text,
-                reply_markup=InlineKeyboardMarkup(keyboard_buttons),
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
+            if hasattr(update, 'message') and update.message:
+                await update.message.reply_text(
+                    messages_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
     except Exception as e:
         logger.error(f"Error showing messages: {e}")
-        await update.message.reply_text("❌ Error loading messages. Please try again.")
+        if hasattr(update, 'message') and update.message:
+            await update.message.reply_text("❌ Error loading messages. Please try again.")
 
 async def show_comments_menu(update, context, post_id, page=1):
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post:
-        await update.message.reply_text("❌ Post not found.", reply_markup=main_menu)
+        if hasattr(update, 'message') and update.message:
+            await update.message.reply_text("❌ Post not found.", reply_markup=main_menu)
         return
 
     comment_count = count_all_comments(post_id)
@@ -1188,11 +1218,12 @@ async def show_comments_menu(update, context, post_id, page=1):
     post_text = post['content']
     escaped_text = escape_markdown(post_text, version=2)
 
-    await update.message.reply_text(
-        f"💬\n{escaped_text}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN_V2
-    )
+    if hasattr(update, 'message') and update.message:
+        await update.message.reply_text(
+            f"💬\n{escaped_text}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
 
 async def show_comments_page(update, context, post_id, page=1, reply_pages=None):
     if update.effective_chat is None:
@@ -1363,16 +1394,29 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("ℹ️ About Us", callback_data='about')
         ]
     ]
-    await update.message.reply_text(
-        "📱 *Main Menu*\nChoose an option below:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
-    )
     
-    await update.message.reply_text(
-        "You can also use these buttons:",
-        reply_markup=main_menu
-    )
+    if hasattr(update, 'message') and update.message:
+        await update.message.reply_text(
+            "📱 *Main Menu*\nChoose an option below:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        await update.message.reply_text(
+            "You can also use these buttons:",
+            reply_markup=main_menu
+        )
+    elif hasattr(update, 'callback_query') and update.callback_query:
+        await update.callback_query.message.reply_text(
+            "📱 *Main Menu*\nChoose an option below:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        await update.callback_query.message.reply_text(
+            "You can also use these buttons:",
+            reply_markup=main_menu
+        )
 
 async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
@@ -1453,11 +1497,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     InlineKeyboardButton("ℹ️ About Us", callback_data='about')
                 ]
             ]
-            await query.message.edit_text(
-                "📱 *Main Menu*\nChoose an option below:",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.MARKDOWN
-            )    
+            try:
+                await query.message.edit_text(
+                    "📱 *Main Menu*\nChoose an option below:",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except BadRequest:
+                await query.message.reply_text(
+                    "📱 *Main Menu*\nChoose an option below:",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )    
 
         elif query.data == 'profile':
             await send_updated_profile(user_id, query.message.chat.id, context)
@@ -1860,7 +1911,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
         elif query.data.startswith('reply_msg_'):
-            target_id = query.data.split('_', 2)[2]
+            # Fixed: Properly extract target_id from reply_msg_{target_id}
+            target_id = query.data.split('_')[2] if len(query.data.split('_')) > 2 else query.data.split('_')[1]
             db_execute(
                 "UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s",
                 (target_id, user_id)
