@@ -141,7 +141,7 @@ def init_db():
     except Exception as e:
         logging.error(f"Database initialization failed: {e}")
 
-# Database helper functions - OPTIMIZED for Supabase
+# Database helper functions - FIXED VERSION
 def get_conn():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
@@ -173,20 +173,6 @@ def db_fetch_one(query, params=()):
 
 def db_fetch_all(query, params=()):
     return db_execute(query, params, fetch=True)
-
-# Cache for user data to reduce database calls
-user_cache = {}
-def get_cached_user(user_id):
-    if user_id in user_cache:
-        return user_cache[user_id]
-    user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
-    if user:
-        user_cache[user_id] = user
-    return user
-
-def update_cached_user(user_id, updates):
-    if user_id in user_cache:
-        user_cache[user_id].update(updates)
 
 # Categories
 CATEGORIES = [
@@ -402,7 +388,7 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
     try:
-        user = get_cached_user(user_id)
+        user = db_fetch_one("SELECT notifications_enabled, privacy_public, is_admin FROM users WHERE user_id = %s", (user_id,))
         
         if not user:
             if update.message:
@@ -537,11 +523,11 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
         if not comment:
             return
         
-        original_author = get_cached_user(comment['author_id'])
+        original_author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (comment['author_id'],))
         if not original_author or not original_author['notifications_enabled']:
             return
         
-        replier = get_cached_user(replier_id)
+        replier = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (replier_id,))
         replier_name = get_display_name(replier)
         
         post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
@@ -570,7 +556,7 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
     if not post:
         return
     
-    author = get_cached_user(post['author_id'])
+    author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (post['author_id'],))
     author_name = get_display_name(author)
     
     post_preview = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
@@ -601,11 +587,11 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         if is_blocked:
             return  # Don't notify if blocked
         
-        receiver = get_cached_user(receiver_id)
+        receiver = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (receiver_id,))
         if not receiver or not receiver['notifications_enabled']:
             return
         
-        sender = get_cached_user(sender_id)
+        sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
         sender_name = get_display_name(sender)
         
         # Truncate long messages for the notification
@@ -637,7 +623,7 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = get_cached_user(user_id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         if update.message:
             await update.message.reply_text("❌ You don't have permission to access this.")
@@ -680,7 +666,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = str(update.effective_user.id)
     
     # Verify admin permissions
-    user = get_cached_user(user_id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         if update.message:
             await update.message.reply_text("❌ You don't have permission to access this.")
@@ -781,7 +767,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
     user_id = str(update.effective_user.id)
     
     # Verify admin permissions
-    user = get_cached_user(user_id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         try:
             await query.answer("❌ You don't have permission to do this.", show_alert=True)
@@ -884,7 +870,7 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
     user_id = str(update.effective_user.id)
     
     # Verify admin permissions
-    user = get_cached_user(user_id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         try:
             await query.answer("❌ You don't have permission to do this.", show_alert=True)
@@ -935,7 +921,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
     # Check if user exists and create if not - FIXED
-    user = get_cached_user(user_id)
+    user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
     if not user:
         anon = create_anonymous_name(user_id)
         # FIXED: Properly set is_admin based on ADMIN_ID comparison
@@ -947,9 +933,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not success:
             await update.message.reply_text("❌ Error creating user profile. Please try again.")
             return
-        # Clear cache for this user
-        if user_id in user_cache:
-            del user_cache[user_id]
     
     args = context.args
 
@@ -1291,7 +1274,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     for idx, comment in enumerate(comments):
         commenter_id = comment['author_id']
-        commenter = get_cached_user(commenter_id)
+        commenter = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (commenter_id,))
         display_sex = get_display_sex(commenter)
         display_name = get_display_name(commenter)
         
@@ -1350,7 +1333,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             )
             for child in children:
                 reply_user_id = child['author_id']
-                reply_user = get_cached_user(reply_user_id)
+                reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (reply_user_id,))
                 reply_display_name = get_display_name(reply_user)
                 reply_display_sex = get_display_sex(reply_user)
                 rating_reply = calculate_user_rating(reply_user_id)
@@ -1436,7 +1419,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE):
-    user = get_cached_user(user_id)
+    user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
     if not user:
         return
     
@@ -1544,9 +1527,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "UPDATE users SET notifications_enabled = %s WHERE user_id = %s",
                     (new_value, user_id)
                 )
-                # Update cache
-                if user_id in user_cache:
-                    user_cache[user_id]['notifications_enabled'] = new_value
             await show_settings(update, context)
         
         elif query.data == 'toggle_privacy':
@@ -1557,9 +1537,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "UPDATE users SET privacy_public = %s WHERE user_id = %s",
                     (new_value, user_id)
                 )
-                # Update cache
-                if user_id in user_cache:
-                    user_cache[user_id]['privacy_public'] = new_value
             await show_settings(update, context)
 
         elif query.data == 'help':
@@ -1604,9 +1581,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "UPDATE users SET sex = %s WHERE user_id = %s",
                 (sex, user_id)
             )
-            # Update cache
-            if user_id in user_cache:
-                user_cache[user_id]['sex'] = sex
             await query.message.reply_text("✅ Sex updated!")
             await send_updated_profile(user_id, query.message.chat.id, context)
 
@@ -1741,10 +1715,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         logger.error(f"Error updating reaction buttons: {e}")
                 
                 if user_reaction and user_reaction['type'] != reaction_type:
-                    comment_author = get_cached_user(comment['author_id'])
+                    comment_author = db_fetch_one(
+                        "SELECT user_id, notifications_enabled FROM users WHERE user_id = %s",
+                        (comment['author_id'],)
+                    )
                     if comment_author and comment_author['notifications_enabled'] and comment_author['user_id'] != user_id:
                         reactor_name = get_display_name(
-                            get_cached_user(user_id)
+                            db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
                         )
                         post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
                         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
@@ -1906,7 +1883,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error in reject_post handler: {e}")
                 await query.answer("❌ Error rejecting post", show_alert=True)
             
-        # Private messaging functionality - FIXED
+        # Private messaging functionality
         elif query.data == 'inbox':
             await show_inbox(update, context)
             
@@ -1924,7 +1901,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 (target_id, user_id)
             )
             
-            target_user = get_cached_user(target_id)
+            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
             target_name = target_user['anonymous_name'] if target_user else "this user"
             
             await query.message.reply_text(
@@ -1934,14 +1911,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
         elif query.data.startswith('reply_msg_'):
-            # FIXED: Properly extract target_id from reply_msg_{target_id}
-            target_id = query.data.replace('reply_msg_', '')
+            # Fixed: Properly extract target_id from reply_msg_{target_id}
+            target_id = query.data.split('_')[2] if len(query.data.split('_')) > 2 else query.data.split('_')[1]
             db_execute(
                 "UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s",
                 (target_id, user_id)
             )
             
-            target_user = get_cached_user(target_id)
+            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
             target_name = target_user['anonymous_name'] if target_user else "this user"
             
             await query.message.reply_text(
@@ -1951,8 +1928,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
         elif query.data.startswith('block_user_'):
-            # FIXED: Properly extract target_id from block_user_{target_id}
-            target_id = query.data.replace('block_user_', '')
+            target_id = query.data.split('_', 2)[2]
             
             # Add to blocks table
             try:
@@ -1973,7 +1949,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = get_cached_user(user_id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
         if update.message:
             await update.message.reply_text("❌ You don't have permission to access this.")
@@ -2026,7 +2002,7 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or update.message.caption or ""
     user_id = str(update.effective_user.id)
-    user = get_cached_user(user_id)
+    user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
 
     # If user doesn't exist, create them
     if not user:
@@ -2036,10 +2012,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "INSERT INTO users (user_id, anonymous_name, sex, is_admin) VALUES (%s, %s, %s, %s)",
             (user_id, anon, '👤', is_admin)
         )
-        # Clear cache for this user
-        if user_id in user_cache:
-            del user_cache[user_id]
-        user = get_cached_user(user_id)
+        user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
 
     if user and user['waiting_for_post']:
         category = user['selected_category']
@@ -2047,10 +2020,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE users SET waiting_for_post = FALSE, selected_category = NULL WHERE user_id = %s",
             (user_id,)
         )
-        # Update cache
-        if user_id in user_cache:
-            user_cache[user_id]['waiting_for_post'] = False
-            user_cache[user_id]['selected_category'] = None
         
         post_content = ""
         media_type = 'text'
@@ -2123,12 +2092,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE users SET waiting_for_comment = FALSE, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = %s",
             (user_id,)
         )
-        # Update cache
-        if user_id in user_cache:
-            user_cache[user_id]['waiting_for_comment'] = False
-            user_cache[user_id]['comment_post_id'] = None
-            user_cache[user_id]['comment_idx'] = None
-            user_cache[user_id]['reply_idx'] = None
     
         await update.message.reply_text("✅ Your comment has been posted!", reply_markup=main_menu)
         
@@ -2159,10 +2122,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "UPDATE users SET waiting_for_private_message = FALSE, private_message_target = NULL WHERE user_id = %s",
                 (user_id,)
             )
-            # Update cache
-            if user_id in user_cache:
-                user_cache[user_id]['waiting_for_private_message'] = False
-                user_cache[user_id]['private_message_target'] = None
             return
         
         # Save message
@@ -2177,10 +2136,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE users SET waiting_for_private_message = FALSE, private_message_target = NULL WHERE user_id = %s",
             (user_id,)
         )
-        # Update cache
-        if user_id in user_cache:
-            user_cache[user_id]['waiting_for_private_message'] = False
-            user_cache[user_id]['private_message_target'] = None
         
         # Notify receiver
         await notify_user_of_private_message(context, user_id, target_id, message_content, message_row['message_id'] if message_row else None)
@@ -2198,10 +2153,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "UPDATE users SET anonymous_name = %s, awaiting_name = FALSE WHERE user_id = %s",
                 (new_name, user_id)
             )
-            # Update cache
-            if user_id in user_cache:
-                user_cache[user_id]['anonymous_name'] = new_name
-                user_cache[user_id]['awaiting_name'] = False
             await update.message.reply_text(f"✅ Name updated to *{new_name}*!", parse_mode=ParseMode.MARKDOWN)
             await send_updated_profile(user_id, update.message.chat.id, context)
         else:
