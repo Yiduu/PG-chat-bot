@@ -1576,7 +1576,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("⚧️ Select your sex:", reply_markup=InlineKeyboardMarkup(btns))
 
         elif query.data.startswith('sex_'):
-            sex = '👨' if 'male' in query.data else '👩'
+            if query.data == 'sex_male':
+                sex = '👨'
+            elif query.data == 'sex_female':
+                sex = '👩'
+            else:
+                sex = '👤'  # fallback
+            
             db_execute(
                 "UPDATE users SET sex = %s WHERE user_id = %s",
                 (sex, user_id)
