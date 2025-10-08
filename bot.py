@@ -142,13 +142,27 @@ def init_db():
         logging.error(f"Database initialization failed: {e}")
 
 # Database helper functions - FIXED VERSION
-def get_conn():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+# -------------------- PostgreSQL Connection Pool --------------------
+from psycopg2 import pool
+
+# Create a global connection pool (reuses DB connections instead of reconnecting every time)
+try:
+    db_pool = pool.SimpleConnectionPool(
+        1, 10,  # min 1, max 10 connections
+        dsn=DATABASE_URL,
+        cursor_factory=RealDictCursor
+    )
+    logging.info("✅ Database connection pool created successfully")
+except Exception as e:
+    logging.error(f"❌ Failed to create database pool: {e}")
+    db_pool = None
+
 
 def db_execute(query, params=(), fetch=False, fetchone=False):
+    """Execute a SQL query using the global connection pool."""
     conn = None
     try:
-        conn = get_conn()
+        conn = db_pool.getconn()
         with conn.cursor() as cur:
             cur.execute(query, params)
             if fetch:
@@ -160,13 +174,14 @@ def db_execute(query, params=(), fetch=False, fetchone=False):
             conn.commit()
             return result
     except Exception as e:
-        logging.error(f"Database error in db_execute: {e}")
+        logging.error(f"Database error: {e}")
         if conn:
             conn.rollback()
         return None
     finally:
         if conn:
-            conn.close()
+            db_pool.putconn(conn)
+
 
 def db_fetch_one(query, params=()):
     return db_execute(query, params, fetchone=True)
