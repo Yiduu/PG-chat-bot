@@ -791,7 +791,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             f"{post['content']}\n\n"
             f"━━━━━━━━━━━━━━━\n"
             f"{hashtag}\n"
-            f"[Telegram](https://t.me/gospelyrics)| [Bot](https://t.me/{BOT_USERNAME})"
+            f"[Telegram](https://t.me/christianvent)| [Bot](https://t.me/{BOT_USERNAME})"
         )
         
         # Create the comments button
