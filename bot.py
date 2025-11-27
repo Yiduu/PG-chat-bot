@@ -84,7 +84,7 @@ def init_db():
                     comment_count INTEGER DEFAULT 0,
                     approved BOOLEAN DEFAULT FALSE,
                     admin_approved_by TEXT,
-                    thread_from_post_id INTEGER DEFAULT NULL
+                    thread_from_post_id BIGINT DEFAULT NULL
                 )
                 ''')
 
@@ -227,12 +227,13 @@ def health_check():
 def uptimerobot_ping():
     return jsonify(status="OK", message="Pong! Bot is alive") 
 
-# Create main menu keyboard
+# Create main menu keyboard with improved buttons
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("🙏 Ask Question")],
-        [KeyboardButton("👤 View Profile"), KeyboardButton("🏆 Leaderboard")],
-        [KeyboardButton("⚙️ Settings"), KeyboardButton("❓ Help")]
+        [KeyboardButton("🌟 Share My Thoughts")],
+        [KeyboardButton("👤 View Profile"), KeyboardButton("📚 My Previous Posts")],
+        [KeyboardButton("🏆 Leaderboard"), KeyboardButton("⚙️ Settings")],
+        [KeyboardButton("❓ Help")]
     ],
     resize_keyboard=True,
     one_time_keyboard=False
@@ -1001,35 +1002,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
         
-        elif arg.startswith("profile_"):
-            from urllib.parse import unquote
-        
-            encoded = arg.split("_", 1)[1]
-            target_name = unquote(encoded)
-        
+        # FIXED: Use profileid_ with user_id instead of profile_ with name
+        elif arg.startswith("profileid_"):
+            target_user_id = arg.split("_", 1)[1]
+            
             user_data = db_fetch_one(
-                "SELECT * FROM users WHERE anonymous_name = %s",
-                (target_name,)
+                "SELECT * FROM users WHERE user_id = %s",
+                (target_user_id,)
             )
-        
+            
             if user_data:
                 followers = db_fetch_all(
                     "SELECT * FROM followers WHERE followed_id = %s",
                     (user_data['user_id'],)
                 )
-        
+                
                 rating = calculate_user_rating(user_data['user_id'])
                 stars = format_stars(rating)
-                current = user_id
+                current_user_id = user_id
                 btn = []
-        
+                
                 # Follow / Unfollow buttons
-                if user_data['user_id'] != current:
+                if user_data['user_id'] != current_user_id:
                     is_following = db_fetch_one(
                         "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
-                        (current, user_data['user_id'])
+                        (current_user_id, user_data['user_id'])
                     )
-        
+                    
                     if is_following:
                         btn.append([
                             InlineKeyboardButton(
@@ -1050,10 +1049,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 callback_data=f'follow_{user_data["user_id"]}'
                             )
                         ])
-        
+                
                 display_name = get_display_name(user_data)
                 display_sex = get_display_sex(user_data)
-        
+                
                 await update.message.reply_text(
                     f"👤 *{display_name}* 🎖 \n"
                     f"📌 Sex: {display_sex}\n\n"
@@ -1070,34 +1069,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif arg == "inbox":
             await show_inbox(update, context)
             return
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("✍️ Ask Question 🙏", callback_data='ask'),
-                InlineKeyboardButton("👤 View Profile 🎖", callback_data='profile')
-            ],
-            [
-                InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard'),
-                InlineKeyboardButton("⚙️ Settings", callback_data='settings')
-            ],
-            [
-                InlineKeyboardButton("❓ Help", callback_data='help'),
-                InlineKeyboardButton("ℹ️ About Us", callback_data='about')
-            ]
+    
+    # Show main menu with improved buttons
+    keyboard = [
+        [
+            InlineKeyboardButton("🌟 Share My Thoughts", callback_data='ask'),
+            InlineKeyboardButton("👤 View Profile", callback_data='profile')
+        ],
+        [
+            InlineKeyboardButton("📚 My Previous Posts", callback_data='previous_posts'),
+            InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard')
+        ],
+        [
+            InlineKeyboardButton("⚙️ Settings", callback_data='settings'),
+            InlineKeyboardButton("❓ Help", callback_data='help')
         ]
-        
-        await update.message.reply_text(
-            "🌟✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️🌟\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጁ :",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.MARKDOWN
-        )
-        
-        await update.message.reply_text(
-            "You can use the buttons below to navigate:",
-            reply_markup=main_menu
-        )
+    ]
+    
+    await update.message.reply_text(
+        "🌟✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️🌟\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጁ :",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    await update.message.reply_text(
+        "You can use the buttons below to navigate:",
+        reply_markup=main_menu
+    )
 
 async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -1336,8 +1336,11 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         
         rating = calculate_user_rating(commenter_id)
         stars = format_stars(rating)
-        # REMOVED: profile_url to prevent link previews
+        
+        # FIXED: Use profileid_ with user_id instead of profile_ with name
+        profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}"
 
+        # FIXED: Proper reaction counting
         likes_row = db_fetch_one(
             "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'like'",
             (comment['comment_id'],)
@@ -1359,16 +1362,12 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         dislike_emoji = "👎" if user_reaction and user_reaction['type'] == 'dislike' else "👎"
 
         comment_text = escape_markdown(comment['content'], version=2)
-        # CHANGED: Removed profile URL to prevent link previews
-        encoded_name = quote(display_name, safe="")
-        profile_link = f"https://t.me/{BOT_USERNAME}?start=profile_{encoded_name}"
-
-
+        
+        # FIXED: Use proper markdown link with user_id-based profile link
         author_text = (
             f"[{escape_markdown(display_name, version=2)}]({profile_link}) "
             f"{display_sex} {stars}"
         )
-
 
         # NEW: Add edit and delete buttons for comment author
         kb_buttons = [
@@ -1414,14 +1413,37 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
                 reply_display_sex = get_display_sex(reply_user)
                 rating_reply = calculate_user_rating(reply_user_id)
                 stars_reply = format_stars(rating_reply)
-                # REMOVED: profile_url_reply to prevent link previews
+                
+                # FIXED: Use profileid_ with user_id for replies too
+                reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply_user_id}"
                 safe_reply = escape_markdown(child['content'], version=2)
+
+                # FIXED: Proper reaction counting for replies
+                reply_likes_row = db_fetch_one(
+                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'like'",
+                    (child['comment_id'],)
+                )
+                reply_likes = reply_likes_row['cnt'] if reply_likes_row else 0
+                
+                reply_dislikes_row = db_fetch_one(
+                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'dislike'",
+                    (child['comment_id'],)
+                )
+                reply_dislikes = reply_dislikes_row['cnt'] if reply_dislikes_row else 0
+
+                reply_user_reaction = db_fetch_one(
+                    "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
+                    (child['comment_id'], user_id)
+                )
+
+                reply_like_emoji = "👍" if reply_user_reaction and reply_user_reaction['type'] == 'like' else "👍"
+                reply_dislike_emoji = "👎" if reply_user_reaction and reply_user_reaction['type'] == 'dislike' else "👎"
 
                 # NEW: Add edit and delete buttons for reply author
                 reply_kb_buttons = [
                     [
-                        InlineKeyboardButton("👍", callback_data=f"likereply_{child['comment_id']}"),
-                        InlineKeyboardButton("👎", callback_data=f"dislikereply_{child['comment_id']}"),
+                        InlineKeyboardButton(f"{reply_like_emoji} {reply_likes}", callback_data=f"likereply_{child['comment_id']}"),
+                        InlineKeyboardButton(f"{reply_dislike_emoji} {reply_dislikes}", callback_data=f"dislikereply_{child['comment_id']}"),
                         InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{child['comment_id']}")
                     ]
                 ]
@@ -1438,7 +1460,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
                 # Send this reply under its parent message
                 child_msg = await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"{safe_reply}\n\n{reply_display_name} {reply_display_sex} {stars_reply}",
+                    text=f"{safe_reply}\n\n[{escape_markdown(reply_display_name, version=2)}]({reply_profile_link}) {reply_display_sex} {stars_reply}",
                     parse_mode=ParseMode.MARKDOWN_V2,
                     reply_to_message_id=parent_msg_id,
                     reply_markup=reply_kb,
@@ -1450,7 +1472,6 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
         # Start recursion for this top-level comment
         await send_replies_recursive(comment['comment_id'], msg.message_id, depth=1)
-
 
     pagination_buttons = []
     if page > 1:
@@ -1470,16 +1491,16 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
-            InlineKeyboardButton("✍️ Ask Question 🙏", callback_data='ask'),
-            InlineKeyboardButton("👤 View Profile 🎖", callback_data='profile')
+            InlineKeyboardButton("🌟 Share My Thoughts", callback_data='ask'),
+            InlineKeyboardButton("👤 View Profile", callback_data='profile')
         ],
         [
-            InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard'),
-            InlineKeyboardButton("⚙️ Settings", callback_data='settings')
+            InlineKeyboardButton("📚 My Previous Posts", callback_data='previous_posts'),
+            InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard')
         ],
         [
-            InlineKeyboardButton("❓ Help", callback_data='help'),
-            InlineKeyboardButton("ℹ️ About Us", callback_data='about')
+            InlineKeyboardButton("⚙️ Settings", callback_data='settings'),
+            InlineKeyboardButton("❓ Help", callback_data='help')
         ]
     ]
     
@@ -1521,11 +1542,11 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         (user_id,)
     )
     
-    # NEW: Add "My Vent" button to profile
+    # UPDATED: Changed "My Vent" to "My Previous Posts"
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
         [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
-        [InlineKeyboardButton("📝 My Vent", callback_data='my_vent')],  # NEW: My Vent button
+        [InlineKeyboardButton("📚 My Previous Posts", callback_data='previous_posts')],
         [InlineKeyboardButton("📭 Inbox", callback_data='inbox')],
         [InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
         [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
@@ -1544,8 +1565,8 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         reply_markup=kb,
         parse_mode=ParseMode.MARKDOWN)
 
-# NEW: Function to show user's previous posts (My Vent)
-async def show_my_vent(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
+# UPDATED: Function to show user's previous posts (renamed from show_my_vent)
+async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
     user_id = str(update.effective_user.id)
     
     per_page = 5
@@ -1565,14 +1586,14 @@ async def show_my_vent(update: Update, context: ContextTypes.DEFAULT_TYPE, page=
     total_pages = (total_posts + per_page - 1) // per_page
     
     if not posts:
-        text = "📝 *My Vent*\n\nYou haven't posted anything yet or your posts are pending approval."
+        text = "📚 *My Previous Posts*\n\nYou haven't posted anything yet or your posts are pending approval."
         keyboard = [
-            [InlineKeyboardButton("✍️ Create First Post", callback_data='ask')],
+            [InlineKeyboardButton("🌟 Share My Thoughts", callback_data='ask')],
             [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
         ]
     else:
         # FIXED: Use proper markdown escaping for page numbers
-        text = f"📝 *My Vent* \\- Page {page}/{total_pages}\n\n"
+        text = f"📚 *My Previous Posts* \\- Page {page}/{total_pages}\n\n"
         for post in posts:
             post_preview = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
             # FIXED: Properly escape category and post content
@@ -1587,9 +1608,9 @@ async def show_my_vent(update: Update, context: ContextTypes.DEFAULT_TYPE, page=
         # Pagination buttons
         pagination_row = []
         if page > 1:
-            pagination_row.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"my_vent_{page-1}"))
+            pagination_row.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"previous_posts_{page-1}"))
         if page < total_pages:
-            pagination_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"my_vent_{page+1}"))
+            pagination_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"previous_posts_{page+1}"))
         if pagination_row:
             keyboard.append(pagination_row)
         
@@ -1597,7 +1618,7 @@ async def show_my_vent(update: Update, context: ContextTypes.DEFAULT_TYPE, page=
         for post in posts:
             keyboard.append([
                 InlineKeyboardButton(f"💬 View Comments", callback_data=f"viewcomments_{post['post_id']}_1"),
-                InlineKeyboardButton(f"🔄 Elaborate", callback_data=f"elaborate_{post['post_id']}")
+                InlineKeyboardButton(f"➕ Continue This Post", callback_data=f"continue_post_{post['post_id']}")
             ])
         
         keyboard.append([InlineKeyboardButton("📱 Main Menu", callback_data='menu')])
@@ -1617,7 +1638,7 @@ async def show_my_vent(update: Update, context: ContextTypes.DEFAULT_TYPE, page=
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
     except Exception as e:
-        logger.error(f"Error showing my vent: {e}")
+        logger.error(f"Error showing previous posts: {e}")
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("❌ Error loading your posts. Please try again.")
 
@@ -1653,16 +1674,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data == 'menu':
             keyboard = [
                 [
-                    InlineKeyboardButton("✍️ Ask Question 🙏", callback_data='ask'),
-                    InlineKeyboardButton("👤 View Profile 🎖", callback_data='profile')
+                    InlineKeyboardButton("🌟 Share My Thoughts", callback_data='ask'),
+                    InlineKeyboardButton("👤 View Profile", callback_data='profile')
                 ],
                 [
-                    InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard'),
-                    InlineKeyboardButton("⚙️ Settings", callback_data='settings')
+                    InlineKeyboardButton("📚 My Previous Posts", callback_data='previous_posts'),
+                    InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard')
                 ],
                 [
-                    InlineKeyboardButton("❓ Help", callback_data='help'),
-                    InlineKeyboardButton("ℹ️ About Us", callback_data='about')
+                    InlineKeyboardButton("⚙️ Settings", callback_data='settings'),
+                    InlineKeyboardButton("❓ Help", callback_data='help')
                 ]
             ]
             try:
@@ -1711,7 +1732,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             help_text = (
                 "ℹ️ *የዚህ ቦት አጠቃቀም:*\n"
                 "•  menu button በመጠቀም የተለያዩ አማራጮችን ማየት ይችላሉ.\n"
-                "• 'Ask Question' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
+                "• 'Share My Thoughts' የሚለውን በመንካት በፈለጉት ነገር ጥያቄም ሆነ ሃሳብ መጻፍ ይችላሉ.\n"
                 "•  category ወይም መደብ በመምረጥ በ ጽሁፍ፣ ፎቶ እና ድምጽ ሃሳቦን ማንሳት ይችላሉ.\n"
                 "• እርስዎ ባነሱት ሃሳብ ላይ ሌሎች ሰዎች አስተያየት መጻፍ ይችላሉ\n"
                 "• View your profile የሚለውን በመንካት ስም፣ ጾታዎን መቀየር እንዲሁም እርስዎን የሚከተሉ ሰዎች ብዛት ማየት ይችላሉ.\n"
@@ -1808,28 +1829,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
 
+        # FIXED: Like/Dislike reaction handling
         elif query.data.startswith(("likecomment_", "dislikecomment_", "likereply_", "dislikereply_")):
             try:
                 parts = query.data.split('_')
                 comment_id = int(parts[1])
                 reaction_type = 'like' if parts[0] in ('likecomment', 'likereply') else 'dislike'
 
-                db_execute(
-                    "DELETE FROM reactions WHERE comment_id = %s AND user_id = %s",
-                    (comment_id, user_id)
-                )
-
-                current_reaction = db_fetch_one(
+                # Check if user already has a reaction on this comment
+                existing_reaction = db_fetch_one(
                     "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
                     (comment_id, user_id)
                 )
-                
-                if not current_reaction or current_reaction['type'] != reaction_type:
+
+                if existing_reaction:
+                    if existing_reaction['type'] == reaction_type:
+                        # User is clicking the same reaction - remove it (toggle off)
+                        db_execute(
+                            "DELETE FROM reactions WHERE comment_id = %s AND user_id = %s",
+                            (comment_id, user_id)
+                        )
+                    else:
+                        # User is changing reaction - update it
+                        db_execute(
+                            "UPDATE reactions SET type = %s WHERE comment_id = %s AND user_id = %s",
+                            (reaction_type, comment_id, user_id)
+                        )
+                else:
+                    # User is adding a new reaction
                     db_execute(
                         "INSERT INTO reactions (comment_id, user_id, type) VALUES (%s, %s, %s)",
                         (comment_id, user_id, reaction_type)
                     )
 
+                # Get updated counts
                 likes_row = db_fetch_one(
                     "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'like'",
                     (comment_id,)
@@ -1843,7 +1876,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dislikes = dislikes_row['cnt'] if dislikes_row else 0
 
                 comment = db_fetch_one(
-                    "SELECT post_id, parent_comment_id FROM comments WHERE comment_id = %s",
+                    "SELECT post_id, parent_comment_id, author_id FROM comments WHERE comment_id = %s",
                     (comment_id,)
                 )
                 if not comment:
@@ -1853,6 +1886,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 post_id = comment['post_id']
                 parent_comment_id = comment['parent_comment_id']
 
+                # Get user's current reaction after update
                 user_reaction = db_fetch_one(
                     "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
                     (comment_id, user_id)
@@ -1908,7 +1942,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if "Message is not modified" not in str(e):
                         logger.error(f"Error updating reaction buttons: {e}")
                 
-                if user_reaction and user_reaction['type'] != reaction_type:
+                # Send notification only if reaction was added (not removed)
+                if not existing_reaction or existing_reaction['type'] != reaction_type:
                     comment_author = db_fetch_one(
                         "SELECT user_id, notifications_enabled FROM users WHERE user_id = %s",
                         (comment['author_id'],)
@@ -2018,32 +2053,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
 
-        # NEW: Handle My Vent pagination
-        elif query.data.startswith("my_vent_"):
+        # UPDATED: Handle Previous Posts pagination
+        elif query.data.startswith("previous_posts_"):
             try:
                 page = int(query.data.split('_')[2])
-                await show_my_vent(update, context, page)
+                await show_previous_posts(update, context, page)
             except (IndexError, ValueError):
-                await show_my_vent(update, context, 1)
+                await show_previous_posts(update, context, 1)
 
-        # NEW: Handle My Vent button
-        elif query.data == 'my_vent':
-            await show_my_vent(update, context, 1)
+        # UPDATED: Handle Previous Posts button
+        elif query.data == 'previous_posts':
+            await show_previous_posts(update, context, 1)
 
-        # NEW: Handle elaborate post (threading)
-        elif query.data.startswith("elaborate_"):
-            post_id = int(query.data.split('_')[1])
+        # UPDATED: Handle continue post (threading) - renamed from elaborate
+        elif query.data.startswith("continue_post_"):
+            post_id = int(query.data.split('_')[2])
             post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
             
             if post and post['author_id'] == user_id:
                 context.user_data['thread_from_post_id'] = post_id
                 await query.message.reply_text(
-                    "📚 *Choose a category for your elaboration:*",
+                    "📚 *Choose a category for your continuation:*",
                     reply_markup=build_category_buttons(),
                     parse_mode=ParseMode.MARKDOWN
                 )
             else:
-                await query.answer("❌ You can only elaborate on your own posts", show_alert=True)
+                await query.answer("❌ You can only continue your own posts", show_alert=True)
         
         elif query.data.startswith("replypage_"):
             parts = query.data.split("_")
@@ -2314,7 +2349,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
 
-    # NEW: Check if we have a thread_from_post_id for elaboration
+    # NEW: Check if we have a thread_from_post_id for continuation
     thread_from_post_id = context.user_data.get('thread_from_post_id')
     
     if user and user['waiting_for_post']:
@@ -2463,7 +2498,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Handle main menu buttons
-    if text == "🙏 Ask Question":
+    if text == "🌟 Share My Thoughts":
         await update.message.reply_text(
             "📚 *Choose a category:*",
             reply_markup=build_category_buttons(),
@@ -2483,14 +2518,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_settings(update, context)
         return
 
+    elif text == "📚 My Previous Posts":
+        await show_previous_posts(update, context, 1)
+        return
+
     elif text == "❓ Help":
         help_text = (
             "ℹ️ *How to Use This Bot:*\n"
             "• Use the menu buttons to navigate.\n"
-            "• Tap 'Ask Question' to share your thoughts anonymously.\n"
+            "• Tap 'Share My Thoughts' to share your thoughts anonymously.\n"
             "• Choose a category and type or send your message (text, photo, or voice).\n"
             "• After posting, others can comment on your posts.\n"
             "• View your profile, set your name and sex anytime.\n"
+            "• Use 'My Previous Posts' to view and continue your past posts.\n"
             "• Use the comments button on channel posts to join the conversation here.\n"
             "• Follow users to send them private messages."
         )
@@ -2513,7 +2553,7 @@ async def set_bot_commands(app):
         BotCommand("start", "Start the bot and open the menu"),
         BotCommand("menu", "📱 Open main menu"),
         BotCommand("profile", "View your profile"),
-        BotCommand("ask", "Ask a question"),
+        BotCommand("ask", "Share your thoughts"),
         BotCommand("leaderboard", "View top contributors"),
         BotCommand("settings", "Configure your preferences"),
         BotCommand("help", "How to use the bot"),
