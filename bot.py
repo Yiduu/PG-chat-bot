@@ -1,6 +1,7 @@
 import os 
 import logging
 import psycopg2
+from urllib.parse import quote
 from psycopg2 import sql, IntegrityError, ProgrammingError
 from psycopg2.extras import RealDictCursor
 from pathlib import Path
@@ -82,7 +83,8 @@ def init_db():
                     media_id TEXT,
                     comment_count INTEGER DEFAULT 0,
                     approved BOOLEAN DEFAULT FALSE,
-                    admin_approved_by TEXT
+                    admin_approved_by TEXT,
+                    thread_from_post_id INTEGER DEFAULT NULL
                 )
                 ''')
 
@@ -463,7 +465,7 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif update.callback_query:
             await update.callback_query.message.reply_text("❌ Error loading settings. Please try again.")
 
-async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None):
+async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None):
     keyboard = [
         [
             InlineKeyboardButton("✏️ Edit", callback_data='edit_post'),
@@ -474,8 +476,15 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
         ]
     ]
     
+    thread_text = ""
+    if thread_from_post_id:
+        thread_post = db_fetch_one("SELECT content FROM posts WHERE post_id = %s", (thread_from_post_id,))
+        if thread_post:
+            thread_preview = thread_post['content'][:100] + '...' if len(thread_post['content']) > 100 else thread_post['content']
+            thread_text = f"🔄 *Threading from previous post:*\n{escape_markdown(thread_preview, version=2)}\n\n"
+    
     preview_text = (
-        f"📝 *Post Preview* [{category}]\n\n"
+        f"{thread_text}📝 *Post Preview* [{category}]\n\n"
         f"{escape_markdown(post_content, version=2)}\n\n"
         f"Please confirm your post:"
     )
@@ -485,6 +494,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
         'category': category,
         'media_type': media_type,
         'media_id': media_id,
+        'thread_from_post_id': thread_from_post_id,
         'timestamp': time.time()
     }
     
@@ -990,31 +1000,60 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
                 return
-
+        
         elif arg.startswith("profile_"):
-            target_name = arg.split("_", 1)[1]
-            user_data = db_fetch_one("SELECT * FROM users WHERE anonymous_name = %s", (target_name,))
+            from urllib.parse import unquote
+        
+            encoded = arg.split("_", 1)[1]
+            target_name = unquote(encoded)
+        
+            user_data = db_fetch_one(
+                "SELECT * FROM users WHERE anonymous_name = %s",
+                (target_name,)
+            )
+        
             if user_data:
                 followers = db_fetch_all(
                     "SELECT * FROM followers WHERE followed_id = %s",
                     (user_data['user_id'],)
                 )
+        
                 rating = calculate_user_rating(user_data['user_id'])
                 stars = format_stars(rating)
                 current = user_id
                 btn = []
+        
+                # Follow / Unfollow buttons
                 if user_data['user_id'] != current:
                     is_following = db_fetch_one(
                         "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
                         (current, user_data['user_id'])
                     )
+        
                     if is_following:
-                        btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
-                        btn.append([InlineKeyboardButton("✉️ Send Message", callback_data=f'message_{user_data["user_id"]}')])
+                        btn.append([
+                            InlineKeyboardButton(
+                                "🚫 Unfollow",
+                                callback_data=f'unfollow_{user_data["user_id"]}'
+                            )
+                        ])
+                        btn.append([
+                            InlineKeyboardButton(
+                                "✉️ Send Message",
+                                callback_data=f'message_{user_data["user_id"]}'
+                            )
+                        ])
                     else:
-                        btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
+                        btn.append([
+                            InlineKeyboardButton(
+                                "🫂 Follow",
+                                callback_data=f'follow_{user_data["user_id"]}'
+                            )
+                        ])
+        
                 display_name = get_display_name(user_data)
                 display_sex = get_display_sex(user_data)
+        
                 await update.message.reply_text(
                     f"👤 *{display_name}* 🎖 \n"
                     f"📌 Sex: {display_sex}\n\n"
@@ -1024,39 +1063,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
                     f"_Use /menu to return_",
                     reply_markup=InlineKeyboardMarkup(btn) if btn else None,
-                    parse_mode=ParseMode.MARKDOWN)
+                    parse_mode=ParseMode.MARKDOWN
+                )
                 return
-                
+        
         elif arg == "inbox":
             await show_inbox(update, context)
             return
-
-    keyboard = [
-        [
-            InlineKeyboardButton("✍️ Ask Question 🙏", callback_data='ask'),
-            InlineKeyboardButton("👤 View Profile 🎖", callback_data='profile')
-        ],
-        [
-            InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard'),
-            InlineKeyboardButton("⚙️ Settings", callback_data='settings')
-        ],
-        [
-            InlineKeyboardButton("❓ Help", callback_data='help'),
-            InlineKeyboardButton("ℹ️ About Us", callback_data='about')
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("✍️ Ask Question 🙏", callback_data='ask'),
+                InlineKeyboardButton("👤 View Profile 🎖", callback_data='profile')
+            ],
+            [
+                InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard'),
+                InlineKeyboardButton("⚙️ Settings", callback_data='settings')
+            ],
+            [
+                InlineKeyboardButton("❓ Help", callback_data='help'),
+                InlineKeyboardButton("ℹ️ About Us", callback_data='about')
+            ]
         ]
-    ]
-
-    await update.message.reply_text(
-        "🌟✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️🌟\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN)
-    
-    await update.message.reply_text(
-        "You can use the buttons below to navigate:",
-        reply_markup=main_menu
-    )
+        
+        await update.message.reply_text(
+            "🌟✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️🌟\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጁ :",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        await update.message.reply_text(
+            "You can use the buttons below to navigate:",
+            reply_markup=main_menu
+        )
 
 async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -1262,8 +1303,8 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     total_comments = count_all_comments(post_id)
     total_pages = (total_comments + per_page - 1) // per_page
 
-    post_text = post['content']
-    header = f"{escape_markdown(post_text, version=2)}\n\n"
+    # CHANGED: Only show comments, not post content
+    header = "💬 *Comments*\n\n"
 
     if not comments and page == 1:
         await context.bot.send_message(
@@ -1295,7 +1336,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         
         rating = calculate_user_rating(commenter_id)
         stars = format_stars(rating)
-        profile_url = f"https://t.me/{BOT_USERNAME}?start=profile_{display_name}"
+        # REMOVED: profile_url to prevent link previews
 
         likes_row = db_fetch_one(
             "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'like'",
@@ -1318,22 +1359,42 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         dislike_emoji = "👎" if user_reaction and user_reaction['type'] == 'dislike' else "👎"
 
         comment_text = escape_markdown(comment['content'], version=2)
-        author_text = f"[{escape_markdown(display_name, version=2)}]({profile_url}) {display_sex} {stars}"
+        # CHANGED: Removed profile URL to prevent link previews
+        encoded_name = quote(display_name, safe="")
+        profile_link = f"https://t.me/{BOT_USERNAME}?start=profile_{encoded_name}"
 
-        kb = InlineKeyboardMarkup([
+
+        author_text = (
+            f"[{escape_markdown(display_name, version=2)}]({profile_link}) "
+            f"{display_sex} {stars}"
+        )
+
+
+        # NEW: Add edit and delete buttons for comment author
+        kb_buttons = [
             [
                 InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likecomment_{comment['comment_id']}"),
                 InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikecomment_{comment['comment_id']}"),
                 InlineKeyboardButton("Reply", callback_data=f"reply_{post_id}_{comment['comment_id']}")
             ]
-        ])
+        ]
+        
+        # Add edit/delete buttons only for comment author
+        if comment['author_id'] == user_id:
+            kb_buttons.append([
+                InlineKeyboardButton("✏️ Edit", callback_data=f"edit_comment_{comment['comment_id']}"),
+                InlineKeyboardButton("🗑 Delete", callback_data=f"delete_comment_{comment['comment_id']}")
+            ])
+
+        kb = InlineKeyboardMarkup(kb_buttons)
 
         msg = await context.bot.send_message(
             chat_id=chat_id,
             text=f"{comment_text}\n\n{author_text}",
             reply_markup=kb,
             parse_mode=ParseMode.MARKDOWN_V2,
-            reply_to_message_id=header_message_id
+            reply_to_message_id=header_message_id,
+            disable_web_page_preview=True  # ADDED: Disable link previews
         )
 
         # Recursive function to display replies under this comment
@@ -1353,24 +1414,35 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
                 reply_display_sex = get_display_sex(reply_user)
                 rating_reply = calculate_user_rating(reply_user_id)
                 stars_reply = format_stars(rating_reply)
-                profile_url_reply = f"https://t.me/{BOT_USERNAME}?start=profile_{reply_display_name}"
+                # REMOVED: profile_url_reply to prevent link previews
                 safe_reply = escape_markdown(child['content'], version=2)
 
-                reply_kb = InlineKeyboardMarkup([
+                # NEW: Add edit and delete buttons for reply author
+                reply_kb_buttons = [
                     [
                         InlineKeyboardButton("👍", callback_data=f"likereply_{child['comment_id']}"),
                         InlineKeyboardButton("👎", callback_data=f"dislikereply_{child['comment_id']}"),
                         InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{child['comment_id']}")
                     ]
-                ])
+                ]
+                
+                # Add edit/delete buttons only for reply author
+                if child['author_id'] == user_id:
+                    reply_kb_buttons.append([
+                        InlineKeyboardButton("✏️ Edit", callback_data=f"edit_comment_{child['comment_id']}"),
+                        InlineKeyboardButton("🗑 Delete", callback_data=f"delete_comment_{child['comment_id']}")
+                    ])
+
+                reply_kb = InlineKeyboardMarkup(reply_kb_buttons)
 
                 # Send this reply under its parent message
                 child_msg = await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"{safe_reply}\n\n[{reply_display_name}]({profile_url_reply}) {reply_display_sex} {stars_reply}",
+                    text=f"{safe_reply}\n\n{reply_display_name} {reply_display_sex} {stars_reply}",
                     parse_mode=ParseMode.MARKDOWN_V2,
                     reply_to_message_id=parent_msg_id,
-                    reply_markup=reply_kb
+                    reply_markup=reply_kb,
+                    disable_web_page_preview=True  # ADDED: Disable link previews
                 )
 
                 # Recursively show this child's own replies
@@ -1391,7 +1463,8 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             chat_id=chat_id,
             text=f"📄 Page {page}/{total_pages}",
             reply_markup=pagination_markup,
-            reply_to_message_id=header_message_id
+            reply_to_message_id=header_message_id,
+            disable_web_page_preview=True  # ADDED: Disable link previews
         )
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1447,9 +1520,12 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         "SELECT * FROM followers WHERE followed_id = %s",
         (user_id,)
     )
+    
+    # NEW: Add "My Vent" button to profile
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
         [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
+        [InlineKeyboardButton("📝 My Vent", callback_data='my_vent')],  # NEW: My Vent button
         [InlineKeyboardButton("📭 Inbox", callback_data='inbox')],
         [InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
         [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
@@ -1467,6 +1543,83 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         ),
         reply_markup=kb,
         parse_mode=ParseMode.MARKDOWN)
+
+# NEW: Function to show user's previous posts (My Vent)
+async def show_my_vent(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
+    user_id = str(update.effective_user.id)
+    
+    per_page = 5
+    offset = (page - 1) * per_page
+    
+    # Get user's posts with pagination
+    posts = db_fetch_all(
+        "SELECT * FROM posts WHERE author_id = %s AND approved = TRUE ORDER BY timestamp DESC LIMIT %s OFFSET %s",
+        (user_id, per_page, offset)
+    )
+    
+    total_posts_row = db_fetch_one(
+        "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE",
+        (user_id,)
+    )
+    total_posts = total_posts_row['count'] if total_posts_row else 0
+    total_pages = (total_posts + per_page - 1) // per_page
+    
+    if not posts:
+        text = "📝 *My Vent*\n\nYou haven't posted anything yet or your posts are pending approval."
+        keyboard = [
+            [InlineKeyboardButton("✍️ Create First Post", callback_data='ask')],
+            [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
+        ]
+    else:
+        # FIXED: Use proper markdown escaping for page numbers
+        text = f"📝 *My Vent* \\- Page {page}/{total_pages}\n\n"
+        for post in posts:
+            post_preview = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
+            # FIXED: Properly escape category and post content
+            escaped_category = escape_markdown(post['category'], version=2)
+            escaped_preview = escape_markdown(post_preview, version=2)
+            text += f"📄 *{escaped_category}*:\n{escaped_preview}\n"
+            text += f"💬 Comments: {count_all_comments(post['post_id'])}\n"
+            text += "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        keyboard = []
+        
+        # Pagination buttons
+        pagination_row = []
+        if page > 1:
+            pagination_row.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"my_vent_{page-1}"))
+        if page < total_pages:
+            pagination_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"my_vent_{page+1}"))
+        if pagination_row:
+            keyboard.append(pagination_row)
+        
+        # Action buttons for each post
+        for post in posts:
+            keyboard.append([
+                InlineKeyboardButton(f"💬 View Comments", callback_data=f"viewcomments_{post['post_id']}_1"),
+                InlineKeyboardButton(f"🔄 Elaborate", callback_data=f"elaborate_{post['post_id']}")
+            ])
+        
+        keyboard.append([InlineKeyboardButton("📱 Main Menu", callback_data='menu')])
+    
+    try:
+        if hasattr(update, 'callback_query') and update.callback_query:
+            await update.callback_query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+        else:
+            if hasattr(update, 'message') and update.message:
+                await update.message.reply_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+    except Exception as e:
+        logger.error(f"Error showing my vent: {e}")
+        if hasattr(update, 'message') and update.message:
+            await update.message.reply_text("❌ Error loading your posts. Please try again.")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1709,21 +1862,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dislike_emoji = "👎" if user_reaction and user_reaction['type'] == 'dislike' else "👎"
 
                 if parent_comment_id == 0:
-                    new_kb = InlineKeyboardMarkup([
+                    # Build keyboard with edit/delete buttons for author
+                    kb_buttons = [
                         [
                             InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likecomment_{comment_id}"),
                             InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikecomment_{comment_id}"),
                             InlineKeyboardButton("Reply", callback_data=f"reply_{post_id}_{comment_id}")
                         ]
-                    ])
+                    ]
+                    
+                    # Add edit/delete buttons only for comment author
+                    if comment['author_id'] == user_id:
+                        kb_buttons.append([
+                            InlineKeyboardButton("✏️ Edit", callback_data=f"edit_comment_{comment_id}"),
+                            InlineKeyboardButton("🗑 Delete", callback_data=f"delete_comment_{comment_id}")
+                        ])
+                    
+                    new_kb = InlineKeyboardMarkup(kb_buttons)
                 else:
-                    new_kb = InlineKeyboardMarkup([
+                    # Build keyboard for replies with edit/delete buttons for author
+                    kb_buttons = [
                         [
                             InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likereply_{comment_id}"),
                             InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikereply_{comment_id}"),
                             InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{comment_id}")
                         ]
-                    ])
+                    ]
+                    
+                    # Add edit/delete buttons only for reply author
+                    if comment['author_id'] == user_id:
+                        kb_buttons.append([
+                            InlineKeyboardButton("✏️ Edit", callback_data=f"edit_comment_{comment_id}"),
+                            InlineKeyboardButton("🗑 Delete", callback_data=f"delete_comment_{comment_id}")
+                        ])
+                    
+                    new_kb = InlineKeyboardMarkup(kb_buttons)
 
                 try:
                     await context.bot.edit_message_reply_markup(
@@ -1763,6 +1936,42 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error processing reaction: {e}")
                 await query.answer("❌ Error updating reaction", show_alert=True)
 
+        # NEW: Handle edit comment
+        elif query.data.startswith("edit_comment_"):
+            comment_id = int(query.data.split('_')[2])
+            comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
+            
+            if comment and comment['author_id'] == user_id:
+                context.user_data['editing_comment'] = comment_id
+                await query.message.reply_text(
+                    f"✏️ *Editing your comment:*\n\n{escape_markdown(comment['content'], version=2)}\n\nPlease type your new comment:",
+                    reply_markup=ForceReply(selective=True),
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+            else:
+                await query.answer("❌ You can only edit your own comments", show_alert=True)
+
+        # NEW: Handle delete comment
+        elif query.data.startswith("delete_comment_"):
+            comment_id = int(query.data.split('_')[2])
+            comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
+            
+            if comment and comment['author_id'] == user_id:
+                # Get post_id before deleting for updating comment count
+                post_id = comment['post_id']
+                
+                # Delete the comment and its reactions
+                db_execute("DELETE FROM reactions WHERE comment_id = %s", (comment_id,))
+                db_execute("DELETE FROM comments WHERE comment_id = %s", (comment_id,))
+                
+                await query.answer("✅ Comment deleted")
+                await query.message.delete()
+                
+                # Update comment count
+                await update_channel_post_comment_count(context, post_id)
+            else:
+                await query.answer("❌ You can only delete your own comments", show_alert=True)
+                
         elif query.data.startswith("reply_"):
             parts = query.data.split("_")
             if len(parts) == 3:
@@ -1809,6 +2018,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
 
+        # NEW: Handle My Vent pagination
+        elif query.data.startswith("my_vent_"):
+            try:
+                page = int(query.data.split('_')[2])
+                await show_my_vent(update, context, page)
+            except (IndexError, ValueError):
+                await show_my_vent(update, context, 1)
+
+        # NEW: Handle My Vent button
+        elif query.data == 'my_vent':
+            await show_my_vent(update, context, 1)
+
+        # NEW: Handle elaborate post (threading)
+        elif query.data.startswith("elaborate_"):
+            post_id = int(query.data.split('_')[1])
+            post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+            
+            if post and post['author_id'] == user_id:
+                context.user_data['thread_from_post_id'] = post_id
+                await query.message.reply_text(
+                    "📚 *Choose a category for your elaboration:*",
+                    reply_markup=build_category_buttons(),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            else:
+                await query.answer("❌ You can only elaborate on your own posts", show_alert=True)
         
         elif query.data.startswith("replypage_"):
             parts = query.data.split("_")
@@ -1840,7 +2075,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             elif query.data == 'cancel_post':
                 await query.message.edit_text("❌ Post cancelled.")
-                del context.user_data['pending_post']
+                if 'pending_post' in context.user_data:
+                    del context.user_data['pending_post']
+                if 'thread_from_post_id' in context.user_data:
+                    del context.user_data['thread_from_post_id']
                 return
             
             elif query.data == 'confirm_post':
@@ -1848,14 +2086,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 post_content = pending_post['content']
                 media_type = pending_post.get('media_type', 'text')
                 media_id = pending_post.get('media_id')
-                del context.user_data['pending_post']
+                thread_from_post_id = pending_post.get('thread_from_post_id')
                 
-                # Insert post
-                post_row = db_execute(
-                    "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
-                    (post_content, user_id, category, media_type, media_id),
-                    fetchone=True
-                )
+                # Insert post with thread reference if available
+                if thread_from_post_id:
+                    post_row = db_execute(
+                        "INSERT INTO posts (content, author_id, category, media_type, media_id, thread_from_post_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, category, media_type, media_id, thread_from_post_id),
+                        fetchone=True
+                    )
+                else:
+                    post_row = db_execute(
+                        "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, category, media_type, media_id),
+                        fetchone=True
+                    )
+                
+                # Clean up user data
+                if 'pending_post' in context.user_data:
+                    del context.user_data['pending_post']
+                if 'thread_from_post_id' in context.user_data:
+                    del context.user_data['thread_from_post_id']
                 
                 if post_row:
                     post_id = post_row['post_id']
@@ -2025,6 +2276,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
 
+    # NEW: Handle comment editing
+    if 'editing_comment' in context.user_data:
+        comment_id = context.user_data['editing_comment']
+        comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
+        
+        if comment and comment['author_id'] == user_id:
+            # Update the comment
+            db_execute(
+                "UPDATE comments SET content = %s WHERE comment_id = %s",
+                (text, comment_id)
+            )
+            
+            # Clean up
+            del context.user_data['editing_comment']
+            
+            await update.message.reply_text(
+                "✅ Comment updated successfully!",
+                reply_markup=main_menu
+            )
+            return
+        else:
+            del context.user_data['editing_comment']
+            await update.message.reply_text(
+                "❌ Error updating comment. Please try again.",
+                reply_markup=main_menu
+            )
+            return
+
     # If user doesn't exist, create them
     if not user:
         anon = create_anonymous_name(user_id)
@@ -2035,6 +2314,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
 
+    # NEW: Check if we have a thread_from_post_id for elaboration
+    thread_from_post_id = context.user_data.get('thread_from_post_id')
+    
     if user and user['waiting_for_post']:
         category = user['selected_category']
         db_execute(
@@ -2049,7 +2331,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             if update.message.text:
                 post_content = update.message.text
-                await send_post_confirmation(update, context, post_content, category)
+                await send_post_confirmation(update, context, post_content, category, thread_from_post_id=thread_from_post_id)
                 return
             elif update.message.photo:
                 photo = update.message.photo[-1]
@@ -2067,7 +2349,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error reading media: {e}")
             post_content = "(Unsupported content type)" 
 
-        await send_post_confirmation(update, context, post_content, category, media_type, media_id)
+        await send_post_confirmation(update, context, post_content, category, media_type, media_id, thread_from_post_id=thread_from_post_id)
         return
 
     elif user and user['waiting_for_comment']:
