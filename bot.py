@@ -1,4 +1,4 @@
-import os 
+import os  
 import logging
 import psycopg2
 from urllib.parse import quote
