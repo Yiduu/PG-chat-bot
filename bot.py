@@ -130,6 +130,27 @@ def init_db():
                 )
                 ''')
 
+                # ---------------- Database Schema Migration ----------------
+                # Check if thread_from_post_id column exists, if not add it
+                c.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name='posts' AND column_name='thread_from_post_id'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: thread_from_post_id to posts table")
+                    c.execute("ALTER TABLE posts ADD COLUMN thread_from_post_id BIGINT DEFAULT NULL")
+                
+                # Add other missing columns if needed in the future
+                # Example for future migrations:
+                # c.execute("""
+                #     SELECT column_name 
+                #     FROM information_schema.columns 
+                #     WHERE table_name='users' AND column_name='new_column'
+                # """)
+                # if not c.fetchone():
+                #     c.execute("ALTER TABLE users ADD COLUMN new_column TEXT DEFAULT NULL")
+
                 # ---------------- Create admin user if specified ----------------
                 if ADMIN_ID:
                     c.execute('''
