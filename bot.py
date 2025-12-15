@@ -399,8 +399,8 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         LIMIT 10
     ''')
     
-    # Create a beautiful header
-    leaderboard_text = "🎖️ *🏆 CHRISTIAN VENT LEADERBOARD 🏆* 🎖️\n\n"
+    # Create a beautiful header - FIXED: Escape special characters
+    leaderboard_text = "🎖️ \\*🏆 CHRISTIAN VENT LEADERBOARD 🏆\\* 🎖️\n\n"
     leaderboard_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
     
     # Define rank emojis for top 3
@@ -408,32 +408,35 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         1: "🥇",
         2: "🥈", 
         3: "🥉",
-        4: "4️⃣",
-        5: "5️⃣",
-        6: "6️⃣",
-        7: "7️⃣",
-        8: "8️⃣",
-        9: "9️⃣",
-        10: "🔟"
+        4: "4\\.",
+        5: "5\\.",
+        6: "6\\.",
+        7: "7\\.",
+        8: "8\\.",
+        9: "9\\.",
+        10: "10\\."
     }
     
-    # Format each top user beautifully
+    # Format each top user beautifully - FIXED: Proper MarkdownV2 escaping
     for idx, user in enumerate(top_users, start=1):
         aura = format_aura(user['total'])
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{user['user_id']}"
         
+        # Escape user name for MarkdownV2
+        safe_name = escape_markdown(user['anonymous_name'], version=2)
+        
         # Create a beautiful line
         line = (
-            f"{rank_emojis.get(idx, f'{idx}')} "
+            f"{rank_emojis.get(idx, f'{idx}\\.')} "  # Escape the dot in numbers
             f"{user['sex']} "
-            f"_[{escape_markdown(user['anonymous_name'], version=2)}]({profile_link})_\n"
-            f"   └─ 🎯 *{user['total']}* contributions • {aura}\n"
+            f"\\[{safe_name}\\]{escape_markdown(f'({profile_link})', version=2)}\n"
+            f"   └─ 🎯 \\*{user['total']}\\* contributions • {aura}\n"
         )
         leaderboard_text += line + "\n"
     
     leaderboard_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
     
-    # Add current user's rank if not in top 10
+    # Add current user's rank if not in top 10 - FIXED: Proper escaping
     user_id = str(update.effective_user.id)
     user_rank = get_user_rank(user_id)
     
@@ -443,27 +446,28 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_contributions = calculate_user_rating(user_id)
             aura = format_aura(user_contributions)
             profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{user_id}"
+            safe_name = escape_markdown(user_data['anonymous_name'], version=2)
             
-            leaderboard_text += "📊 *Your Position:*\n\n"
+            leaderboard_text += "📊 \\*Your Position\\*\n\n"
             leaderboard_text += (
-                f"📍 {user_rank}. "
+                f"📍 {user_rank}\\. "  # Escape the dot
                 f"{user_data['sex']} "
-                f"_[{escape_markdown(user_data['anonymous_name'], version=2)}]({profile_link})_\n"
-                f"   └─ 🎯 *{user_contributions}* contributions • {aura}\n\n"
+                f"\\[{safe_name}\\]{escape_markdown(f'({profile_link})', version=2)}\n"
+                f"   └─ 🎯 \\*{user_contributions}\\* contributions • {aura}\n\n"
             )
     
-    # Add contribution explanation
-    leaderboard_text += "💡 *How points are calculated:*\n"
-    leaderboard_text += "• 📝 Each approved post = 1 point\n"
-    leaderboard_text += "• 💬 Each comment = 1 point\n\n"
+    # Add contribution explanation - FIXED: Escape special characters
+    leaderboard_text += "💡 \\*How points are calculated\\*\n"
+    leaderboard_text += "• 📝 Each approved post \\= 1 point\n"  # Escape equals sign
+    leaderboard_text += "• 💬 Each comment \\= 1 point\n\n"  # Escape equals sign
     
     # Add aura explanation
-    leaderboard_text += "🌀 *Aura Levels:*\n"
-    leaderboard_text += "🟣 Elite (100+)\n"
-    leaderboard_text += "🔵 Advanced (50-99)\n"  
-    leaderboard_text += "🟢 Intermediate (25-49)\n"
-    leaderboard_text += "🟡 Active (10-24)\n"
-    leaderboard_text += "⚪️ New (0-9)\n\n"
+    leaderboard_text += "🌀 \\*Aura Levels\\*\n"
+    leaderboard_text += "🟣 Elite \\(100\\+\\)\n"  # Escape parentheses and plus
+    leaderboard_text += "🔵 Advanced \\(50\\-99\\)\n"  # Escape parentheses and hyphen
+    leaderboard_text += "🟢 Intermediate \\(25\\-49\\)\n"
+    leaderboard_text += "🟡 Active \\(10\\-24\\)\n"
+    leaderboard_text += "⚪️ New \\(0\\-9\\)\n\n"
     
     # Create beautiful keyboard
     keyboard = [
@@ -521,7 +525,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
     except Exception as e:
         logger.error(f"Error showing leaderboard: {e}")
-        # Fallback to simple text
+        # Fallback to simple text with Markdown (not MarkdownV2)
         fallback_text = "🏆 *TOP CONTRIBUTORS*\n\n"
         for idx, user in enumerate(top_users, start=1):
             fallback_text += f"{idx}. {user['sex']} {user['anonymous_name']} - {user['total']} points\n"
