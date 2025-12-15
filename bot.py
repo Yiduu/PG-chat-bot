@@ -378,6 +378,17 @@ async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, 
         logger.error(f"Error updating channel post comment count: {e}")
 
 async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    
+    # Show loading message
+    loading_msg = None
+    try:
+        if update.message:
+            loading_msg = await update.message.reply_text("⏳ Loading leaderboard...")
+        elif update.callback_query:
+            loading_msg = await update.callback_query.message.edit_text("⏳ Loading leaderboard...")
+    except:
+        pass
+    
     top_users = db_fetch_all('''
         SELECT user_id, anonymous_name, sex,
                (SELECT COUNT(*) FROM posts WHERE author_id = users.user_id AND approved = TRUE) + 
@@ -412,25 +423,48 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("👤 My Profile", callback_data='profile')]
     ]
     
-    if update.message:
-        await update.message.reply_text(
-            leaderboard_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.MARKDOWN
-        )
-    elif update.callback_query:
-        try:
-            await update.callback_query.edit_message_text(
-                leaderboard_text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.MARKDOWN
-            )
-        except BadRequest:
-            await update.callback_query.message.reply_text(
-                leaderboard_text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.MARKDOWN
-            )
+    # Replace loading message with content
+    try:
+        if loading_msg:
+            if update.message:
+                await loading_msg.edit_text(
+                    leaderboard_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            elif update.callback_query:
+                await loading_msg.edit_text(
+                    leaderboard_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        else:
+            if update.message:
+                await update.message.reply_text(
+                    leaderboard_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            elif update.callback_query:
+                try:
+                    await update.callback_query.edit_message_text(
+                        leaderboard_text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                except BadRequest:
+                    await update.callback_query.message.reply_text(
+                        leaderboard_text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+    except Exception as e:
+        logger.error(f"Error showing leaderboard: {e}")
+        if loading_msg:
+            try:
+                await loading_msg.edit_text("❌ Error loading leaderboard. Please try again.")
+            except:
+                pass
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -1471,8 +1505,26 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         return
     chat_id = update.effective_chat.id
 
+    # Show loading message (only for first page)
+    loading_msg = None
+    if page == 1 and reply_pages is None:
+        try:
+            if hasattr(update, 'callback_query') and update.callback_query:
+                loading_msg = await update.callback_query.message.edit_text("⏳ Loading comments...")
+            elif hasattr(update, 'message') and update.message:
+                loading_msg = await context.bot.send_message(chat_id, "⏳ Loading comments...")
+        except:
+            loading_msg = None
+
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post:
+        # Delete loading if exists
+        if loading_msg:
+            try:
+                await loading_msg.delete()
+            except:
+                pass
+        
         await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=main_menu)
         return
 
@@ -1571,6 +1623,14 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         await send_replies_recursive(comment['comment_id'], msg_id, depth=1)
 
     # Pagination buttons
+        # Delete loading message if it exists
+    if loading_msg:
+        try:
+            await loading_msg.delete()
+        except:
+            pass
+    
+    # Pagination buttons
     pagination_buttons = []
     if page > 1:
         pagination_buttons.append(InlineKeyboardButton("⬅️ Older Comments", callback_data=f"viewcomments_{post_id}_{page-1}"))
@@ -1666,12 +1726,24 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
 # UPDATED: Function to show user's previous posts with CHRONOLOGICAL ORDER and NEW STRUCTURE
 # UPDATED: Function to show user's previous posts with CHRONOLOGICAL ORDER and NEW STRUCTURE
 async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
+    """Show user's previous posts as clickable snippets - NEW IMPROVED UI"""
+    
+    # Show loading message
+    loading_msg = None
+    try:
+        if hasattr(update, 'callback_query') and update.callback_query:
+            loading_msg = await update.callback_query.message.edit_text("⏳ Loading your posts...")
+        elif hasattr(update, 'message') and update.message:
+            loading_msg = await update.message.reply_text("⏳ Loading your posts...")
+    except:
+        pass
+    
     user_id = str(update.effective_user.id)
     
-    per_page = 5
+    per_page = 8  # Show 8 posts per page
     offset = (page - 1) * per_page
     
-    # Get user's posts with pagination - ORDERED BY TIMESTAMP (newest first)
+    # Get user's posts with pagination (newest first)
     posts = db_fetch_all(
         "SELECT * FROM posts WHERE author_id = %s AND approved = TRUE ORDER BY timestamp DESC LIMIT %s OFFSET %s",
         (user_id, per_page, offset)
@@ -1685,9 +1757,17 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
     total_pages = (total_posts + per_page - 1) // per_page
     
     if not posts:
-        text = "📚 *My Previous Posts*\n\nYou haven't posted anything yet or your posts are pending approval."
+        # Delete loading message and show empty state
+        if loading_msg:
+            try:
+                await loading_msg.delete()
+            except:
+                pass
+        
+        text = "📝 *My Posts*\n\nYou haven't posted anything yet or your posts are pending approval."
         keyboard = [
             [InlineKeyboardButton("🌟 Share My Thoughts", callback_data='ask')],
+            [InlineKeyboardButton("📚 Back to My Content", callback_data='my_content_menu')],
             [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
         ]
         
@@ -1695,7 +1775,7 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         try:
             if hasattr(update, 'callback_query') and update.callback_query:
-                await update.callback_query.edit_message_text(
+                await update.callback_query.message.edit_text(
                     text,
                     reply_markup=reply_markup,
                     parse_mode=ParseMode.MARKDOWN
@@ -1713,113 +1793,92 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await update.message.reply_text("❌ Error loading your posts. Please try again.")
         return
     
-    # NEW STRUCTURE WITH NUMBERING
-    text = "📚 *My Previous Posts*\n\n"
+    # Show posts as clickable buttons
+    text = f"📝 *My Posts* ({total_posts} total)\n\n*Click on a post to view details:*\n\n"
+    
+    # Build keyboard with post buttons
+    keyboard = []
     
     for idx, post in enumerate(posts, start=1):
         # Calculate actual post number (considering pagination)
         post_number = (page - 1) * per_page + idx
         
-        # Create snippet (100-150 characters)
-        snippet = post['content'][:140]
-        if len(post['content']) > 140:
+        # Create snippet (first 40 characters)
+        snippet = post['content'][:40]
+        if len(post['content']) > 40:
             snippet += '...'
         
-        # Escape markdown for snippet
-        escaped_snippet = escape_markdown(snippet, version=2)
-        escaped_category = escape_markdown(post['category'], version=2)
+        # Clean snippet for button text
+        clean_snippet = snippet.replace('*', '').replace('_', '').replace('`', '').strip()
         
-        # Format timestamp
-        if isinstance(post['timestamp'], str):
-            timestamp = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d, %Y')
-        else:
-            timestamp = post['timestamp'].strftime('%b %d, %Y')
+        # Get comment count for this post
+        comment_count = count_all_comments(post['post_id'])
         
-        # FIXED: Escape the # character in MarkdownV2
-        # In MarkdownV2, # needs to be escaped: \#
-        post_number_text = f"Post \\#{post_number}"
+        # Create button for each post with post number and snippet
+        button_text = f"#{post_number} - {clean_snippet} ({comment_count}💬)"
         
-        # NEW STRUCTURE: Post with numbering and clean formatting
-        text += f"🅿️ *{post_number_text}* \\- {escape_markdown(timestamp, version=2)}\n"
-        text += f"📌 *Category:* {escaped_category}\n"
-        text += f"📝 {escaped_snippet}\n\n"
+        # Truncate button text if too long
+        if len(button_text) > 60:
+            button_text = button_text[:57] + "..."
         
-        # Add spacing between posts
-        text += "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    
-    # Build keyboard with NEW STRUCTURE: Each post gets its own row of buttons
-    keyboard = []
-    
-    for idx, post in enumerate(posts, start=1):
-        # Calculate actual post number
-        post_number = (page - 1) * per_page + idx
-        
-        # FIXED: Create button text without Markdown formatting
-        post_button_text = f"📝 Post #{post_number}"
-        
-        # Create two separate rows for each post
-        # First row: Post number and view comments
         keyboard.append([
-            InlineKeyboardButton(post_button_text, callback_data=f"viewpost_{post['post_id']}"),
-            InlineKeyboardButton("💬 View Comments", callback_data=f"viewcomments_{post['post_id']}_1")
+            InlineKeyboardButton(button_text, callback_data=f"viewpost_{post['post_id']}_{page}")
         ])
-        
-        # Second row: Continue and Delete buttons
-        keyboard.append([
-            InlineKeyboardButton("🧵 Continue Post", callback_data=f"continue_post_{post['post_id']}"),
-            InlineKeyboardButton("🗑 Delete Post", callback_data=f"delete_post_{post['post_id']}")
-        ])
-        
-        # Add a small separator row (optional) - FIXED: Use proper callback data
-        keyboard.append([InlineKeyboardButton("────────", callback_data="noop")])
     
-    # Remove the last separator if it exists
-    if keyboard and keyboard[-1][0].callback_data == "noop" and keyboard[-1][0].text == "────────":
-        keyboard.pop()
-    
-    # Add pagination with beautiful design
+    # Add pagination if needed
     if total_pages > 1:
         pagination_row = []
         
-        # Previous page button (disabled if on first page)
+        # Previous page button
         if page > 1:
-            pagination_row.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"previous_posts_{page-1}"))
+            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"my_posts_{page-1}"))
         else:
-            # FIXED: Use "noop" for disabled buttons
             pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
         
-        # Current page indicator (centered, non-clickable)
-        pagination_row.append(InlineKeyboardButton(f"Page {page}/{total_pages}", callback_data="noop"))
+        # Current page indicator (non-clickable)
+        pagination_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="noop"))
         
-        # Next page button (disabled if on last page)
+        # Next page button
         if page < total_pages:
-            pagination_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"previous_posts_{page+1}"))
+            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"my_posts_{page+1}"))
         else:
-            # FIXED: Use "noop" for disabled buttons
             pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
         
         keyboard.append(pagination_row)
     
-    # Add main menu button
-    keyboard.append([InlineKeyboardButton("📱 Main Menu", callback_data='menu')])
+    # Add navigation buttons
+    keyboard.append([
+        InlineKeyboardButton("📚 Back to My Content", callback_data='my_content_menu'),
+        InlineKeyboardButton("📱 Main Menu", callback_data='menu')
+    ])
     
     # Create the reply markup
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    # Replace loading message with content
     try:
-        if hasattr(update, 'callback_query') and update.callback_query:
-            await update.callback_query.edit_message_text(
+        if loading_msg:
+            # Try to edit the loading message
+            await loading_msg.edit_text(
                 text,
                 reply_markup=reply_markup,
-                parse_mode=ParseMode.MARKDOWN_V2
+                parse_mode=ParseMode.MARKDOWN
             )
         else:
-            if hasattr(update, 'message') and update.message:
-                await update.message.reply_text(
+            # Or create new message
+            if hasattr(update, 'callback_query') and update.callback_query:
+                await update.callback_query.message.edit_text(
                     text,
                     reply_markup=reply_markup,
-                    parse_mode=ParseMode.MARKDOWN_V2
+                    parse_mode=ParseMode.MARKDOWN
                 )
+            else:
+                if hasattr(update, 'message') and update.message:
+                    await update.message.reply_text(
+                        text,
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.MARKDOWN
+                    )
     except Exception as e:
         logger.error(f"Error showing previous posts: {e}")
         if hasattr(update, 'message') and update.message:
@@ -1827,87 +1886,43 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # NEW: Function to view a specific post
 # NEW: Function to view a specific post in detail
-async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
-    query = update.callback_query
-    await query.answer()
-    
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-    
-    if not post:
-        await query.answer("❌ Post not found", show_alert=True)
-        return
-    
-    user_id = str(update.effective_user.id)
-    
-    if post['author_id'] != user_id:
-        await query.answer("❌ You can only view your own posts", show_alert=True)
-        return
-    
-    # Format the full post
-    escaped_content = escape_markdown(post['content'], version=2)
-    escaped_category = escape_markdown(post['category'], version=2)
-    
-    if isinstance(post['timestamp'], str):
-        timestamp = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d, %Y at %H:%M')
-    else:
-        timestamp = post['timestamp'].strftime('%b %d, %Y at %H:%M')
-    
-    # FIXED: Escape the # character
-    post_id_text = f"Post ID\\: \\#{post['post_id']}"
-    
-    text = (
-        f"📝 *Your Post Details*\n\n"
-        f"🅿️ *{post_id_text}*\n"
-        f"📌 *Category\\:* {escaped_category}\n"
-        f"📅 *Posted on\\:* {escape_markdown(timestamp, version=2)}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{escaped_content}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━"
-    )
-    
-    # Buttons for this specific post
-    keyboard = [
-        [
-            InlineKeyboardButton("💬 View Comments", callback_data=f"viewcomments_{post_id}_1"),
-            InlineKeyboardButton("🧵 Continue Post", callback_data=f"continue_post_{post_id}")
-        ],
-        [
-            InlineKeyboardButton("🗑 Delete Post", callback_data=f"delete_post_{post_id}"),
-            InlineKeyboardButton("🔙 Back to My Posts", callback_data="previous_posts_1")
-        ]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    try:
-        await query.edit_message_text(
-            text,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
-    except Exception as e:
-        logger.error(f"Error viewing post: {e}")
-        await query.answer("❌ Error loading post", show_alert=True)
-
+# NEW: Function to show menu for My Content
 async def show_my_content_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show menu for My Content (Posts and Comments)"""
+    
+    # Show quick loading (very fast)
+    loading_msg = None
+    try:
+        if hasattr(update, 'callback_query') and update.callback_query:
+            loading_msg = await update.callback_query.message.edit_text("⏳ Loading menu...")
+    except:
+        pass
+    
     keyboard = [
-        [InlineKeyboardButton("📝 My Posts", callback_data='my_posts')],
-        [InlineKeyboardButton("💬 My Comments", callback_data='my_comments')],
+        [InlineKeyboardButton("📝 My Posts", callback_data='my_posts_1')],
+        [InlineKeyboardButton("💬 My Comments", callback_data='my_comments_1')],
         [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
     ]
     
+    text = "📚 *My Content*\n\nChoose what you want to view:"
+    
     try:
-        if hasattr(update, 'callback_query') and update.callback_query:
-            await update.callback_query.edit_message_text(
-                "📚 *My Content*\n\nChoose what you want to view:",
+        if loading_msg:
+            await loading_msg.edit_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN
+            )
+        elif hasattr(update, 'callback_query') and update.callback_query:
+            await update.callback_query.message.edit_text(
+                text,
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=ParseMode.MARKDOWN
             )
         else:
             if hasattr(update, 'message') and update.message:
                 await update.message.reply_text(
-                    "📚 *My Content*\n\nChoose what you want to view:",
+                    text,
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode=ParseMode.MARKDOWN
                 )
@@ -1916,8 +1931,127 @@ async def show_my_content_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("❌ Error loading content menu. Please try again.")
 
+# NEW: Function to show a single post with action buttons
+async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int, from_page=1):
+    """Show a specific post with action buttons"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Show loading
+    try:
+        loading_msg = await query.message.edit_text("⏳ Loading post details...")
+    except:
+        loading_msg = None
+    
+    # Get post details
+    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    
+    if not post:
+        if loading_msg:
+            try:
+                await loading_msg.edit_text("❌ Post not found", parse_mode=ParseMode.MARKDOWN)
+            except:
+                await query.message.edit_text("❌ Post not found")
+        else:
+            await query.answer("❌ Post not found", show_alert=True)
+        return
+    
+    user_id = str(update.effective_user.id)
+    
+    # Verify ownership
+    if post['author_id'] != user_id:
+        if loading_msg:
+            try:
+                await loading_msg.edit_text("❌ You can only view your own posts", parse_mode=ParseMode.MARKDOWN)
+            except:
+                await query.message.edit_text("❌ You can only view your own posts")
+        else:
+            await query.answer("❌ You can only view your own posts", show_alert=True)
+        return
+    
+    # Format the post content
+    escaped_content = escape_markdown(post['content'], version=2)
+    escaped_category = escape_markdown(post['category'], version=2)
+    
+    # Format timestamp
+    if isinstance(post['timestamp'], str):
+        timestamp = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d, %Y at %H:%M')
+    else:
+        timestamp = post['timestamp'].strftime('%b %d, %Y at %H:%M')
+    
+    # Get comment count
+    comment_count = count_all_comments(post_id)
+    
+    # Build the post detail text
+    text = (
+        f"📝 *Post Details*\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🆔 **Post ID:** \\#{post['post_id']}\n"
+        f"📌 **Category:** {escaped_category}\n"
+        f"📅 **Posted on:** {escape_markdown(timestamp, version=2)}\n"
+        f"💬 **Comments:** {comment_count}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"**Content:**\n\n"
+        f"{escaped_content}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━"
+    )
+    
+    # Create action buttons for this post
+    keyboard = [
+        [
+            InlineKeyboardButton("💬 View Comments", callback_data=f"viewcomments_{post_id}_1"),
+            InlineKeyboardButton("🧵 Continue Thread", callback_data=f"continue_post_{post_id}")
+        ],
+        [
+            InlineKeyboardButton("🗑 Delete Post", callback_data=f"delete_post_{post_id}_{from_page}"),
+            InlineKeyboardButton("🔙 Back to List", callback_data=f"my_posts_{from_page}")
+        ],
+        [
+            InlineKeyboardButton("📚 Back to My Content", callback_data='my_content_menu'),
+            InlineKeyboardButton("📱 Main Menu", callback_data='menu')
+        ]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    try:
+        if loading_msg:
+            # Edit the loading message
+            await loading_msg.edit_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+        else:
+            # Edit original message
+            await query.message.edit_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+    except Exception as e:
+        logger.error(f"Error viewing post: {e}")
+        if loading_msg:
+            try:
+                await loading_msg.edit_text("❌ Error loading post")
+            except:
+                pass
+        await query.answer("❌ Error loading post", show_alert=True)
+
+# NEW: Function to show user's comments
 async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
     """Show user's previous comments with pagination"""
+    
+    # Show loading message
+    loading_msg = None
+    try:
+        if hasattr(update, 'callback_query') and update.callback_query:
+            loading_msg = await update.callback_query.message.edit_text("⏳ Loading your comments...")
+        elif hasattr(update, 'message') and update.message:
+            loading_msg = await update.message.reply_text("⏳ Loading your comments...")
+    except:
+        pass
+    
     user_id = str(update.effective_user.id)
     
     per_page = 10
@@ -1941,115 +2075,86 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     total_pages = (total_comments + per_page - 1) // per_page
     
     if not comments:
+        # Delete loading message and show empty state
+        if loading_msg:
+            try:
+                await loading_msg.delete()
+            except:
+                pass
+        
         text = "💬 \\*My Comments\\*\n\nYou haven't made any comments yet\\."
         keyboard = [
             [InlineKeyboardButton("📚 Back to My Content", callback_data='my_content_menu')],
             [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
         ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
     else:
-        # Build comments list - Escape all special characters for MarkdownV2
-        text = f"💬 \\*My Comments\\* \\({total_comments} total\\)\n\n"
+        text = f"💬 \\*My Comments\\* \\(Page {page}/{total_pages}\\)\n\n"
         
         for idx, comment in enumerate(comments):
             comment_num = (page - 1) * per_page + idx + 1
             
-            # Truncate post content for preview
-            post_preview = comment['post_content'][:50] + '...' if len(comment['post_content']) > 50 else comment['post_content']
-            escaped_post_preview = escape_markdown(post_preview, version=2)
-            
-            # Truncate comment content
-            comment_preview = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
+            # Truncate content
+            comment_preview = comment['content'][:80] + '...' if len(comment['content']) > 80 else comment['content']
             escaped_comment_preview = escape_markdown(comment_preview, version=2)
             
-            # Get comment type emoji
-            type_emoji = {
-                'text': '📝',
-                'voice': '🎤',
-                'gif': '🎞',
-                'sticker': '🃏',
-                'photo': '🖼'
-            }.get(comment['type'], '💬')
-            
-            # Escape the category
-            escaped_category = escape_markdown(comment['category'], version=2)
-            
-            text += f"\\*\\*{comment_num}\\.\\*\\* {type_emoji} \\*{escaped_category}\\*\n"
-            text += f"📄 Post\\: {escaped_post_preview}\n"
-            text += f"💬 Comment\\: {escaped_comment_preview}\n\n"
-            text += "\\-\n\n"
+            text += f"\\*\\*{comment_num}\\.\\*\\* {escaped_comment_preview}\n\n"
         
-        # Remove the last separator if it exists
-        if text.endswith("\\-\n\n"):
-            text = text[:-4]
-    
-    # Build keyboard
-    keyboard = []
-    
-    # Add action buttons for each comment
-    for idx, comment in enumerate(comments):
-        comment_num = (page - 1) * per_page + idx + 1
+        # Build keyboard
+        keyboard = []
+        
+        # Add pagination
+        if total_pages > 1:
+            pagination_row = []
+            
+            if page > 1:
+                pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"my_comments_{page-1}"))
+            else:
+                pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
+            
+            pagination_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="noop"))
+            
+            if page < total_pages:
+                pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"my_comments_{page+1}"))
+            else:
+                pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
+            
+            keyboard.append(pagination_row)
+        
+        # Add navigation buttons
         keyboard.append([
-            InlineKeyboardButton(f"🔍 View #{comment_num}", callback_data=f"view_comment_{comment['comment_id']}"),
-            InlineKeyboardButton("🗑 Delete", callback_data=f"delete_comment_{comment['comment_id']}")
+            InlineKeyboardButton("📝 My Posts", callback_data='my_posts_1'),
+            InlineKeyboardButton("📚 Back to My Content", callback_data='my_content_menu')
         ])
+        keyboard.append([InlineKeyboardButton("📱 Main Menu", callback_data='menu')])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Add pagination
-    if total_pages > 1:
-        pagination_row = []
-        
-        if page > 1:
-            pagination_row.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"my_comments_{page-1}"))
-        else:
-            pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
-        
-        pagination_row.append(InlineKeyboardButton(f"Page {page}/{total_pages}", callback_data="noop"))
-        
-        if page < total_pages:
-            pagination_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"my_comments_{page+1}"))
-        else:
-            pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
-        
-        keyboard.append(pagination_row)
-    
-    # Add navigation buttons
-    keyboard.append([
-        InlineKeyboardButton("📝 My Posts", callback_data='my_posts'),
-        InlineKeyboardButton("📚 Back to My Content", callback_data='my_content_menu')
-    ])
-    keyboard.append([InlineKeyboardButton("📱 Main Menu", callback_data='menu')])
-    
+    # Replace loading message with content
     try:
-        if hasattr(update, 'callback_query') and update.callback_query:
-            await update.callback_query.edit_message_text(
+        if loading_msg:
+            # Try to edit the loading message
+            await loading_msg.edit_text(
                 text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
+                reply_markup=reply_markup,
                 parse_mode=ParseMode.MARKDOWN_V2
             )
         else:
-            if hasattr(update, 'message') and update.message:
-                await update.message.reply_text(
+            # Or create new message
+            if hasattr(update, 'callback_query') and update.callback_query:
+                await update.callback_query.message.edit_text(
                     text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    reply_markup=reply_markup,
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
-    except Exception as e:
-        logger.error(f"Error showing my comments: {e}")
-        # Fallback to plain text if Markdown fails
-        fallback_text = f"My Comments ({total_comments} total)\n\n"
-        for idx, comment in enumerate(comments):
-            comment_num = (page - 1) * per_page + idx + 1
-            post_preview = comment['post_content'][:50] + '...' if len(comment['post_content']) > 50 else comment['post_content']
-            comment_preview = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
-            
-            fallback_text += f"{comment_num}. {comment['category']}\n"
-            fallback_text += f"Post: {post_preview}\n"
-            fallback_text += f"Comment: {comment_preview}\n\n"
-        
-        if hasattr(update, 'message') and update.message:
-            await update.message.reply_text(
-                fallback_text,
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            else:
+                if hasattr(update, 'message') and update.message:
+                    await update.message.reply_text(
+                        text,
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.MARKDOWN_V2
+                    )
     except Exception as e:
         logger.error(f"Error showing my comments: {e}")
         if hasattr(update, 'message') and update.message:
@@ -2440,34 +2545,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # NEW: Handle delete post
         elif query.data.startswith("delete_post_"):
-            post_id = int(query.data.split('_')[2])
-            post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-            
-            if post and post['author_id'] == user_id:
-                # Ask for confirmation
-                keyboard = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("✅ Yes, Delete", callback_data=f"confirm_delete_post_{post_id}"),
-                        InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_delete_post_{post_id}")
-                    ]
-                ])
+            try:
+                parts = query.data.split('_')
+                post_id = int(parts[2])
                 
-                await query.message.edit_text(
-                    "🗑 *Delete Post*\n\nAre you sure you want to delete this post? This action cannot be undone.",
-                    reply_markup=keyboard,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            else:
-                await query.answer("❌ You can only delete your own posts", show_alert=True)
+                # Get the page number (default to 1 if not provided)
+                from_page = 1
+                if len(parts) > 3:
+                    from_page = int(parts[3])
+                
+                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+                
+                if post and post['author_id'] == user_id:
+                    # Ask for confirmation with page info
+                    keyboard = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("✅ Yes, Delete", callback_data=f"confirm_delete_post_{post_id}_{from_page}"),
+                            InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_delete_post_{post_id}_{from_page}")
+                        ]
+                    ])
+                    
+                    await query.message.edit_text(
+                        "🗑 *Delete Post*\n\nAre you sure you want to delete this post? This action cannot be undone.",
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                else:
+                    await query.answer("❌ You can only delete your own posts", show_alert=True)
+            except Exception as e:
+                logger.error(f"Error in delete_post handler: {e}")
+                await query.answer("❌ Error processing request", show_alert=True)
 
-        # NEW: Handle confirm delete post
         elif query.data.startswith("confirm_delete_post_"):
-            post_id = int(query.data.split('_')[3])
-            post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-            
-            if post and post['author_id'] == user_id:
-                try:
-                    # Delete channel message if published
+            try:
+                parts = query.data.split('_')
+                post_id = int(parts[3])
+                from_page = int(parts[4]) if len(parts) > 4 else 1
+                
+                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+                
+                if post and post['author_id'] == user_id:
+                    # Delete the post (same logic as before)
                     if post['channel_message_id']:
                         try:
                             await context.bot.delete_message(
@@ -2476,18 +2594,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )
                         except Exception as e:
                             logger.error(f"Error deleting channel message: {e}")
-                            # Continue with deletion even if channel message deletion fails
                     
                     # Delete all comments and reactions for this post
-                    # First get all comment IDs for this post
                     comments = db_fetch_all("SELECT comment_id FROM comments WHERE post_id = %s", (post_id,))
                     for comment in comments:
                         db_execute("DELETE FROM reactions WHERE comment_id = %s", (comment['comment_id'],))
                     
-                    # Delete all comments
                     db_execute("DELETE FROM comments WHERE post_id = %s", (post_id,))
-                    
-                    # Delete the post
                     db_execute("DELETE FROM posts WHERE post_id = %s", (post_id,))
                     
                     await query.answer("✅ Post deleted successfully")
@@ -2496,20 +2609,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode=ParseMode.MARKDOWN
                     )
                     
-                    # Refresh the previous posts list
-                    await show_previous_posts(update, context, 1)
-                    
-                except Exception as e:
-                    logger.error(f"Error deleting post: {e}")
-                    await query.answer("❌ Error deleting post", show_alert=True)
-            else:
-                await query.answer("❌ You can only delete your own posts", show_alert=True)
+                    # Return to the post list at the same page
+                    await show_previous_posts(update, context, from_page)
+                else:
+                    await query.answer("❌ You can only delete your own posts", show_alert=True)
+            except Exception as e:
+                logger.error(f"Error deleting post: {e}")
+                await query.answer("❌ Error deleting post", show_alert=True)
 
-        # NEW: Handle cancel delete post
         elif query.data.startswith("cancel_delete_post_"):
-            post_id = int(query.data.split('_')[3])
-            # Just go back to the previous posts list
-            await show_previous_posts(update, context, 1)
+            try:
+                parts = query.data.split('_')
+                post_id = int(parts[3])
+                from_page = int(parts[4]) if len(parts) > 4 else 1
+                
+                # Return to the post view
+                await view_post(update, context, post_id, from_page)
+            except (IndexError, ValueError):
+                # Fallback to post list
+                await show_previous_posts(update, context, 1)
                 
         elif query.data.startswith("reply_"):
             parts = query.data.split("_")
@@ -2566,10 +2684,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await show_previous_posts(update, context, 1)
 
         # UPDATED: Handle Previous Posts button
-        elif query.data == 'previous_posts':
-            await show_previous_posts(update, context, 1)
+        elif query.data == 'my_content_menu':
+            await show_my_content_menu(update, context)
 
-        # UPDATED: Handle My Posts pagination
         elif query.data.startswith("my_posts_"):
             try:
                 page = int(query.data.split('_')[2])
@@ -2577,9 +2694,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except (IndexError, ValueError):
                 await show_previous_posts(update, context, 1)
 
-        # UPDATED: Handle My Posts button
         elif query.data == 'my_posts':
             await show_previous_posts(update, context, 1)
+
+        elif query.data.startswith("viewpost_"):
+            try:
+                parts = query.data.split('_')
+                if len(parts) >= 3:
+                    post_id = int(parts[1])
+                    from_page = int(parts[2])
+                    await view_post(update, context, post_id, from_page)
+                else:
+                    # Fallback for old format
+                    post_id = int(parts[1])
+                    await view_post(update, context, post_id, 1)
+            except (IndexError, ValueError) as e:
+                logger.error(f"Error parsing viewpost callback: {e}")
+                await query.answer("❌ Error loading post", show_alert=True)
+
+        elif query.data.startswith('my_comments_'):
+            try:
+                page = int(query.data.split('_')[2])
+                await show_my_comments(update, context, page)
+            except (IndexError, ValueError):
+                await show_my_comments(update, context, 1)
+
+        elif query.data == 'my_comments':
+            await show_my_comments(update, context, 1)
 
         # NEW: Handle My Content Menu
         elif query.data == 'my_content_menu':
