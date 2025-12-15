@@ -383,12 +383,13 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loading_msg = None
     try:
         if update.message:
-            loading_msg = await update.message.reply_text("⏳ Loading leaderboard...")
+            loading_msg = await update.message.reply_text("🏆 Loading leaderboard...")
         elif update.callback_query:
-            loading_msg = await update.callback_query.message.edit_text("⏳ Loading leaderboard...")
+            loading_msg = await update.callback_query.message.edit_text("🏆 Loading leaderboard...")
     except:
         pass
     
+    # Get top 10 users
     top_users = db_fetch_all('''
         SELECT user_id, anonymous_name, sex,
                (SELECT COUNT(*) FROM posts WHERE author_id = users.user_id AND approved = TRUE) + 
@@ -398,13 +399,41 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         LIMIT 10
     ''')
     
-    leaderboard_text = "🏆 *Top Contributors* 🏆\n\n"
+    # Create a beautiful header
+    leaderboard_text = "🎖️ *🏆 CHRISTIAN VENT LEADERBOARD 🏆* 🎖️\n\n"
+    leaderboard_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Define rank emojis for top 3
+    rank_emojis = {
+        1: "🥇",
+        2: "🥈", 
+        3: "🥉",
+        4: "4️⃣",
+        5: "5️⃣",
+        6: "6️⃣",
+        7: "7️⃣",
+        8: "8️⃣",
+        9: "9️⃣",
+        10: "🔟"
+    }
+    
+    # Format each top user beautifully
     for idx, user in enumerate(top_users, start=1):
         aura = format_aura(user['total'])
-        leaderboard_text += (
-            f"{idx}. {user['anonymous_name']} {user['sex']} - {user['total']} contributions {aura}\n"
+        profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{user['user_id']}"
+        
+        # Create a beautiful line
+        line = (
+            f"{rank_emojis.get(idx, f'{idx}')} "
+            f"{user['sex']} "
+            f"_[{escape_markdown(user['anonymous_name'], version=2)}]({profile_link})_\n"
+            f"   └─ 🎯 *{user['total']}* contributions • {aura}\n"
         )
+        leaderboard_text += line + "\n"
     
+    leaderboard_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Add current user's rank if not in top 10
     user_id = str(update.effective_user.id)
     user_rank = get_user_rank(user_id)
     
@@ -413,15 +442,42 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_data:
             user_contributions = calculate_user_rating(user_id)
             aura = format_aura(user_contributions)
+            profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{user_id}"
+            
+            leaderboard_text += "📊 *Your Position:*\n\n"
             leaderboard_text += (
-                f"\n...\n"
-                f"{user_rank}. {user_data['anonymous_name']} {user_data['sex']} - {user_contributions} contributions {aura}\n"
+                f"📍 {user_rank}. "
+                f"{user_data['sex']} "
+                f"_[{escape_markdown(user_data['anonymous_name'], version=2)}]({profile_link})_\n"
+                f"   └─ 🎯 *{user_contributions}* contributions • {aura}\n\n"
             )
     
+    # Add contribution explanation
+    leaderboard_text += "💡 *How points are calculated:*\n"
+    leaderboard_text += "• 📝 Each approved post = 1 point\n"
+    leaderboard_text += "• 💬 Each comment = 1 point\n\n"
+    
+    # Add aura explanation
+    leaderboard_text += "🌀 *Aura Levels:*\n"
+    leaderboard_text += "🟣 Elite (100+)\n"
+    leaderboard_text += "🔵 Advanced (50-99)\n"  
+    leaderboard_text += "🟢 Intermediate (25-49)\n"
+    leaderboard_text += "🟡 Active (10-24)\n"
+    leaderboard_text += "⚪️ New (0-9)\n\n"
+    
+    # Create beautiful keyboard
     keyboard = [
-        [InlineKeyboardButton("📱 Main Menu", callback_data='menu')],
-        [InlineKeyboardButton("👤 My Profile", callback_data='profile')]
+        [
+            InlineKeyboardButton("📱 Main Menu", callback_data='menu'),
+            InlineKeyboardButton("👤 My Profile", callback_data='profile')
+        ],
+        [
+            InlineKeyboardButton("🌟 Share Thought", callback_data='ask'),
+            InlineKeyboardButton("⚙️ Settings", callback_data='settings')
+        ]
     ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
     # Replace loading message with content
     try:
@@ -429,40 +485,54 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if update.message:
                 await loading_msg.edit_text(
                     leaderboard_text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.MARKDOWN
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    disable_web_page_preview=True
                 )
             elif update.callback_query:
                 await loading_msg.edit_text(
                     leaderboard_text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.MARKDOWN
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    disable_web_page_preview=True
                 )
         else:
             if update.message:
                 await update.message.reply_text(
                     leaderboard_text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.MARKDOWN
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                    disable_web_page_preview=True
                 )
             elif update.callback_query:
                 try:
                     await update.callback_query.edit_message_text(
                         leaderboard_text,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode=ParseMode.MARKDOWN
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.MARKDOWN_V2,
+                        disable_web_page_preview=True
                     )
                 except BadRequest:
                     await update.callback_query.message.reply_text(
                         leaderboard_text,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode=ParseMode.MARKDOWN
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.MARKDOWN_V2,
+                        disable_web_page_preview=True
                     )
     except Exception as e:
         logger.error(f"Error showing leaderboard: {e}")
+        # Fallback to simple text
+        fallback_text = "🏆 *TOP CONTRIBUTORS*\n\n"
+        for idx, user in enumerate(top_users, start=1):
+            fallback_text += f"{idx}. {user['sex']} {user['anonymous_name']} - {user['total']} points\n"
+        
         if loading_msg:
             try:
-                await loading_msg.edit_text("❌ Error loading leaderboard. Please try again.")
+                await loading_msg.edit_text(
+                    fallback_text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN
+                )
             except:
                 pass
 
