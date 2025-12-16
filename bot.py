@@ -23,6 +23,7 @@ from contextlib import closing
 from datetime import datetime
 import random
 import time
+import asyncio
 from typing import Optional
 
 # Load environment variables first
@@ -163,7 +164,66 @@ def init_db():
         logging.info("PostgreSQL database initialized successfully")
     except Exception as e:
         logging.error(f"Database initialization failed: {e}")
+# ==================== LOADING ANIMATIONS ====================
+async def show_loading(update_or_message, loading_text="⏳ Processing...", edit_message=True):
+    """Show a loading animation"""
+    try:
+        if hasattr(update_or_message, 'callback_query') and update_or_message.callback_query:
+            # For callback queries
+            loading_msg = await update_or_message.callback_query.message.edit_text(loading_text)
+            return loading_msg
+        elif hasattr(update_or_message, 'edit_text'):
+            # For messages that can be edited
+            if edit_message:
+                loading_msg = await update_or_message.edit_text(loading_text)
+                return loading_msg
+        elif hasattr(update_or_message, 'reply_text'):
+            # For new messages
+            loading_msg = await update_or_message.reply_text(loading_text)
+            return loading_msg
+        elif hasattr(update_or_message, 'message'):
+            # For update objects with message
+            loading_msg = await update_or_message.message.reply_text(loading_text)
+            return loading_msg
+    except Exception as e:
+        logger.error(f"Error showing loading: {e}")
+        return None
 
+async def typing_animation(context, chat_id, duration=1):
+    """Show typing indicator"""
+    try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        await asyncio.sleep(duration)
+    except:
+        pass
+
+async def animated_loading(loading_msg, text="Processing", steps=3):
+    """Show animated loading dots"""
+    try:
+        for i in range(steps):
+            dots = "." * (i + 1)
+            await loading_msg.edit_text(f"{text}{dots}")
+            await asyncio.sleep(0.3)
+    except:
+        pass
+
+async def replace_with_success(loading_msg, success_text):
+    """Replace loading message with success message"""
+    try:
+        success_msg = await loading_msg.edit_text(f"✅ {success_text}")
+        await asyncio.sleep(1)
+        return success_msg
+    except:
+        return loading_msg
+
+async def replace_with_error(loading_msg, error_text):
+    """Replace loading message with error message"""
+    try:
+        await loading_msg.edit_text(f"❌ {error_text}")
+        await asyncio.sleep(2)
+        return loading_msg
+    except:
+        return loading_msg
 # Database helper functions - FIXED VERSION
 # -------------------- PostgreSQL Connection Pool --------------------
 from psycopg2 import pool
@@ -378,16 +438,24 @@ async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, 
         logger.error(f"Error updating channel post comment count: {e}")
 
 async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
     
-    # Show loading message
+    # Show typing animation
+    await typing_animation(context, chat_id, 0.5)
+    
+    # Show loading
     loading_msg = None
     try:
         if update.message:
-            loading_msg = await update.message.reply_text("🏆 Loading leaderboard...")
+            loading_msg = await update.message.reply_text("📊 Gathering statistics...")
         elif update.callback_query:
-            loading_msg = await update.callback_query.message.edit_text("🏆 Loading leaderboard...")
+            loading_msg = await update.callback_query.message.edit_text("📊 Gathering statistics...")
     except:
         pass
+    
+    # Animate loading
+    if loading_msg:
+        await animated_loading(loading_msg, "Loading leaderboard", 3)
     
     # Get top 10 users
     top_users = db_fetch_all('''
@@ -399,18 +467,20 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         LIMIT 10
     ''')
     
-    # Create minimalist header
+    # Create clean header
     leaderboard_text = "*🏆 Christian Vent Leaderboard*\n\n"
+    
+    # Define medal emojis for top 3
+    medal_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
     
     # Format each user
     for idx, user in enumerate(top_users, start=1):
         aura = format_aura(user['total'])
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{user['user_id']}"
         
-        # Create minimalist line
+        # Create clean line
         if idx <= 3:
-            medals = ["🥇", "🥈", "🥉"]
-            rank_prefix = medals[idx-1]
+            rank_prefix = medal_emojis[idx]
         else:
             rank_prefix = f"{idx}."
         
@@ -448,20 +518,13 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Replace loading message with content
     try:
         if loading_msg:
-            if update.message:
-                await loading_msg.edit_text(
-                    leaderboard_text,
-                    reply_markup=reply_markup,
-                    parse_mode=ParseMode.MARKDOWN,
-                    disable_web_page_preview=True
-                )
-            elif update.callback_query:
-                await loading_msg.edit_text(
-                    leaderboard_text,
-                    reply_markup=reply_markup,
-                    parse_mode=ParseMode.MARKDOWN,
-                    disable_web_page_preview=True
-                )
+            await animated_loading(loading_msg, "Finalizing", 1)
+            await loading_msg.edit_text(
+                leaderboard_text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True
+            )
         else:
             if update.message:
                 await update.message.reply_text(
@@ -1532,14 +1595,19 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         return
     chat_id = update.effective_chat.id
 
+    # Show typing animation
+    await typing_animation(context, chat_id, 0.5)
+    
     # Show loading message (only for first page)
     loading_msg = None
     if page == 1 and reply_pages is None:
         try:
             if hasattr(update, 'callback_query') and update.callback_query:
-                loading_msg = await update.callback_query.message.edit_text("⏳ Loading comments...")
+                loading_msg = await update.callback_query.message.edit_text("💬 Loading comments...")
+                await animated_loading(loading_msg, "Loading comments", 2)
             elif hasattr(update, 'message') and update.message:
-                loading_msg = await context.bot.send_message(chat_id, "⏳ Loading comments...")
+                loading_msg = await context.bot.send_message(chat_id, "💬 Loading comments...")
+                await animated_loading(loading_msg, "Loading comments", 2)
         except:
             loading_msg = None
 
@@ -1649,6 +1717,8 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         # Start recursion for this top-level comment
         await send_replies_recursive(comment['comment_id'], msg_id, depth=1)
 
+    
+    
     # Pagination buttons
         # Delete loading message if it exists
     if loading_msg:
@@ -1753,17 +1823,21 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
 # UPDATED: Function to show user's previous posts with CHRONOLOGICAL ORDER and NEW STRUCTURE
 # UPDATED: Function to show user's previous posts with CHRONOLOGICAL ORDER and NEW STRUCTURE
 async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
-    """Show user's previous posts as clickable snippets - NEW IMPROVED UI"""
+    """Show user's previous posts as clickable snippets"""
     
     # Show loading message
     loading_msg = None
     try:
         if hasattr(update, 'callback_query') and update.callback_query:
-            loading_msg = await update.callback_query.message.edit_text("⏳ Loading your posts...")
+            loading_msg = await update.callback_query.message.edit_text("📝 Loading your posts...")
         elif hasattr(update, 'message') and update.message:
-            loading_msg = await update.message.reply_text("⏳ Loading your posts...")
+            loading_msg = await update.message.reply_text("📝 Loading your posts...")
     except:
         pass
+    
+    # Animate loading
+    if loading_msg:
+        await animated_loading(loading_msg, "Searching posts", 2)
     
     user_id = str(update.effective_user.id)
     
@@ -1784,12 +1858,10 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
     total_pages = (total_posts + per_page - 1) // per_page
     
     if not posts:
-        # Delete loading message and show empty state
+        # Show empty state
         if loading_msg:
-            try:
-                await loading_msg.delete()
-            except:
-                pass
+            await replace_with_success(loading_msg, "No posts found")
+            await asyncio.sleep(0.5)
         
         text = "📝 *My Posts*\n\nYou haven't posted anything yet or your posts are pending approval."
         keyboard = [
@@ -1801,7 +1873,13 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         try:
-            if hasattr(update, 'callback_query') and update.callback_query:
+            if loading_msg:
+                await loading_msg.edit_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            elif hasattr(update, 'callback_query') and update.callback_query:
                 await update.callback_query.message.edit_text(
                     text,
                     reply_markup=reply_markup,
@@ -1885,14 +1963,13 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Replace loading message with content
     try:
         if loading_msg:
-            # Try to edit the loading message
+            await animated_loading(loading_msg, "Finalizing", 1)
             await loading_msg.edit_text(
                 text,
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.MARKDOWN
             )
         else:
-            # Or create new message
             if hasattr(update, 'callback_query') and update.callback_query:
                 await update.callback_query.message.edit_text(
                     text,
@@ -1908,8 +1985,11 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
                     )
     except Exception as e:
         logger.error(f"Error showing previous posts: {e}")
-        if hasattr(update, 'message') and update.message:
-            await update.message.reply_text("❌ Error loading your posts. Please try again.")
+        if loading_msg:
+            try:
+                await loading_msg.edit_text("❌ Error loading your posts. Please try again.")
+            except:
+                pass
 
 # NEW: Function to view a specific post
 # NEW: Function to view a specific post in detail
@@ -1964,36 +2044,27 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
     query = update.callback_query
     await query.answer()
     
-    # Show loading
-    try:
-        loading_msg = await query.message.edit_text("⏳ Loading post details...")
-    except:
-        loading_msg = None
+    chat_id = update.effective_chat.id
+    
+    # Show typing animation
+    await typing_animation(context, chat_id, 0.3)
+    
+    # Show animated loading
+    loading_msg = await query.message.edit_text("📄 Loading post details...")
+    await animated_loading(loading_msg, "Loading", 2)
     
     # Get post details
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     
     if not post:
-        if loading_msg:
-            try:
-                await loading_msg.edit_text("❌ Post not found", parse_mode=ParseMode.MARKDOWN)
-            except:
-                await query.message.edit_text("❌ Post not found")
-        else:
-            await query.answer("❌ Post not found", show_alert=True)
+        await replace_with_error(loading_msg, "Post not found")
         return
     
     user_id = str(update.effective_user.id)
     
     # Verify ownership
     if post['author_id'] != user_id:
-        if loading_msg:
-            try:
-                await loading_msg.edit_text("❌ You can only view your own posts", parse_mode=ParseMode.MARKDOWN)
-            except:
-                await query.message.edit_text("❌ You can only view your own posts")
-        else:
-            await query.answer("❌ You can only view your own posts", show_alert=True)
+        await replace_with_error(loading_msg, "You can only view your own posts")
         return
     
     # Format the post content
@@ -2042,29 +2113,16 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
-        if loading_msg:
-            # Edit the loading message
-            await loading_msg.edit_text(
-                text,
-                reply_markup=reply_markup,
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
-        else:
-            # Edit original message
-            await query.message.edit_text(
-                text,
-                reply_markup=reply_markup,
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
+        # Final animation before showing content
+        await animated_loading(loading_msg, "Almost ready", 1)
+        await loading_msg.edit_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
     except Exception as e:
         logger.error(f"Error viewing post: {e}")
-        if loading_msg:
-            try:
-                await loading_msg.edit_text("❌ Error loading post")
-            except:
-                pass
-        await query.answer("❌ Error loading post", show_alert=True)
-
+        await replace_with_error(loading_msg, "Error loading post")
 # NEW: Function to show user's comments
 async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
     """Show user's previous comments with pagination"""
@@ -2073,11 +2131,15 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     loading_msg = None
     try:
         if hasattr(update, 'callback_query') and update.callback_query:
-            loading_msg = await update.callback_query.message.edit_text("⏳ Loading your comments...")
+            loading_msg = await update.callback_query.message.edit_text("💭 Loading your comments...")
         elif hasattr(update, 'message') and update.message:
-            loading_msg = await update.message.reply_text("⏳ Loading your comments...")
+            loading_msg = await update.message.reply_text("💭 Loading your comments...")
     except:
         pass
+    
+    # Animate loading
+    if loading_msg:
+        await animated_loading(loading_msg, "Searching comments", 2)
     
     user_id = str(update.effective_user.id)
     
@@ -2102,12 +2164,10 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     total_pages = (total_comments + per_page - 1) // per_page
     
     if not comments:
-        # Delete loading message and show empty state
+        # Show empty state
         if loading_msg:
-            try:
-                await loading_msg.delete()
-            except:
-                pass
+            await replace_with_success(loading_msg, "No comments found")
+            await asyncio.sleep(0.5)
         
         text = "💬 \\*My Comments\\*\n\nYou haven't made any comments yet\\."
         keyboard = [
@@ -2161,14 +2221,13 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     # Replace loading message with content
     try:
         if loading_msg:
-            # Try to edit the loading message
+            await animated_loading(loading_msg, "Finalizing", 1)
             await loading_msg.edit_text(
                 text,
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.MARKDOWN_V2
             )
         else:
-            # Or create new message
             if hasattr(update, 'callback_query') and update.callback_query:
                 await update.callback_query.message.edit_text(
                     text,
@@ -2252,6 +2311,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_updated_profile(user_id, query.message.chat.id, context)
 
         elif query.data == 'leaderboard':
+            await query.answer()
+            await typing_animation(context, query.message.chat_id, 0.3)
             await show_leaderboard(update, context)
 
         elif query.data == 'settings':
@@ -2715,6 +2776,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_my_content_menu(update, context)
 
         elif query.data.startswith("my_posts_"):
+            await query.answer()
+            await typing_animation(context, query.message.chat_id, 0.3)
             try:
                 page = int(query.data.split('_')[2])
                 await show_previous_posts(update, context, page)
@@ -2725,6 +2788,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_previous_posts(update, context, 1)
 
         elif query.data.startswith("viewpost_"):
+            await query.answer()
+            await typing_animation(context, query.message.chat_id, 0.3)
             try:
                 parts = query.data.split('_')
                 if len(parts) >= 3:
@@ -2732,7 +2797,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     from_page = int(parts[2])
                     await view_post(update, context, post_id, from_page)
                 else:
-                    # Fallback for old format
                     post_id = int(parts[1])
                     await view_post(update, context, post_id, 1)
             except (IndexError, ValueError) as e:
@@ -2740,12 +2804,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Error loading post", show_alert=True)
 
         elif query.data.startswith('my_comments_'):
+            await query.answer()
+            await typing_animation(context, query.message.chat_id, 0.3)
             try:
                 page = int(query.data.split('_')[2])
                 await show_my_comments(update, context, page)
             except (IndexError, ValueError):
                 await show_my_comments(update, context, 1)
-
+        
         elif query.data == 'my_comments':
             await show_my_comments(update, context, 1)
 
@@ -2854,49 +2920,63 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     del context.user_data['thread_from_post_id']
                 return
             
-            elif query.data == 'confirm_post':
-                category = pending_post['category']
-                post_content = pending_post['content']
-                media_type = pending_post.get('media_type', 'text')
-                media_id = pending_post.get('media_id')
-                thread_from_post_id = pending_post.get('thread_from_post_id')
-                
-                # Insert post with thread reference if available
-                if thread_from_post_id:
-                    post_row = db_execute(
-                        "INSERT INTO posts (content, author_id, category, media_type, media_id, thread_from_post_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
-                        (post_content, user_id, category, media_type, media_id, thread_from_post_id),
-                        fetchone=True
-                    )
-                else:
-                    post_row = db_execute(
-                        "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
-                        (post_content, user_id, category, media_type, media_id),
-                        fetchone=True
-                    )
-                
-                # Clean up user data
-                if 'pending_post' in context.user_data:
-                    del context.user_data['pending_post']
-                if 'thread_from_post_id' in context.user_data:
-                    del context.user_data['thread_from_post_id']
-                
-                if post_row:
-                    post_id = post_row['post_id']
-                    await notify_admin_of_new_post(context, post_id)
-                    
-                    await query.message.edit_text(
-                        "✅ Your post has been submitted for admin approval!\n"
-                        "You'll be notified when it's approved and published."
-                    )
-                    await query.message.reply_text(
-                        "What would you like to do next?",
-                        reply_markup=main_menu
-                    )
-                else:
-                    await query.message.edit_text("❌ Failed to submit post. Please try again.")
+        elif query.data == 'confirm_post':
+            await query.answer()
+            
+            # Show typing animation
+            await typing_animation(context, query.message.chat_id, 0.5)
+            
+            # Show loading
+            loading_msg = await query.message.edit_text("📤 Submitting your post...")
+            await animated_loading(loading_msg, "Processing", 3)
+            
+            pending_post = context.user_data.get('pending_post')
+            if not pending_post:
+                await replace_with_error(loading_msg, "Post data not found. Please start over.")
                 return
-
+            
+            category = pending_post['category']
+            post_content = pending_post['content']
+            media_type = pending_post.get('media_type', 'text')
+            media_id = pending_post.get('media_id')
+            thread_from_post_id = pending_post.get('thread_from_post_id')
+            
+            # Insert post with thread reference if available
+            if thread_from_post_id:
+                post_row = db_execute(
+                    "INSERT INTO posts (content, author_id, category, media_type, media_id, thread_from_post_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
+                    (post_content, user_id, category, media_type, media_id, thread_from_post_id),
+                    fetchone=True
+                )
+            else:
+                post_row = db_execute(
+                    "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
+                    (post_content, user_id, category, media_type, media_id),
+                    fetchone=True
+                )
+            
+            # Clean up user data
+            if 'pending_post' in context.user_data:
+                del context.user_data['pending_post']
+            if 'thread_from_post_id' in context.user_data:
+                del context.user_data['thread_from_post_id']
+            
+            if post_row:
+                post_id = post_row['post_id']
+                await notify_admin_of_new_post(context, post_id)
+                
+                # Replace loading with success animation
+                success_msg = await replace_with_success(loading_msg, "Post submitted for approval!")
+                await asyncio.sleep(1)
+                
+                keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
+                await success_msg.edit_text(
+                    "✅ Your post has been submitted for admin approval!\nYou'll be notified when it's approved and published.",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                await replace_with_error(loading_msg, "Failed to submit post. Please try again.")
+            return
         elif query.data == 'admin_panel':
             await admin_panel(update, context)
             
