@@ -3167,7 +3167,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=main_menu
             )
             return
-
+        # NEW: Handle pending post editing
+    if 'editing_post' in context.user_data and context.user_data['editing_post']:
+        pending_post = context.user_data.get('pending_post')
+        if pending_post:
+            # Update the pending post content
+            pending_post['content'] = text
+            pending_post['timestamp'] = time.time()  # Reset edit timer
+            context.user_data['pending_post'] = pending_post
+            
+            # Remove editing flag
+            del context.user_data['editing_post']
+            
+            # Resend the confirmation with updated content
+            await send_post_confirmation(
+                update, context, 
+                pending_post['content'], 
+                pending_post['category'], 
+                pending_post.get('media_type', 'text'), 
+                pending_post.get('media_id'),
+                pending_post.get('thread_from_post_id')
+            )
+            return
+        else:
+            del context.user_data['editing_post']
+            await update.message.reply_text(
+                "❌ No pending post found. Please start over.",
+                reply_markup=main_menu
+            )
+            return        
     # If user doesn't exist, create them
     if not user:
         anon = create_anonymous_name(user_id)
