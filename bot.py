@@ -2906,9 +2906,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     del context.user_data['pending_post']
                     return
                     
+                # Store that we're in edit mode
+                context.user_data['editing_post'] = True
+                
                 await query.message.edit_text(
-                    "✏️ Please edit your post:",
-                    reply_markup=ForceReply(selective=True)
+                    f"✏️ *Edit your post:*\n\n{escape_markdown(pending_post['content'], version=2)}\n\nPlease type your edited post:",
+                    reply_markup=ForceReply(selective=True),
+                    parse_mode=ParseMode.MARKDOWN_V2
                 )
                 return
             
@@ -2918,65 +2922,69 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     del context.user_data['pending_post']
                 if 'thread_from_post_id' in context.user_data:
                     del context.user_data['thread_from_post_id']
+                if 'editing_post' in context.user_data:
+                    del context.user_data['editing_post']
                 return
             
-        elif query.data == 'confirm_post':
-            await query.answer()
-            
-            # Show typing animation
-            await typing_animation(context, query.message.chat_id, 0.5)
-            
-            # Show loading
-            loading_msg = await query.message.edit_text("📤 Submitting your post...")
-            await animated_loading(loading_msg, "Processing", 3)
-            
-            pending_post = context.user_data.get('pending_post')
-            if not pending_post:
-                await replace_with_error(loading_msg, "Post data not found. Please start over.")
+            elif query.data == 'confirm_post':
+                await query.answer()
+                
+                # Show typing animation
+                await typing_animation(context, query.message.chat_id, 0.5)
+                
+                # Show loading
+                loading_msg = await query.message.edit_text("📤 Submitting your post...")
+                await animated_loading(loading_msg, "Processing", 3)
+                
+                pending_post = context.user_data.get('pending_post')
+                if not pending_post:
+                    await replace_with_error(loading_msg, "Post data not found. Please start over.")
+                    return
+                
+                category = pending_post['category']
+                post_content = pending_post['content']
+                media_type = pending_post.get('media_type', 'text')
+                media_id = pending_post.get('media_id')
+                thread_from_post_id = pending_post.get('thread_from_post_id')
+                
+                # Insert post with thread reference if available
+                if thread_from_post_id:
+                    post_row = db_execute(
+                        "INSERT INTO posts (content, author_id, category, media_type, media_id, thread_from_post_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, category, media_type, media_id, thread_from_post_id),
+                        fetchone=True
+                    )
+                else:
+                    post_row = db_execute(
+                        "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, category, media_type, media_id),
+                        fetchone=True
+                    )
+                
+                # Clean up user data
+                if 'pending_post' in context.user_data:
+                    del context.user_data['pending_post']
+                if 'thread_from_post_id' in context.user_data:
+                    del context.user_data['thread_from_post_id']
+                if 'editing_post' in context.user_data:
+                    del context.user_data['editing_post']
+                
+                if post_row:
+                    post_id = post_row['post_id']
+                    await notify_admin_of_new_post(context, post_id)
+                    
+                    # Replace loading with success animation
+                    success_msg = await replace_with_success(loading_msg, "Post submitted for approval!")
+                    await asyncio.sleep(1)
+                    
+                    keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
+                    await success_msg.edit_text(
+                        "✅ Your post has been submitted for admin approval!\nYou'll be notified when it's approved and published.",
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                else:
+                    await replace_with_error(loading_msg, "Failed to submit post. Please try again.")
                 return
-            
-            category = pending_post['category']
-            post_content = pending_post['content']
-            media_type = pending_post.get('media_type', 'text')
-            media_id = pending_post.get('media_id')
-            thread_from_post_id = pending_post.get('thread_from_post_id')
-            
-            # Insert post with thread reference if available
-            if thread_from_post_id:
-                post_row = db_execute(
-                    "INSERT INTO posts (content, author_id, category, media_type, media_id, thread_from_post_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
-                    (post_content, user_id, category, media_type, media_id, thread_from_post_id),
-                    fetchone=True
-                )
-            else:
-                post_row = db_execute(
-                    "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
-                    (post_content, user_id, category, media_type, media_id),
-                    fetchone=True
-                )
-            
-            # Clean up user data
-            if 'pending_post' in context.user_data:
-                del context.user_data['pending_post']
-            if 'thread_from_post_id' in context.user_data:
-                del context.user_data['thread_from_post_id']
-            
-            if post_row:
-                post_id = post_row['post_id']
-                await notify_admin_of_new_post(context, post_id)
-                
-                # Replace loading with success animation
-                success_msg = await replace_with_success(loading_msg, "Post submitted for approval!")
-                await asyncio.sleep(1)
-                
-                keyboard = [[InlineKeyboardButton("📱 Main Menu", callback_data='menu')]]
-                await success_msg.edit_text(
-                    "✅ Your post has been submitted for admin approval!\nYou'll be notified when it's approved and published.",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            else:
-                await replace_with_error(loading_msg, "Failed to submit post. Please try again.")
-            return
         elif query.data == 'admin_panel':
             await admin_panel(update, context)
             
