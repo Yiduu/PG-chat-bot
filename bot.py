@@ -3141,6 +3141,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
 
     # NEW: Handle comment editing
+        # NEW: Handle comment editing
     if 'editing_comment' in context.user_data:
         comment_id = context.user_data['editing_comment']
         comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
@@ -3167,7 +3168,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=main_menu
             )
             return
-        # NEW: Handle pending post editing
+
+    # FIX: Handle pending post editing (NEW CODE STARTS HERE)
     if 'editing_post' in context.user_data and context.user_data['editing_post']:
         pending_post = context.user_data.get('pending_post')
         if pending_post:
@@ -3195,7 +3197,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ No pending post found. Please start over.",
                 reply_markup=main_menu
             )
-            return        
+            return
+    # FIX: Handle pending post editing (NEW CODE ENDS HERE)
+
     # If user doesn't exist, create them
     if not user:
         anon = create_anonymous_name(user_id)
