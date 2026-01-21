@@ -327,12 +327,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__) 
 
 def create_anonymous_name(user_id):
-    try:
-        uid_int = int(user_id)
-    except ValueError:
-        uid_int = abs(hash(user_id)) % 10000
-    names = ["Anonymous", "Believer", "Christian", "Servant", "Disciple", "ChildOfGod"]
-    return f"{names[uid_int % len(names)]}{uid_int % 1000}"
+    # Simply return "Anonymous" without numbers for all new users
+    return "Anonymous"
 
 def calculate_user_rating(user_id):
     post_row = db_fetch_one(
