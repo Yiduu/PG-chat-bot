@@ -1455,6 +1455,13 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
     file_id = comment['file_id']
     content = comment['content']
     
+    # NEW: Check if this is the vent author (if we have that info in context)
+    # This helps ensure consistency across all comment displays
+    is_vent_author = False
+    if hasattr(context, '_post_author_id') and context._post_author_id:
+        if str(comment['author_id']) == str(context._post_author_id):
+            is_vent_author = True
+    
     # Get user reaction for buttons
     user_id = str(context._user_id) if hasattr(context, '_user_id') else None
     user_reaction = None
@@ -1518,7 +1525,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             return msg.message_id
             
         elif comment_type == 'voice':
-            caption = f"{author_text}" if content else author_text
+            caption = f"{escape_markdown(content, version=2) if content else ''}\n\n{author_text}"
             msg = await context.bot.send_voice(
                 chat_id=chat_id,
                 voice=file_id,
@@ -1530,7 +1537,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             return msg.message_id
             
         elif comment_type == 'gif':
-            caption = f"{author_text}" if content else author_text
+            caption = f"{escape_markdown(content, version=2) if content else ''}\n\n{author_text}"
             msg = await context.bot.send_animation(
                 chat_id=chat_id,
                 animation=file_id,
@@ -1619,6 +1626,9 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=main_menu)
         return
 
+    # NEW: Get the vent author's ID
+    post_author_id = post['author_id']
+
     per_page = 5
     offset = (page - 1) * per_page
 
@@ -1647,6 +1657,8 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     user_id = str(update.effective_user.id)
     # Store user_id in context for the helper function
     context._user_id = user_id
+    # NEW: Also store post_author_id for the helper function
+    context._post_author_id = post_author_id
 
     if reply_pages is None:
         reply_pages = {}
@@ -1662,14 +1674,21 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}"
 
-        # Build author text
-        # Build author text - UPDATED: Italic name with sex emoji first
-        # Build author text - UPDATED: Italic name with sex emoji first, then zigzag separator, then italic "Aura", points and aura
-        author_text = (
-            f"{display_sex} "
-            f"_[{escape_markdown(display_name, version=2)}]({profile_link})_ "
-            f"〰️ _Aura_ {rating} {format_aura(rating)}"
-        )
+        # NEW: Check if commenter is the vent author
+        if str(commenter_id) == str(post_author_id):
+            # Vent author - add green checkmark before name
+            author_text = (
+                f"{display_sex} "
+                f"✅ _[vent author]({profile_link})_ "
+                f"〰️ _Aura_ {rating} {format_aura(rating)}"
+            )
+        else:
+            # Regular user
+            author_text = (
+                f"{display_sex} "
+                f"_[{escape_markdown(display_name, version=2)}]({profile_link})_ "
+                f"〰️ _Aura_ {rating} {format_aura(rating)}"
+            )
 
         # Send comment using helper function
         msg_id = await send_comment_message(context, chat_id, comment, author_text, header_message_id)
@@ -1695,14 +1714,21 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
                 
                 reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply_user_id}"
                 
-                # Build author text for reply
-                # Build author text for reply - UPDATED: Italic name with sex emoji first
-                # Build author text for reply - UPDATED: Italic name with sex emoji first, then zigzag separator, then italic "Aura", points and aura
-                reply_author_text = (
-                    f"{reply_display_sex} "
-                    f"_[{escape_markdown(reply_display_name, version=2)}]({reply_profile_link})_ "
-                    f"〰️ _Aura_ {rating_reply} {format_aura(rating_reply)}"
-                )
+                # NEW: Check if reply author is the vent author
+                if str(reply_user_id) == str(post_author_id):
+                    # Vent author - add green checkmark before name
+                    reply_author_text = (
+                        f"{reply_display_sex} "
+                        f"✅ _[vent author]({reply_profile_link})_ "
+                        f"〰️ _Aura_ {rating_reply} {format_aura(rating_reply)}"
+                    )
+                else:
+                    # Regular user
+                    reply_author_text = (
+                        f"{reply_display_sex} "
+                        f"_[{escape_markdown(reply_display_name, version=2)}]({reply_profile_link})_ "
+                        f"〰️ _Aura_ {rating_reply} {format_aura(rating_reply)}"
+                    )
 
                 # Send reply using helper function
                 child_msg_id = await send_comment_message(context, chat_id, child, reply_author_text, parent_msg_id)
@@ -1712,11 +1738,9 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
         # Start recursion for this top-level comment
         await send_replies_recursive(comment['comment_id'], msg_id, depth=1)
-
     
     
-    # Pagination buttons
-        # Delete loading message if it exists
+    # Delete loading message if it exists
     if loading_msg:
         try:
             await loading_msg.delete()
