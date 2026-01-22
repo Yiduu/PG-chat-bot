@@ -1680,14 +1680,14 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             author_text = (
                 f"{display_sex} "
                 f"✅ _[vent author]({profile_link})_ "
-                f"〰️ _Aura_ {rating} {format_aura(rating)}"
+                f"⚡ _Aura_ {rating} {format_aura(rating)}"
             )
         else:
             # Regular user
             author_text = (
                 f"{display_sex} "
                 f"_[{escape_markdown(display_name, version=2)}]({profile_link})_ "
-                f"〰️ _Aura_ {rating} {format_aura(rating)}"
+                f"⚡ _Aura_ {rating} {format_aura(rating)}"
             )
 
         # Send comment using helper function
@@ -1720,14 +1720,14 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
                     reply_author_text = (
                         f"{reply_display_sex} "
                         f"✅ _[vent author]({reply_profile_link})_ "
-                        f"〰️ _Aura_ {rating_reply} {format_aura(rating_reply)}"
+                        f"⚡ _Aura_ {rating_reply} {format_aura(rating_reply)}"
                     )
                 else:
                     # Regular user
                     reply_author_text = (
                         f"{reply_display_sex} "
                         f"_[{escape_markdown(reply_display_name, version=2)}]({reply_profile_link})_ "
-                        f"〰️ _Aura_ {rating_reply} {format_aura(rating_reply)}"
+                        f"⚡ _Aura_ {rating_reply} {format_aura(rating_reply)}"
                     )
 
                 # Send reply using helper function
