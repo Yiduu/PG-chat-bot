@@ -1267,22 +1267,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
-    """Show user's inbox with paginated messages"""
+    """Show user's inbox with clean, modern UI"""
     user_id = str(update.effective_user.id)
     
     # Show loading
     loading_msg = None
     try:
         if hasattr(update, 'callback_query') and update.callback_query:
-            loading_msg = await update.callback_query.message.edit_text("📭 Loading inbox...")
+            loading_msg = await update.callback_query.message.edit_text("📬 Checking inbox...")
         elif hasattr(update, 'message') and update.message:
-            loading_msg = await update.message.reply_text("📭 Loading inbox...")
+            loading_msg = await update.message.reply_text("📬 Checking inbox...")
     except:
         pass
     
     # Animate loading
     if loading_msg:
-        await animated_loading(loading_msg, "Loading", 2)
+        await animated_loading(loading_msg, "Loading", 1)
     
     # Get unread messages count
     unread_count_row = db_fetch_one(
@@ -1292,7 +1292,7 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
     unread_count = unread_count_row['count'] if unread_count_row else 0
     
     # Pagination settings
-    per_page = 8  # Show 8 messages per page
+    per_page = 7  # Show 7 messages per page
     offset = (page - 1) * per_page
     
     # Get messages with pagination
@@ -1313,13 +1313,21 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
     total_pages = (total_messages + per_page - 1) // per_page
     
     if not messages:
-        # No messages
+        # No messages - clean empty state
         if loading_msg:
-            await replace_with_success(loading_msg, "No messages found")
+            await replace_with_success(loading_msg, "No messages")
             await asyncio.sleep(0.5)
         
-        text = "📭 *Your Inbox*\n\nYou don't have any messages yet."
+        text = (
+            "📭 *Your Inbox is Empty*\n\n"
+            "No messages yet. When someone sends you a message, "
+            "it will appear here.\n\n"
+            "You can message other users by viewing their profile "
+            "and clicking 'Send Message'."
+        )
+        
         keyboard = [
+            [InlineKeyboardButton("🔍 View Leaderboard", callback_data='leaderboard')],
             [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
         ]
         
@@ -1349,33 +1357,60 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
             logger.error(f"Error showing empty inbox: {e}")
         return
     
-    # Build inbox display
-    text = f"📭 *Your Inbox* (Page {page}/{total_pages})\n"
-    text += f"📥 **Total:** {total_messages} messages | **Unread:** {unread_count}\n\n"
-    text += "*Click on a message to view it:*\n\n"
+    # Build clean inbox header
+    text = "📬 *Messages*\n"
+    if unread_count > 0:
+        text += f"🔴 {unread_count} unread\n\n"
+    else:
+        text += "\n"
     
-    # Build keyboard with message buttons
+    # Build keyboard with message previews
     keyboard = []
     
     for idx, msg in enumerate(messages, start=1):
         # Calculate message number
         msg_number = (page - 1) * per_page + idx
         
-        # Format sender info
-        status = "🔵" if not msg['is_read'] else "⚪️"
+        # Determine read status icon
+        status_icon = "🔴" if not msg['is_read'] else "⚪"
         
-        # Format timestamp
+        # Format sender info (truncate if needed)
+        sender_name = msg['sender_name'][:12] if len(msg['sender_name']) > 12 else msg['sender_name']
+        
+        # Format timestamp nicely
         if isinstance(msg['timestamp'], str):
-            timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d')
+            timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S')
         else:
-            timestamp = msg['timestamp'].strftime('%b %d')
+            timestamp = msg['timestamp']
         
-        # Create message preview
-        preview = msg['content'][:30] + '...' if len(msg['content']) > 30 else msg['content']
+        # Calculate time difference
+        now = datetime.now()
+        if isinstance(timestamp, str):
+            timestamp = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+        
+        time_diff = now - timestamp
+        if time_diff.days == 0:
+            # Same day - show time
+            time_str = timestamp.strftime('%I:%M %p').lstrip('0')
+        elif time_diff.days == 1:
+            time_str = "Yesterday"
+        elif time_diff.days < 7:
+            time_str = timestamp.strftime('%a')
+        else:
+            time_str = timestamp.strftime('%b %d')
+        
+        # Create message preview (short and clean)
+        preview = msg['content']
+        if len(preview) > 25:
+            preview = preview[:22] + '...'
+        
+        # Clean preview (remove markdown for button)
         clean_preview = preview.replace('*', '').replace('_', '').replace('`', '').strip()
         
         # Create button text
-        button_text = f"{status} #{msg_number} {msg['sender_name'][:10]} - {clean_preview}"
+        button_text = f"{status_icon} {sender_name}: {clean_preview} • {time_str}"
+        
+        # Ensure button text isn't too long
         if len(button_text) > 40:
             button_text = button_text[:37] + "..."
         
@@ -1388,35 +1423,42 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
     if total_pages > 1:
         pagination_row = []
         
-        # Previous page button
         if page > 1:
-            pagination_row.append(InlineKeyboardButton("◀️ Previous", callback_data=f"inbox_page_{page-1}"))
+            pagination_row.append(InlineKeyboardButton("◀️", callback_data=f"inbox_page_{page-1}"))
         else:
             pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
         
-        # Current page indicator (non-clickable)
-        pagination_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="noop"))
+        pagination_row.append(InlineKeyboardButton(f"Page {page}/{total_pages}", callback_data="noop"))
         
-        # Next page button
         if page < total_pages:
-            pagination_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"inbox_page_{page+1}"))
+            pagination_row.append(InlineKeyboardButton("▶️", callback_data=f"inbox_page_{page+1}"))
         else:
             pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
         
         keyboard.append(pagination_row)
     
-    # Add navigation buttons
+    # Add action buttons at bottom
+    action_row = []
+    if unread_count > 0:
+        action_row.append(InlineKeyboardButton("✓ Mark All Read", callback_data="mark_all_read"))
+    
+    action_row.append(InlineKeyboardButton("🔄 Refresh", callback_data=f"inbox_page_{page}"))
+    keyboard.append(action_row)
+    
     keyboard.append([
-        InlineKeyboardButton("📝 Mark All as Read", callback_data="mark_all_read"),
-        InlineKeyboardButton("📱 Main Menu", callback_data='menu')
+        InlineKeyboardButton("📱 Menu", callback_data='menu'),
+        InlineKeyboardButton("👤 Profile", callback_data='profile')
     ])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    # Add footer text
+    text += f"_Showing {len(messages)} of {total_messages} messages_"
+    
     # Replace loading message with content
     try:
         if loading_msg:
-            await animated_loading(loading_msg, "Finalizing", 1)
+            await animated_loading(loading_msg, "Ready", 1)
             await loading_msg.edit_text(
                 text,
                 reply_markup=reply_markup,
@@ -1441,15 +1483,14 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("❌ Error loading inbox. Please try again.")
 async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, from_page=1):
-    """View an individual private message in detail"""
+    """View an individual private message with clean, natural UI"""
     query = update.callback_query
     await query.answer()
     
     user_id = str(query.from_user.id)
     
-    # Show loading
-    loading_msg = await query.message.edit_text("📩 Loading message...")
-    await animated_loading(loading_msg, "Loading", 2)
+    # Show minimal loading
+    await typing_animation(context, query.message.chat_id, 0.3)
     
     # Get message details
     message = db_fetch_one('''
@@ -1460,7 +1501,13 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
     ''', (message_id, user_id))
     
     if not message:
-        await replace_with_error(loading_msg, "Message not found or access denied")
+        try:
+            await query.message.edit_text(
+                "❌ Message not found or you don't have permission to view it.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except:
+            await query.message.reply_text("❌ Message not found.")
         return
     
     # Mark message as read
@@ -1469,79 +1516,129 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
         (message_id,)
     )
     
-    # Format timestamp
+    # Format timestamp naturally
     if isinstance(message['timestamp'], str):
-        timestamp = datetime.strptime(message['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%B %d, %Y at %H:%M')
+        timestamp = datetime.strptime(message['timestamp'], '%Y-%m-%d %H:%M:%S')
     else:
-        timestamp = message['timestamp'].strftime('%B %d, %Y at %H:%M')
+        timestamp = message['timestamp']
     
-    # Build message display
+    now = datetime.now()
+    time_diff = now - timestamp
+    
+    if time_diff.days == 0:
+        if time_diff.seconds < 60:
+            time_ago = "just now"
+        elif time_diff.seconds < 3600:
+            minutes = time_diff.seconds // 60
+            time_ago = f"{minutes}m ago"
+        else:
+            hours = time_diff.seconds // 3600
+            time_ago = f"{hours}h ago"
+    elif time_diff.days == 1:
+        time_ago = "yesterday"
+    elif time_diff.days < 7:
+        time_ago = timestamp.strftime('%A')
+    elif time_diff.days < 30:
+        weeks = time_diff.days // 7
+        time_ago = f"{weeks}w ago"
+    else:
+        time_ago = timestamp.strftime('%b %d')
+    
+    # Build clean message display
     text = (
-        f"📩 *Private Message*\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 **From:** {message['sender_name']} {message['sender_sex']}\n"
-        f"📅 **Date:** {escape_markdown(timestamp, version=2)}\n"
-        f"📋 **Status:** {'Read' if message['is_read'] else 'Unread'}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"**Message:**\n\n"
+        f"💬 *Message from {message['sender_name']}*\n"
+        f"_{time_ago}_\n\n"
         f"{escape_markdown(message['content'], version=2)}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
     
-    # Create action buttons
+    # Create clean action buttons (like WhatsApp/Telegram)
     keyboard = [
         [
             InlineKeyboardButton("💬 Reply", callback_data=f"reply_msg_{message['sender_id']}"),
-            InlineKeyboardButton("⛔ Block", callback_data=f"block_user_{message['sender_id']}")
+            InlineKeyboardButton("👤 View Profile", callback_data=f"profileid_{message['sender_id']}")
         ],
         [
             InlineKeyboardButton("🗑 Delete", callback_data=f"delete_message_{message_id}_{from_page}"),
-            InlineKeyboardButton("🔙 Back to Inbox", callback_data=f"inbox_page_{from_page}")
+            InlineKeyboardButton("⛔ Block", callback_data=f"block_user_{message['sender_id']}")
         ],
         [
-            InlineKeyboardButton("📱 Main Menu", callback_data='menu')
+            InlineKeyboardButton("◀️ Back to Inbox", callback_data=f"inbox_page_{from_page}"),
+            InlineKeyboardButton("📱 Menu", callback_data='menu')
         ]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
-        await animated_loading(loading_msg, "Almost ready", 1)
-        await loading_msg.edit_text(
+        await query.message.edit_text(
             text,
             reply_markup=reply_markup,
             parse_mode=ParseMode.MARKDOWN_V2
         )
     except Exception as e:
         logger.error(f"Error viewing message: {e}")
-        await replace_with_error(loading_msg, "Error loading message")
+        try:
+            await query.message.reply_text(
+                f"💬 Message from {message['sender_name']}:\n\n"
+                f"{message['content']}\n\n"
+                f"_{time_ago}_",
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except:
+            await query.message.reply_text("❌ Error loading message.")
 async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, from_page=1):
-    """Delete a private message"""
+    """Show clean delete confirmation"""
     query = update.callback_query
     await query.answer()
     
     user_id = str(query.from_user.id)
     
-    # Confirm deletion
+    # Get message preview for confirmation
+    message = db_fetch_one('''
+        SELECT pm.content, u.anonymous_name as sender_name
+        FROM private_messages pm
+        JOIN users u ON pm.sender_id = u.user_id
+        WHERE pm.message_id = %s AND pm.receiver_id = %s
+    ''', (message_id, user_id))
+    
+    if not message:
+        await query.answer("❌ Message not found", show_alert=True)
+        return
+    
+    # Create clean preview
+    preview = message['content'][:50] + '...' if len(message['content']) > 50 else message['content']
+    
+    text = (
+        f"🗑 *Delete Message?*\n\n"
+        f"From: {message['sender_name']}\n"
+        f"Preview: {preview}\n\n"
+        f"This action cannot be undone."
+    )
+    
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✅ Yes, Delete", callback_data=f"confirm_delete_message_{message_id}_{from_page}"),
-            InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_delete_message_{message_id}_{from_page}")
+            InlineKeyboardButton("✅ Delete", callback_data=f"confirm_delete_message_{message_id}_{from_page}"),
+            InlineKeyboardButton("❌ Keep", callback_data=f"cancel_delete_message_{message_id}_{from_page}")
         ]
     ])
     
     await query.message.edit_text(
-        "🗑 *Delete Message*\n\nAre you sure you want to delete this message? This action cannot be undone.",
+        text,
         reply_markup=keyboard,
         parse_mode=ParseMode.MARKDOWN
     )
-
 async def confirm_delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, from_page=1):
-    """Confirm and delete the message"""
+    """Confirm and delete message with clean feedback"""
     query = update.callback_query
     await query.answer()
     
     user_id = str(query.from_user.id)
+    
+    # Show processing
+    await query.message.edit_text("🗑 Deleting message...")
+    await asyncio.sleep(0.5)
     
     # Delete the message
     success = db_execute(
@@ -1550,17 +1647,17 @@ async def confirm_delete_message(update: Update, context: ContextTypes.DEFAULT_T
     )
     
     if success:
-        await query.answer("✅ Message deleted successfully")
+        # Show success and return to inbox
         await query.message.edit_text(
-            "✅ Message has been deleted.",
+            "✅ Message deleted successfully.",
             parse_mode=ParseMode.MARKDOWN
         )
-        # Return to inbox at the same page
+        await asyncio.sleep(0.7)
         await show_inbox(update, context, from_page)
     else:
         await query.answer("❌ Error deleting message", show_alert=True)
         await query.message.edit_text(
-            "❌ Error deleting message. Please try again.",
+            "❌ Could not delete message. Please try again.",
             parse_mode=ParseMode.MARKDOWN
         )
 
@@ -3324,9 +3421,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error in reject_post handler: {e}")
                 await query.answer("❌ Error rejecting post", show_alert=True)
             
-        # Private messaging functionality
+        
         elif query.data == 'inbox':
-            await show_inbox(update, context, 1)  # Start at page 1
+            await show_inbox(update, context, 1)
             
         elif query.data.startswith('inbox_page_'):
             try:
@@ -3342,10 +3439,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     message_id = int(parts[2])
                     from_page = int(parts[3]) if len(parts) > 3 else 1
                     await view_individual_message(update, context, message_id, from_page)
-                else:
-                    await query.answer("❌ Invalid message ID", show_alert=True)
             except (IndexError, ValueError) as e:
-                logger.error(f"Error parsing view_message callback: {e}")
+                logger.error(f"Error parsing view_message: {e}")
                 await query.answer("❌ Error loading message", show_alert=True)
                 
         elif query.data == 'mark_all_read':
@@ -3359,8 +3454,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     from_page = int(parts[3]) if len(parts) > 3 else 1
                     await delete_message(update, context, message_id, from_page)
             except (IndexError, ValueError) as e:
-                logger.error(f"Error parsing delete_message callback: {e}")
-                await query.answer("❌ Error processing delete", show_alert=True)
+                logger.error(f"Error parsing delete_message: {e}")
+                await query.answer("❌ Error", show_alert=True)
                 
         elif query.data.startswith('confirm_delete_message_'):
             try:
@@ -3370,8 +3465,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     from_page = int(parts[4]) if len(parts) > 4 else 1
                     await confirm_delete_message(update, context, message_id, from_page)
             except (IndexError, ValueError) as e:
-                logger.error(f"Error parsing confirm_delete_message callback: {e}")
-                await query.answer("❌ Error deleting message", show_alert=True)
+                logger.error(f"Error parsing confirm_delete: {e}")
+                await query.answer("❌ Error", show_alert=True)
                 
         elif query.data.startswith('cancel_delete_message_'):
             try:
@@ -3379,10 +3474,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if len(parts) >= 4:
                     message_id = int(parts[3])
                     from_page = int(parts[4]) if len(parts) > 4 else 1
-                    # Return to viewing the message
                     await view_individual_message(update, context, message_id, from_page)
             except (IndexError, ValueError):
-                # Fallback to inbox
                 await show_inbox(update, context, 1)
             
         elif query.data.startswith('message_'):
