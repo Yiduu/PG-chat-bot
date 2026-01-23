@@ -3064,41 +3064,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
         elif query.data.startswith('reply_msg_'):
-            # Extract target_id from reply_msg_{target_id}
-            # The format is "reply_msg_123456" where 123456 is the target user ID
+            # Handle private message reply button
+            # The format is: reply_msg_<user_id>
             try:
-                # Remove "reply_msg_" prefix to get the target ID
-                target_id = query.data.replace('reply_msg_', '', 1)
+                # Extract everything after 'reply_msg_'
+                target_id = query.data[len('reply_msg_'):]
                 
-                # Optional: Validate it's a numeric ID (Telegram user IDs are numbers)
-                if not target_id.isdigit():
-                    await query.answer("Invalid user ID format", show_alert=True)
+                if not target_id or not target_id.isdigit():
+                    logger.error(f"Invalid target_id in reply_msg callback: {query.data}")
+                    await query.answer("❌ Invalid user ID", show_alert=True)
                     return
                     
-                # Optional: Check if target user exists
-                target_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (target_id,))
+                # Check if target user exists
+                target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
                 if not target_user:
-                    await query.answer("User not found", show_alert=True)
+                    await query.answer("❌ User not found", show_alert=True)
                     return
-                    
+                
+                # Set up the user to send a private message
+                db_execute(
+                    "UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s",
+                    (target_id, user_id)
+                )
+                
+                target_name = target_user['anonymous_name']
+                
+                await query.message.reply_text(
+                    f"↩️ *Replying to {target_name}*\n\nPlease type your message:",
+                    reply_markup=ForceReply(selective=True),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
             except Exception as e:
-                logger.error(f"Error parsing reply_msg callback: {e}")
-                await query.answer("Error processing reply", show_alert=True)
-                return
-            
-            db_execute(
-                "UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s",
-                (target_id, user_id)
-            )
-            
-            target_name = target_user['anonymous_name'] if target_user else "this user"
-            
-            await query.message.reply_text(
-                f"↩️ *Replying to {target_name}*\n\nPlease type your message:",
-                reply_markup=ForceReply(selective=True),
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
+                logger.error(f"Error in reply_msg handler: {e}, data: {query.data}")
+                await query.answer("❌ Error processing reply", show_alert=True)
+                    
         # Add this in the button_handler function where you handle other callbacks
         elif query.data.startswith("viewpost_"):
             post_id = int(query.data.split('_')[1])
