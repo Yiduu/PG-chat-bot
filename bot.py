@@ -3435,6 +3435,81 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "How can I help you?",
         reply_markup=main_menu
     )
+async def handle_private_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    data = query.data  # reply_msg_<sender_id>
+
+    sender_id = data.replace("reply_msg_", "")
+
+    # Store reply state
+    db_execute(
+        """
+        UPDATE users
+        SET waiting_for_private_message = TRUE,
+            private_message_target = %s
+        WHERE user_id = %s
+        """,
+        (sender_id, user_id)
+    )
+
+    await query.message.reply_text(
+        "✍️ Type your reply message:",
+        reply_markup=ForceReply(selective=True)
+    )
+async def handle_private_message_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    text = update.message.text
+
+    user = db_fetch_one(
+        "SELECT waiting_for_private_message, private_message_target FROM users WHERE user_id = %s",
+        (user_id,)
+    )
+
+    if not user or not user["waiting_for_private_message"]:
+        return  # Not replying to a private message
+
+    receiver_id = user["private_message_target"]
+
+    # Prevent sending message to self
+    if receiver_id == user_id:
+        await update.message.reply_text("❌ You cannot message yourself.")
+        return
+
+    # Save message
+    msg = db_execute(
+        """
+        INSERT INTO private_messages (sender_id, receiver_id, content)
+        VALUES (%s, %s, %s)
+        RETURNING message_id
+        """,
+        (user_id, receiver_id, text),
+        fetchone=True
+    )
+
+    # Reset reply state
+    db_execute(
+        """
+        UPDATE users
+        SET waiting_for_private_message = FALSE,
+            private_message_target = NULL
+        WHERE user_id = %s
+        """,
+        (user_id,)
+    )
+
+    # Notify receiver
+    await notify_user_of_private_message(
+        context,
+        sender_id=user_id,
+        receiver_id=receiver_id,
+        message_content=text,
+        message_id=msg["message_id"]
+    )
+
+    await update.message.reply_text("✅ Message sent!")
 
 async def error_handler(update, context):
     logger.error(f"Update {update} caused error: {context.error}", exc_info=True) 
@@ -3477,6 +3552,10 @@ def main():
     app.add_handler(CommandHandler("inbox", show_inbox))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(handle_private_reply, pattern="^reply_msg_"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_message_text))
+
+
     app.add_error_handler(error_handler)
     
     # Start polling
