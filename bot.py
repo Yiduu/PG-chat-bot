@@ -3455,30 +3455,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "How can I help you?",
         reply_markup=main_menu
     )
-async def handle_private_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    user_id = str(query.from_user.id)
-    data = query.data  # reply_msg_<sender_id>
-
-    sender_id = data.replace("reply_msg_", "")
-
-    # Store reply state
-    db_execute(
-        """
-        UPDATE users
-        SET waiting_for_private_message = TRUE,
-            private_message_target = %s
-        WHERE user_id = %s
-        """,
-        (sender_id, user_id)
-    )
-
-    await query.message.reply_text(
-        "✍️ Type your reply message:",
-        reply_markup=ForceReply(selective=True)
-    )
 async def handle_private_message_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     text = update.message.text
@@ -3572,7 +3548,6 @@ def main():
     app.add_handler(CommandHandler("inbox", show_inbox))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(handle_private_reply, pattern="^reply_msg_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_message_text))
 
 
