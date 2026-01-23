@@ -3064,14 +3064,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
         elif query.data.startswith('reply_msg_'):
-            # Fixed: Properly extract target_id from reply_msg_{target_id}
-            target_id = query.data.split('_')[2] if len(query.data.split('_')) > 2 else query.data.split('_')[1]
+            # Extract target_id from reply_msg_{target_id}
+            # The format is "reply_msg_123456" where 123456 is the target user ID
+            try:
+                # Remove "reply_msg_" prefix to get the target ID
+                target_id = query.data.replace('reply_msg_', '', 1)
+                
+                # Optional: Validate it's a numeric ID (Telegram user IDs are numbers)
+                if not target_id.isdigit():
+                    await query.answer("Invalid user ID format", show_alert=True)
+                    return
+                    
+                # Optional: Check if target user exists
+                target_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (target_id,))
+                if not target_user:
+                    await query.answer("User not found", show_alert=True)
+                    return
+                    
+            except Exception as e:
+                logger.error(f"Error parsing reply_msg callback: {e}")
+                await query.answer("Error processing reply", show_alert=True)
+                return
+            
             db_execute(
                 "UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s",
                 (target_id, user_id)
             )
             
-            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
             target_name = target_user['anonymous_name'] if target_user else "this user"
             
             await query.message.reply_text(
@@ -3079,6 +3098,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=ForceReply(selective=True),
                 parse_mode=ParseMode.MARKDOWN
             )
+            
         # Add this in the button_handler function where you handle other callbacks
         elif query.data.startswith("viewpost_"):
             post_id = int(query.data.split('_')[1])
