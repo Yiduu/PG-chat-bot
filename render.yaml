@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: christian-vent-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    web: python bot.py
+    mini-app: python mini_app.py
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: TOKEN
+        sync: false
+      - key: CHANNEL_ID
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
+      - key: ADMIN_ID
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: RENDER_URL
+        fromService:
+          name: christian-vent-bot
+          type: web
+          property: url
+  
+  - type: web
+    name: christian-vent-mini-app
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn mini_app:mini_app
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: RENDER_URL
+        fromService:
+          name: christian-vent-mini-app
+          type: web
+          property: url
