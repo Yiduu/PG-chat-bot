@@ -1,6 +1,13 @@
+# Add these imports at the top of bot.py (after the existing imports)
+import jwt
+import requests
+from telegram import WebAppInfo
+from threading import Thread
+import subprocess
 import os 
 import logging
 import psycopg2
+import json
 from urllib.parse import quote
 from psycopg2 import sql, IntegrityError, ProgrammingError
 from psycopg2.extras import RealDictCursor
@@ -18,9 +25,9 @@ from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 import threading
-from flask import Flask, jsonify 
+from flask import Flask, jsonify, request, redirect, render_template_string 
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import random
 import time
 import asyncio
@@ -41,7 +48,6 @@ def init_db():
     try:
         with psycopg2.connect(DATABASE_URL) as conn:
             with conn.cursor() as c:
-                
                 # ---------------- Create Tables ----------------
                 c.execute('''
                 CREATE TABLE IF NOT EXISTS users (
@@ -130,6 +136,49 @@ def init_db():
                     PRIMARY KEY (blocker_id, blocked_id)
                 )
                 ''')
+
+                c.execute('''
+                CREATE TABLE IF NOT EXISTS scheduled_broadcasts (
+                    broadcast_id SERIAL PRIMARY KEY,
+                    scheduled_by TEXT,
+                    content TEXT,
+                    media_type TEXT,
+                    media_id TEXT,
+                    scheduled_time TIMESTAMP,
+                    status TEXT DEFAULT 'scheduled',
+                    target_group TEXT DEFAULT 'all',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                ''')
+
+                
+                
+                
+                
+                
+        
+    
+        
+                async def schedule_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+                    """Schedule a broadcast for later"""
+                    # Similar to execute_broadcast but stores in database
+                    pass
+                
+                async def check_scheduled_broadcasts(context: ContextTypes.DEFAULT_TYPE):
+                    """Check and send scheduled broadcasts"""
+                    scheduled = db_fetch_all('''
+                        SELECT * FROM scheduled_broadcasts 
+                        WHERE status = 'scheduled' 
+                        AND scheduled_time <= CURRENT_TIMESTAMP
+                    ''')
+                    
+                    for broadcast in scheduled:
+                        # Send the broadcast
+                        # Update status to 'sent'
+                        pass
+                
+                # Schedule this to run every minute in main():
+                job_queue.run_repeating(check_scheduled_broadcasts, interval=60, first=10)
 
                 # ---------------- Database Schema Migration ----------------
                 # Check if thread_from_post_id column exists, if not add it
@@ -271,7 +320,20 @@ def db_fetch_one(query, params=()):
 
 def db_fetch_all(query, params=()):
     return db_execute(query, params, fetch=True)
-
+def reset_user_waiting_states(user_id: str):
+    """Reset all waiting states for a user"""
+    db_execute('''
+        UPDATE users 
+        SET waiting_for_post = FALSE, 
+            waiting_for_comment = FALSE, 
+            awaiting_name = FALSE,
+            waiting_for_private_message = FALSE,
+            selected_category = NULL,
+            comment_post_id = NULL,
+            comment_idx = NULL,
+            private_message_target = NULL
+        WHERE user_id = %s
+    ''', (user_id,))
 # Categories
 CATEGORIES = [
     ("🙏 Pray For Me", "PrayForMe"),
@@ -297,16 +359,274 @@ def build_category_buttons():
         buttons.append(row)
     return InlineKeyboardMarkup(buttons) 
 
+
 # Initialize Flask app for Render health checks
-flask_app = Flask(__name__) 
+flask_app = Flask(__name__, static_folder='static')
 
+# ==================== FLASK ROUTES ====================
+
+# Root shows mini app
+# Root shows mini app with token check
 @flask_app.route('/')
-def health_check():
-    return jsonify(status="OK", message="Christian Chat Bot is running") 
+def main_page():
+    """Show mini app with authentication check"""
+    # Check if there's a token in the URL
+    token = request.args.get('token')
+    
+    if not token:
+        # No token - redirect to login page
+        return redirect('/login')
+    
+    # Verify the token
+    try:
+        response = requests.get(f'{request.host_url}api/verify-token/{token}')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                # Token is valid, show mini app with user info
+                return mini_app_page()
+    except Exception as e:
+        logger.error(f"Error verifying token: {e}")
+    
+    # Invalid token or error - redirect to login
+    return redirect('/login')
 
+# Login page for mini app
+@flask_app.route('/login')
+def login_page():
+    """Show login page for mini app"""
+    bot_username = BOT_USERNAME
+    
+    html = '''<!DOCTYPE html>
+<html>
+<head>
+    <title>Christian Vent - Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #272F32;
+            color: #E0E0E0;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .login-container {
+            background: #2E3A40;
+            padding: 40px;
+            border-radius: 12px;
+            border: 1px solid #3A4A50;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        
+        .logo {
+            width: 90px;
+            height: auto;
+            margin-bottom: 15px;
+        }
+        .title {
+            color: #BF970B;
+            font-size: 2.8rem;
+            font-weight: 700;
+            letter-spacing: 3px;
+            font-family: 'Oswald', sans-serif;
+            text-transform: uppercase;
+            margin: 0;
+        }
+        h1 {
+            color: #BF970B;
+            margin-bottom: 10px;
+        }
+        
+        p {
+            opacity: 0.8;
+            line-height: 1.6;
+            margin-bottom: 30px;
+        }
+        
+        .telegram-btn {
+            background: #0088cc;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 20px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .telegram-btn:hover {
+            background: #0077b3;
+        }
+        
+        .bot-link {
+            color: #BF970B;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        
+        .bot-link:hover {
+            text-decoration: underline;
+        }
+        
+        .features {
+            text-align: left;
+            margin-top: 30px;
+            background: rgba(191, 151, 11, 0.1);
+            padding: 20px;
+            border-radius: 8px;
+        }
+        
+        .features h3 {
+            color: #BF970B;
+            margin-top: 0;
+        }
+        
+        .features ul {
+            padding-left: 20px;
+        }
+        
+        .features li {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="brand">
+            <img src="/static/images/vent%20logo.jpg" class="logo" alt="Christian Vent Logo">
+            <h1 class="title">CHRISTIAN VENT</h1>
+        </div>
+
+        <p>Share your thoughts anonymously with the Christian community</p>
+        
+        <p>To use the mini app, you need to authenticate with the Telegram bot:</p>
+        
+        <a href="https://t.me/''' + bot_username + '''" class="telegram-btn" target="_blank">
+            Open Telegram Bot
+        </a>
+        
+        <p>Or use this link: <a href="https://t.me/''' + bot_username + '''" class="bot-link" target="_blank">@''' + bot_username + '''</a></p>
+        
+        <div class="features">
+            <h3>Features:</h3>
+            <ul>
+                <li>Share anonymous vents and prayers</li>
+                <li>Join Christian community discussions</li>
+                <li>View and comment on posts</li>
+                <li>Check leaderboard of top contributors</li>
+                <li>Manage your profile and settings</li>
+            </ul>
+        </div>
+        
+        <p style="margin-top: 30px; font-size: 0.9rem; opacity: 0.7;">
+            After opening the bot, use the /webapp command to get authenticated access to the mini app.
+        </p>
+    </div>
+</body>
+</html>'''
+    
+    return html
+
+# Generate token for mini app (called by bot)
+@flask_app.route('/api/generate-token/<user_id>')
+def generate_token(user_id):
+    """Generate a token for mini app authentication"""
+    try:
+        # Create JWT token that expires in 30 days
+        token = jwt.encode(
+            {
+                'user_id': user_id,
+                'exp': datetime.now(timezone.utc) + timedelta(days=30)
+            },
+            TOKEN,  # Use your bot token as secret key
+            algorithm='HS256'
+        )
+        
+        return jsonify({
+            'success': True,
+            'token': token
+        })
+    except Exception as e:
+        logger.error(f"Error generating token: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Verify token
+@flask_app.route('/api/verify-token/<token>')
+def verify_token(token):
+    """Verify JWT token - SIMPLIFIED VERSION"""
+    try:
+        # Try to decode the token
+        decoded = jwt.decode(token, TOKEN, algorithms=['HS256'])
+        user_id = decoded.get('user_id')
+        
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Invalid token format'}), 401
+        
+        # Check if user exists
+        user = db_fetch_one("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+        if not user:
+            return jsonify({'success': False, 'error': 'User not found'}), 401
+        
+        return jsonify({
+            'success': True,
+            'user_id': user_id
+        })
+        
+    except jwt.ExpiredSignatureError:
+        return jsonify({'success': False, 'error': 'Token expired'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'success': False, 'error': 'Invalid token'}), 401
+    except Exception as e:
+        logger.error(f"Error verifying token: {e}")
+        return jsonify({'success': False, 'error': 'Token verification failed'}), 500
+@flask_app.route('/test-api')
+def test_api():
+    """Test if API endpoints are working"""
+    return jsonify({
+        'status': 'OK',
+        'endpoints': {
+            'submit_vent': '/api/mini-app/submit-vent (POST)',
+            'get_posts': '/api/mini-app/get-posts (GET)',
+            'leaderboard': '/api/mini-app/leaderboard (GET)',
+            'profile': '/api/mini-app/profile/<user_id> (GET)',
+            'verify_token': '/api/verify-token/<token> (GET)'
+        }
+    })
+# Health check for Render
+@flask_app.route('/health')
+def health_check():
+    return jsonify(status="OK", message="Christian Chat Bot is running")
+
+# Handle favicon request
+@flask_app.route('/favicon.ico')
+def favicon():
+    return '', 404  # Return empty 404 for favicon
+
+# UptimeRobot ping
 @flask_app.route('/ping')
 def uptimerobot_ping():
-    return jsonify(status="OK", message="Pong! Bot is alive") 
+    return jsonify(status="OK", message="Pong! Bot is alive")
+
+# Serve static files
+@flask_app.route('/static/<path:filename>')
+def static_files(filename):
+    """Serve static files"""
+    try:
+        return send_from_directory('static', filename)
+    except Exception as e:
+        return f"Error loading file: {e}", 404
 
 # Create main menu keyboard with improved buttons
 main_menu = ReplyKeyboardMarkup(
@@ -318,7 +638,13 @@ main_menu = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
     one_time_keyboard=False
-) 
+)
+
+def create_cancel_keyboard():
+    """Create a keyboard with cancel button"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+    ])
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -756,6 +1082,7 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
     except Exception as e:
         logger.error(f"Error notifying admin: {e}")
 
+# Update the submit vent endpoint to use this
 async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sender_id: str, receiver_id: str, message_content: str, message_id: int):
     try:
         # Check if receiver has blocked the sender
@@ -800,6 +1127,10 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
     except Exception as e:
         logger.error(f"Error sending private message notification: {e}")
 
+
+
+
+
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
@@ -810,27 +1141,50 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.message.reply_text("❌ You don't have permission to access this.")
         return
     
+    # Get statistics for display
     pending_posts = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE approved = FALSE")
     pending_count = pending_posts['count'] if pending_posts else 0
     
+    total_users = db_fetch_one("SELECT COUNT(*) as count FROM users")
+    users_count = total_users['count'] if total_users else 0
+    
+    active_today = db_fetch_one('''
+        SELECT COUNT(DISTINCT user_id) as count 
+        FROM (
+            SELECT author_id as user_id FROM posts WHERE DATE(timestamp) = CURRENT_DATE
+            UNION 
+            SELECT author_id as user_id FROM comments WHERE DATE(timestamp) = CURRENT_DATE
+        ) AS active_users
+    ''')
+    active_count = active_today['count'] if active_today else 0
+    
     keyboard = [
         [InlineKeyboardButton(f"📝 Pending Posts ({pending_count})", callback_data='admin_pending')],
-        [InlineKeyboardButton("📊 Statistics", callback_data='admin_stats')],
-        [InlineKeyboardButton("👥 User Management", callback_data='admin_users')],
-        [InlineKeyboardButton("📢 Broadcast", callback_data='admin_broadcast')],
-        [InlineKeyboardButton("🔙 Back", callback_data='settings')]
+        [InlineKeyboardButton(f"👥 Users: {users_count}", callback_data='admin_users')],
+        [InlineKeyboardButton(f"📊 Statistics", callback_data='admin_stats')],
+        [InlineKeyboardButton("📢 Send Broadcast", callback_data='admin_broadcast')],  # This is the broadcast button
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data='menu')]
     ]
+    
+    text = (
+        f"🛠 *Admin Panel*\n\n"
+        f"📊 *Quick Stats:*\n"
+        f"• Pending Posts: {pending_count}\n"
+        f"• Total Users: {users_count}\n"
+        f"• Active Today: {active_count}\n\n"
+        f"Select an option below:"
+    )
     
     try:
         if update.callback_query:
             await update.callback_query.edit_message_text(
-                "🛠 *Admin Panel*",
+                text,
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=ParseMode.MARKDOWN
             )
         else:
             await update.message.reply_text(
-                "🛠 *Admin Panel*",
+                text,
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=ParseMode.MARKDOWN
             )
@@ -841,6 +1195,384 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif update.callback_query:
             await update.callback_query.message.reply_text("❌ Error loading admin panel.")
 
+async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the broadcast process"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = str(query.from_user.id)
+    
+    # Verify admin permissions
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']:
+        await query.answer("❌ You don't have permission to access this.", show_alert=True)
+        return
+    
+    # Set broadcast state
+    context.user_data['broadcasting'] = True
+    context.user_data['broadcast_step'] = 'waiting_for_content'
+    
+    # Show broadcast options
+    keyboard = [
+        [
+            InlineKeyboardButton("📝 Text Broadcast", callback_data='broadcast_text'),
+            InlineKeyboardButton("🖼️ Photo Broadcast", callback_data='broadcast_photo')
+        ],
+        [
+            InlineKeyboardButton("🎵 Voice Broadcast", callback_data='broadcast_voice'),
+            InlineKeyboardButton("📎 Other Media", callback_data='broadcast_other')
+        ],
+        [
+            InlineKeyboardButton("❌ Cancel", callback_data='admin_panel')
+        ]
+    ]
+    
+    text = (
+        "📢 *Send Broadcast Message*\n\n"
+        "Choose the type of broadcast you want to send:\n\n"
+        "📝 *Text* - Send a text message to all users\n"
+        "🖼️ *Photo* - Send a photo with caption\n"
+        "🎵 *Voice* - Send a voice message\n"
+        "📎 *Other* - Send other media types\n\n"
+        "_All users will receive this message._"
+    )
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def handle_broadcast_type(update: Update, context: ContextTypes.DEFAULT_TYPE, broadcast_type: str):
+    """Handle broadcast type selection"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = str(query.from_user.id)
+    
+    # Verify admin permissions
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']:
+        await query.answer("❌ You don't have permission to access this.", show_alert=True)
+        return
+    
+    # Set broadcast type
+    context.user_data['broadcast_type'] = broadcast_type
+    context.user_data['broadcast_step'] = 'waiting_for_content'
+    
+    # Ask for content based on type
+    if broadcast_type == 'text':
+        prompt = "✍️ *Please type your broadcast message:*\n\nYou can use markdown formatting."
+    elif broadcast_type == 'photo':
+        prompt = "🖼️ *Please send a photo with caption:*\n\nSend a photo and add a caption (optional)."
+    elif broadcast_type == 'voice':
+        prompt = "🎵 *Please send a voice message:*\n\nSend a voice message with optional caption."
+    else:  # other
+        prompt = "📎 *Please send your media:*\n\nYou can send any media type (photo, video, document, etc.) with optional caption."
+    
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data='admin_panel')]]
+    
+    await query.edit_message_text(
+        prompt,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show broadcast confirmation with preview"""
+    # Check if this is a callback query or regular message
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        message = query.message
+        user_id = str(query.from_user.id)
+        is_callback = True
+    else:
+        # Handle case when called from handle_message
+        message = update.message
+        user_id = str(update.effective_user.id)
+        is_callback = False
+    
+    broadcast_data = context.user_data.get('broadcast_data', {})
+    
+    if not broadcast_data:
+        if is_callback:
+            await update.callback_query.answer("❌ No broadcast data found.", show_alert=True)
+        else:
+            await update.message.reply_text("❌ No broadcast data found.")
+        return
+    
+    # Verify admin permissions
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']:
+        if is_callback:
+            await update.callback_query.answer("❌ You don't have permission to access this.", show_alert=True)
+        else:
+            await update.message.reply_text("❌ You don't have permission to access this.")
+        return
+    
+    # Get user count for confirmation
+    total_users = db_fetch_one("SELECT COUNT(*) as count FROM users")
+    users_count = total_users['count'] if total_users else 0
+    
+    text = (
+        f"📢 *Broadcast Confirmation*\n\n"
+        f"📊 *Recipients:* {users_count} users\n"
+        f"📋 *Type:* {broadcast_data.get('type', 'text').title()}\n\n"
+        f"📝 *Preview:*\n"
+    )
+    
+    # Add content preview
+    content = broadcast_data.get('content', '') or broadcast_data.get('caption', '')
+    if content:
+        if len(content) > 200:
+            preview = content[:197] + "..."
+        else:
+            preview = content
+        text += f"{preview}\n\n"
+    
+    text += "_Are you sure you want to send this broadcast to all users?_"
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Send Broadcast", callback_data='execute_broadcast'),
+            InlineKeyboardButton("✏️ Edit", callback_data='admin_broadcast')
+        ],
+        [
+            InlineKeyboardButton("❌ Cancel", callback_data='admin_panel')
+        ]
+    ]
+    
+    if is_callback:
+        await update.callback_query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+async def execute_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Execute the broadcast to all users"""
+    # Check if this is a callback query
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        status_message = query.message
+    else:
+        # This shouldn't happen from messages, but handle it
+        await update.message.reply_text("❌ This action can only be triggered from the confirmation menu.")
+        return
+    
+    user_id = str(update.effective_user.id)
+    broadcast_data = context.user_data.get('broadcast_data', {})
+    
+    if not broadcast_data:
+        await query.answer("❌ No broadcast data found.", show_alert=True)
+        return
+    
+    # Show processing message
+    status_message = await query.edit_message_text(
+        "📤 *Starting Broadcast...*\n\nPreparing to send to all users...",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    # Get all users (exclude the sender)
+    all_users = db_fetch_all("SELECT user_id FROM users WHERE user_id != %s", (user_id,))
+    total_users = len(all_users)
+    
+    if total_users == 0:
+        await status_message.edit_text(
+            "❌ No users to broadcast to.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    # Track statistics
+    success_count = 0
+    failed_count = 0
+    blocked_count = 0
+    
+    # Prepare message based on type
+    message_type = broadcast_data.get('type', 'text')
+    content = broadcast_data.get('content', '')
+    media_id = broadcast_data.get('media_id')
+    caption = broadcast_data.get('caption', '')
+    
+    # Send to users in batches
+    batch_size = 30  # Telegram rate limit
+    
+    for i, user in enumerate(all_users):
+        try:
+            # Update progress every batch
+            if i % batch_size == 0:
+                current_batch = i // batch_size + 1
+                total_batches = (total_users + batch_size - 1) // batch_size
+                progress = int((i / total_users) * 100)
+                
+                await status_message.edit_text(
+                    f"📤 *Broadcasting...*\n\n"
+                    f"📊 Progress: {progress}%\n"
+                    f"✅ Sent: {success_count}\n"
+                    f"❌ Failed: {failed_count}\n"
+                    f"⏸️ Blocked: {blocked_count}\n"
+                    f"🎯 Batch: {current_batch}/{total_batches}\n\n"
+                    f"_Please wait..._",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            
+            # Send based on message type
+            if message_type == 'text':
+                await context.bot.send_message(
+                    chat_id=user['user_id'],
+                    text=content,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+            elif message_type == 'photo' and media_id:
+                await context.bot.send_photo(
+                    chat_id=user['user_id'],
+                    photo=media_id,
+                    caption=caption,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+            elif message_type == 'voice' and media_id:
+                await context.bot.send_voice(
+                    chat_id=user['user_id'],
+                    voice=media_id,
+                    caption=caption,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+            elif message_type == 'document' and media_id:
+                await context.bot.send_document(
+                    chat_id=user['user_id'],
+                    document=media_id,
+                    caption=caption,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+            elif message_type == 'video' and media_id:
+                await context.bot.send_video(
+                    chat_id=user['user_id'],
+                    video=media_id,
+                    caption=caption,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            
+            success_count += 1
+            
+            # Small delay to respect rate limits
+            if i % 10 == 0:
+                await asyncio.sleep(0.1)
+                
+        except BadRequest as e:
+            if "blocked" in str(e).lower() or "Forbidden" in str(e):
+                blocked_count += 1
+            else:
+                failed_count += 1
+                logger.error(f"Failed to send broadcast to {user['user_id']}: {e}")
+        except Exception as e:
+            failed_count += 1
+            logger.error(f"Failed to send broadcast to {user['user_id']}: {e}")
+    
+    # Broadcast complete
+    completion_time = datetime.now().strftime("%H:%M:%S")
+    
+    # Clean up
+    if 'broadcasting' in context.user_data:
+        del context.user_data['broadcasting']
+    if 'broadcast_step' in context.user_data:
+        del context.user_data['broadcast_step']
+    if 'broadcast_type' in context.user_data:
+        del context.user_data['broadcast_type']
+    if 'broadcast_data' in context.user_data:
+        del context.user_data['broadcast_data']
+    
+    # Show final report
+    report_text = (
+        f"✅ *Broadcast Complete!*\n\n"
+        f"📅 Completed: {completion_time}\n"
+        f"👥 Total Users: {total_users}\n"
+        f"✅ Successfully Sent: {success_count}\n"
+        f"❌ Failed: {failed_count}\n"
+        f"⏸️ Blocked/Inactive: {blocked_count}\n"
+        f"📈 Success Rate: {((success_count / total_users) * 100):.1f}%\n\n"
+        f"🎯 _Broadcast delivered to {success_count} active users._"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("📊 Send Another", callback_data='admin_broadcast')],
+        [InlineKeyboardButton("🛠️ Admin Panel", callback_data='admin_panel')],
+        [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
+    ]
+    
+    await status_message.edit_text(
+        report_text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
+async def advanced_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Advanced broadcast with targeting options"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = str(query.from_user.id)
+    
+    # Verify admin permissions
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']:
+        await query.answer("❌ You don't have permission to access this.", show_alert=True)
+        return
+    
+    # Get user statistics for targeting
+    total_users = db_fetch_one("SELECT COUNT(*) as count FROM users")
+    active_users = db_fetch_one('''
+        SELECT COUNT(DISTINCT user_id) as count 
+        FROM (
+            SELECT author_id as user_id FROM posts WHERE DATE(timestamp) >= CURRENT_DATE - INTERVAL '7 days'
+            UNION 
+            SELECT author_id as user_id FROM comments WHERE DATE(timestamp) >= CURRENT_DATE - INTERVAL '7 days'
+        ) AS active_users
+    ''')
+    
+    text = (
+        "🎯 *Advanced Broadcast*\n\n"
+        f"📊 *User Statistics:*\n"
+        f"• Total Users: {total_users['count'] if total_users else 0}\n"
+        f"• Active (7 days): {active_users['count'] if active_users else 0}\n\n"
+        "*Select targeting options:*"
+    )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("🌍 All Users", callback_data='target_all'),
+            InlineKeyboardButton("🎯 Active Users", callback_data='target_active')
+        ],
+        [
+            InlineKeyboardButton("👤 Specific User", callback_data='target_specific'),
+            InlineKeyboardButton("🏷️ By Category", callback_data='target_category')
+        ],
+        [
+            InlineKeyboardButton("📝 Text Only", callback_data='broadcast_text'),
+            InlineKeyboardButton("🖼️ With Media", callback_data='broadcast_photo')
+        ],
+        [
+            InlineKeyboardButton("🔙 Simple Broadcast", callback_data='admin_broadcast'),
+            InlineKeyboardButton("❌ Cancel", callback_data='admin_panel')
+        ]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
 async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
@@ -853,7 +1585,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.callback_query.message.reply_text("❌ You don't have permission to access this.")
         return
     
-    # Get pending posts
+    # Get pending posts (simplified - no JOIN with pending_notifications)
     posts = db_fetch_all("""
         SELECT p.post_id, p.content, p.category, u.anonymous_name, p.media_type, p.media_id
         FROM posts p
@@ -1050,7 +1782,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
                 f"✅ Post approved and published!\n\n{post['content'][:100]}...",
                 parse_mode=ParseMode.MARKDOWN
             )
-        
+        db_execute("DELETE FROM pending_notifications WHERE post_id = %s", (post_id,))
     except Exception as e:
         logger.error(f"Error approving post: {e}")
         try:
@@ -1164,7 +1896,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await update.message.reply_text(
                     f"{preview_text}\n\n✍️ Please type your comment:",
-                    reply_markup=ForceReply(selective=True),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                    ]),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
                 return
@@ -2644,11 +3378,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "UPDATE users SET waiting_for_post = TRUE, selected_category = %s WHERE user_id = %s",
                 (category, user_id)
             )
-
+        
             await query.message.reply_text(
                 f"✍️ *Please type your thought for #{category}:*\n\nYou may also send a photo or voice message.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=ForceReply(selective=True))
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                ])
+            )
         
         elif query.data == 'menu':
             keyboard = [
@@ -2676,7 +3413,45 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "📱 *Main Menu*\nChoose an option below:",
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode=ParseMode.MARKDOWN
-                )    
+                )
+
+        # Handle cancel input button
+        elif query.data == 'cancel_input':
+            # Reset all waiting states
+            reset_user_waiting_states(user_id)
+            
+            # Clear any context data
+            if 'editing_comment' in context.user_data:
+                del context.user_data['editing_comment']
+            if 'editing_post' in context.user_data:
+                del context.user_data['editing_post']
+            if 'thread_from_post_id' in context.user_data:
+                del context.user_data['thread_from_post_id']
+            
+            # Send confirmation and main menu
+            await query.answer("❌ Input cancelled", show_alert=False)
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("📱 Main Menu", callback_data='menu'),
+                    InlineKeyboardButton("👤 Profile", callback_data='profile')
+                ]
+            ]
+            
+            try:
+                await query.message.edit_text(
+                    "❌ *Input cancelled*\n\nWhat would you like to do next?",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except BadRequest:
+                await query.message.reply_text(
+                    "❌ *Input cancelled*\n\nWhat would you like to do next?",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            
+            return  # Important: Return to prevent processing other callbacks
 
         elif query.data == 'profile':
             await send_updated_profile(user_id, query.message.chat.id, context)
@@ -2806,7 +3581,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await query.message.reply_text(
                     f"{preview_text}\n\n✍️ Please type your comment or send a voice message, GIF, or sticker:",
-                    reply_markup=ForceReply(selective=True),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                    ]),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
 
@@ -2975,7 +3752,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['editing_comment'] = comment_id
                 await query.message.reply_text(
                     f"✏️ *Editing your comment:*\n\n{escape_markdown(comment['content'], version=2)}\n\nPlease type your new comment:",
-                    reply_markup=ForceReply(selective=True),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                    ]),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
             else:
@@ -3115,7 +3894,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await query.message.reply_text(
                     f"↩️ *Replying to {target_name}*\n\nPlease type your message:",
-                    reply_markup=ForceReply(selective=True),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                    ]),
                     parse_mode=ParseMode.MARKDOWN
                 )
                 
@@ -3140,7 +3921,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await query.message.reply_text(
                     f"{preview_text}\n\n↩️ Please type your *reply* or send a voice message, GIF, or sticker:",
-                    reply_markup=ForceReply(selective=True),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                    ]),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
                 
@@ -3164,7 +3947,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
                 await query.message.reply_text(
                     f"{preview_text}\n\n↩️ Please type your *reply* or send a voice message, GIF, or sticker:",
-                    reply_markup=ForceReply(selective=True),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                    ]),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
 
@@ -3316,7 +4101,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await query.message.edit_text(
                     f"✏️ *Edit your post:*\n\n{escape_markdown(pending_post['content'], version=2)}\n\nPlease type your edited post:",
-                    reply_markup=ForceReply(selective=True),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                    ]),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
                 return
@@ -3409,7 +4196,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Error in approve_post handler: {e}")
                 await query.answer("❌ Error approving post", show_alert=True)
+        # Admin broadcast handlers
+        elif query.data == 'admin_broadcast':
+            await start_broadcast(update, context)
             
+        elif query.data.startswith('broadcast_'):
+            # Handle broadcast type selection
+            broadcast_type = query.data.split('_', 1)[1]
+            await handle_broadcast_type(update, context, broadcast_type)
+            
+        elif query.data == 'execute_broadcast':
+            await execute_broadcast(update, context)    
+                
         elif query.data.startswith('reject_post_'):
             try:
                 post_id = int(query.data.split('_')[-1])
@@ -3419,8 +4217,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Invalid post ID", show_alert=True)
             except Exception as e:
                 logger.error(f"Error in reject_post handler: {e}")
-                await query.answer("❌ Error rejecting post", show_alert=True)
-            
+                await query.answer("❌ Error rejecting post", show_alert=True)                                  
         
         elif query.data == 'inbox':
             await show_inbox(update, context, 1)
@@ -3490,13 +4287,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await query.message.reply_text(
                 f"✉️ *Composing message to {target_name}*\n\nPlease type your message:",
-                reply_markup=ForceReply(selective=True),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                ]),
                 parse_mode=ParseMode.MARKDOWN
             )
             
         
                     
         # Add this in the button_handler function where you handle other callbacks
+        elif query.data == 'refresh_mini_app':
+            await query.answer("Refreshing...")
+            await mini_app_command(update, context)
         elif query.data.startswith("viewpost_"):
             post_id = int(query.data.split('_')[1])
             await view_post(update, context, post_id)    
@@ -3576,6 +4378,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or update.message.caption or ""
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    # Check if the message is actually a button click (common text from buttons)
+    button_texts = ["🌟 Share My Thoughts", "👤 View Profile", "📚 My Previous Posts", 
+                   "🏆 Leaderboard", "⚙️ Settings", "❓ Help", "❌ Cancel", "cancel"]
+    # Check if user is trying to use menu buttons while in waiting state
+    if user and (user['waiting_for_post'] or user['waiting_for_comment'] or 
+                 user['awaiting_name'] or user['waiting_for_private_message']):
+        
+        # Check if text matches common button texts
+        common_buttons = ["🌟 Share My Thoughts", "👤 View Profile", "📚 My Previous Posts",
+                         "🏆 Leaderboard", "⚙️ Settings", "❓ Help", "Menu", "menu"]
+        
+        if text in common_buttons:
+            # User clicked a menu button while waiting for input
+            reset_user_waiting_states(user_id)
+            await update.message.reply_text(
+                "⚠️ *Cancelled previous input*\n\nWhat would you like to do?",
+                reply_markup=main_menu
+            )
+            return
+    if text in button_texts and user:
+        # User clicked a button while in waiting state - reset state
+        if user['waiting_for_post'] or user['waiting_for_comment'] or user['awaiting_name'] or user['waiting_for_private_message']:
+            reset_user_waiting_states(user_id)
+            await update.message.reply_text(
+                "⚠️ *Input cancelled* (button clicked instead of text)\n\nWhat would you like to do?",
+                reply_markup=main_menu
+            )
+            return
 
     # NEW: Handle comment editing
         # NEW: Handle comment editing
@@ -3638,6 +4468,85 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # FIX: Handle pending post editing (NEW CODE ENDS HERE)
 
     # If user doesn't exist, create them
+        # Handle broadcast messages from admin
+        # Handle broadcast messages from admin
+    if user and user['is_admin'] and context.user_data.get('broadcasting'):
+        broadcast_step = context.user_data.get('broadcast_step')
+        broadcast_type = context.user_data.get('broadcast_type', 'text')
+        # Check for cancel button
+        if text == "❌ Cancel" or text.lower() == "cancel":
+            context.user_data.pop('broadcasting', None)
+            context.user_data.pop('broadcast_step', None)
+            context.user_data.pop('broadcast_type', None)
+            context.user_data.pop('broadcast_data', None)
+            await update.message.reply_text("📢 Broadcast cancelled.", reply_markup=main_menu)
+            return
+        
+        if broadcast_step == 'waiting_for_content':
+            # Store broadcast data
+            broadcast_data = {
+                'type': broadcast_type,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            if update.message.text and broadcast_type == 'text':
+                broadcast_data['content'] = update.message.text
+                context.user_data['broadcast_data'] = broadcast_data
+                # Now call confirm_broadcast with the regular message update
+                await confirm_broadcast(update, context)
+                return
+                
+            elif update.message.photo and broadcast_type == 'photo':
+                photo = update.message.photo[-1]
+                broadcast_data['media_id'] = photo.file_id
+                broadcast_data['caption'] = update.message.caption or ""
+                context.user_data['broadcast_data'] = broadcast_data
+                await confirm_broadcast(update, context)
+                return
+                
+            elif update.message.voice and broadcast_type == 'voice':
+                voice = update.message.voice
+                broadcast_data['media_id'] = voice.file_id
+                broadcast_data['caption'] = update.message.caption or ""
+                context.user_data['broadcast_data'] = broadcast_data
+                await confirm_broadcast(update, context)
+                return
+                
+            elif broadcast_type == 'other':
+                # Handle various media types
+                if update.message.document:
+                    broadcast_data['type'] = 'document'
+                    broadcast_data['media_id'] = update.message.document.file_id
+                    broadcast_data['caption'] = update.message.caption or ""
+                elif update.message.video:
+                    broadcast_data['type'] = 'video'
+                    broadcast_data['media_id'] = update.message.video.file_id
+                    broadcast_data['caption'] = update.message.caption or ""
+                elif update.message.audio:
+                    broadcast_data['type'] = 'audio'
+                    broadcast_data['media_id'] = update.message.audio.file_id
+                    broadcast_data['caption'] = update.message.caption or ""
+                elif update.message.text:
+                    broadcast_data['type'] = 'text'
+                    broadcast_data['content'] = update.message.text
+                else:
+                    await update.message.reply_text(
+                        "❌ Unsupported media type. Please send text, photo, voice, video, or document.",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    return
+                
+                context.user_data['broadcast_data'] = broadcast_data
+                await confirm_broadcast(update, context)
+                return
+                
+            else:
+                # Mismatch between expected and actual content type
+                await update.message.reply_text(
+                    f"❌ Expected {broadcast_type} but received different content. Please try again or cancel.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
     if not user:
         anon = create_anonymous_name(user_id)
         is_admin = str(user_id) == str(ADMIN_ID)
@@ -3677,6 +4586,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_type = 'voice'
                 post_content = update.message.caption or ""
             else:
+                if update.message.text in ["❌ Cancel", "cancel"]:
+                    reset_user_waiting_states(user_id)
+                    await update.message.reply_text("❌ Input cancelled.", reply_markup=main_menu)
+                    return
                 post_content = "(Unsupported content type)"
         except Exception as e:
             logger.error(f"Error reading media: {e}")
@@ -3912,6 +4825,7 @@ from telegram import BotCommand
 async def set_bot_commands(app):
     commands = [
         BotCommand("start", "Start the bot and open the menu"),
+        BotCommand("webapp", "🌐 Open Web App"),
         BotCommand("menu", "📱 Open main menu"),
         BotCommand("profile", "View your profile"),
         BotCommand("ask", "Share your thoughts"),
@@ -3927,6 +4841,49 @@ async def set_bot_commands(app):
     
     await app.bot.set_my_commands(commands)
 
+async def mini_app_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send the mini app link with authentication token"""
+    user_id = str(update.effective_user.id)
+    
+    # Generate a secure JWT token
+    token = jwt.encode(
+        {
+            'user_id': user_id,
+            'exp': datetime.now(timezone.utc) + timedelta(days=30)
+        },
+        TOKEN,
+        algorithm='HS256'
+    )
+    
+    # Create the mini app URL with token
+    render_url = os.getenv('RENDER_URL', 'https://your-render-url.onrender.com')
+    mini_app_url = f"{render_url}/?token={token}"
+    
+    # Create WebApp button
+    web_app_info = WebAppInfo(url=mini_app_url)
+    
+    # Create keyboard
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🌐 Open Web App", web_app=web_app_info)],
+        [InlineKeyboardButton("📱 Open in Browser", url=mini_app_url)],
+        [InlineKeyboardButton("🔄 Refresh Token", callback_data='refresh_mini_app')],
+        [InlineKeyboardButton("🤖 Back to Bot", callback_data='menu')]
+    ])
+    
+    await update.message.reply_text(
+        "🌐 *Christian Vent Web App*\n\n"
+        "Click the button below to open our web interface.\n\n"
+        "📋 *Features:*\n"
+        "• Share anonymous vents\n"
+        "• View community posts\n"
+        "• See the leaderboard\n"
+        "• Manage your profile\n\n"
+        "🔒 *Secure Access:*\n"
+        "Your token is valid for 30 days.\n\n"
+        "_Note: Always use this link from the bot to stay authenticated._",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN
+    )
 def main():
     # Initialize database before starting the bot
     try:
@@ -3936,9 +4893,13 @@ def main():
         logger.error(f"Failed to initialize database: {e}")
         return
     
+    # Create and run Telegram bot
     app = Application.builder().token(TOKEN).post_init(set_bot_commands).build()
+    
+    # Add your handlers
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("webapp", mini_app_command))
     app.add_handler(CommandHandler("leaderboard", show_leaderboard))
     app.add_handler(CommandHandler("settings", show_settings))
     app.add_handler(CommandHandler("admin", admin_panel))
@@ -3946,13 +4907,1411 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_message_text))
-
-
+    
     app.add_error_handler(error_handler)
     
+    
+    
+    # Start Flask server in a separate thread for Render
+    port = int(os.environ.get('PORT', 5000))
+    threading.Thread(
+        target=lambda: flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False),
+        daemon=True
+    ).start()
+    
+    logger.info(f"✅ Flask health check server started on port {port}")
+    
     # Start polling
-    app.run_polling() 
+    logger.info("Starting bot polling...")
+    app.run_polling()
 
+# In bot.py, replace the simple /mini_app route with this:
+
+@flask_app.route('/mini_app')
+def mini_app_page():
+    """Complete Mini App served from the bot service"""
+    bot_username = BOT_USERNAME
+    app_name = "Christian Vent"
+    
+    # Build the HTML for the mini app - FIXED VERSION
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{app_name} - Mini App</title>
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #272F32;
+            color: #E0E0E0;
+            min-height: 100vh;
+            padding: 0;
+        }}
+        
+        h1, h2, h3, h4, h5, h6 {{
+            font-family: 'Oswald', sans-serif;
+            font-weight: 600;
+        }}
+        
+        .app-container {{
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            min-height: 100vh;
+        }}
+        
+        /* Header */
+                /* Header */
+        .app-header {{
+            text-align: center;
+            padding: 20px 0;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #3A4A50;
+        }}
+        
+        .app-header .brand {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }}
+        
+        .app-header .logo {{
+            width: 80px;
+            height: 80px;
+            object-fit: contain;
+            border-radius: 50%;
+            border: 2px solid #BF970B;
+            background: #2E3A40;
+            padding: 5px;
+        }}
+        
+        .app-title {{
+            color: #BF970B;
+            font-size: 2.2rem;
+            margin: 0;
+            font-weight: 700;
+            letter-spacing: 1px;
+            font-family: 'Oswald', sans-serif;
+            text-transform: uppercase;
+        }}
+        
+        .app-subtitle {{
+            opacity: 0.8;
+            margin-top: 8px;
+            font-size: 0.95rem;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }}
+        
+        /* Tabs */
+        .tab-navigation {{
+            display: flex;
+            background: #2E3A40;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            overflow: hidden;
+            border: 1px solid #3A4A50;
+        }}
+        
+        .tab-btn {{
+            flex: 1;
+            padding: 15px;
+            background: none;
+            border: none;
+            color: #E0E0E0;
+            cursor: pointer;
+            transition: all 0.3s;
+            opacity: 0.7;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }}
+        
+        .tab-btn:hover {{
+            opacity: 1;
+            background: rgba(191, 151, 11, 0.1);
+        }}
+        
+        .tab-btn.active {{
+            opacity: 1;
+            color: #BF970B;
+            background: rgba(191, 151, 11, 0.1);
+        }}
+        
+        /* Tab Content */
+        .tab-content {{
+            margin-top: 10px;
+        }}
+        
+        .tab-pane {{
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }}
+        
+        .tab-pane.active {{
+            display: block;
+        }}
+        
+        @keyframes fadeIn {{
+            from {{ opacity: 0; transform: translateY(10px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        
+        /* Vent Form */
+        .vent-form-container {{
+            background: #2E3A40;
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid #3A4A50;
+            margin-bottom: 25px;
+        }}
+        
+        .form-title {{
+            color: #BF970B;
+            margin-bottom: 10px;
+            font-weight: 600;
+            font-family: 'Oswald', sans-serif;
+            font-size: 1.4rem;
+            text-transform: uppercase;
+        }}
+        
+        .form-description {{
+            opacity: 0.8;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }}
+        
+        .category-select {{
+            width: 100%;
+            padding: 12px 15px;
+            background: #272F32;
+            border: 1px solid #3A4A50;
+            color: #E0E0E0;
+            border-radius: 8px;
+            font-size: 1rem;
+            margin-bottom: 20px;
+            cursor: pointer;
+        }}
+        
+        .category-select:focus {{
+            outline: none;
+            border-color: #BF970B;
+        }}
+        
+        .vent-textarea {{
+            width: 100%;
+            min-height: 150px;
+            padding: 15px;
+            background: #272F32;
+            border: 1px solid #3A4A50;
+            color: #E0E0E0;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-family: inherit;
+            line-height: 1.6;
+            resize: vertical;
+            margin-bottom: 10px;
+        }}
+        
+        .vent-textarea:focus {{
+            outline: none;
+            border-color: #BF970B;
+            box-shadow: 0 0 0 2px rgba(191, 151, 11, 0.2);
+        }}
+        
+        .textarea-footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }}
+        
+        .privacy-note {{
+            color: #BF970B;
+            font-size: 0.85rem;
+        }}
+        
+        .submit-btn {{
+            width: 100%;
+            padding: 15px;
+            background: #BF970B;
+            color: #272F32;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        
+        .submit-btn:hover {{
+            background: #d4a90f;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(191, 151, 11, 0.3);
+        }}
+        
+        .submit-btn:disabled {{
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }}
+        
+        .form-note {{
+            text-align: center;
+            margin-top: 15px;
+            font-size: 0.9rem;
+            opacity: 0.7;
+        }}
+        
+        /* Posts Section */
+        .posts-container {{
+            margin-top: 10px;
+        }}
+        
+        .section-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }}
+        
+        .section-title {{
+            color: #BF970B;
+            font-weight: 600;
+            margin: 0;
+            font-family: 'Oswald', sans-serif;
+            font-size: 1.3rem;
+            text-transform: uppercase;
+        }}
+        
+        .refresh-btn {{
+            background: #3A4A50;
+            border: 1px solid #3A4A50;
+            color: #E0E0E0;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s;
+        }}
+        
+        .refresh-btn:hover {{
+            background: #BF970B;
+            color: #272F32;
+        }}
+        
+        /* Post Cards */
+        .post-card {{
+            background: #2E3A40;
+            border: 1px solid #3A4A50;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            transition: all 0.3s;
+            cursor: pointer;
+        }}
+        
+        .post-card:hover {{
+            border-color: #BF970B;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+        }}
+        
+        .post-header {{
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }}
+        
+        .author-avatar {{
+            width: 40px;
+            height: 40px;
+            background: rgba(191, 151, 11, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #BF970B;
+            font-weight: bold;
+            margin-right: 12px;
+        }}
+        
+        .author-info h4 {{
+            font-size: 1rem;
+            font-weight: 500;
+            margin: 0 0 5px 0;
+            font-family: 'Oswald', sans-serif;
+        }}
+        
+        .post-meta {{
+            font-size: 0.85rem;
+            opacity: 0.8;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        
+        .post-category {{
+            display: inline-block;
+            background: rgba(191, 151, 11, 0.1);
+            color: #BF970B;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+        }}
+        
+        .post-content {{
+            margin: 15px 0;
+            line-height: 1.7;
+            font-size: 1rem;
+        }}
+        
+        .post-footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #3A4A50;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }}
+        
+        /* Leaderboard */
+        .leaderboard-container {{
+            background: #2E3A40;
+            border-radius: 12px;
+            border: 1px solid #3A4A50;
+            overflow: hidden;
+        }}
+        
+        .leaderboard-item {{
+            display: flex;
+            align-items: center;
+            padding: 15px 20px;
+            border-bottom: 1px solid #3A4A50;
+            transition: background 0.3s;
+        }}
+        
+        .leaderboard-item:last-child {{
+            border-bottom: none;
+        }}
+        
+        .leaderboard-item:hover {{
+            background: rgba(191, 151, 11, 0.05);
+        }}
+        
+        .leaderboard-rank {{
+            width: 40px;
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #BF970B;
+        }}
+        
+        .rank-1 {{ color: gold; }}
+        .rank-2 {{ color: silver; }}
+        .rank-3 {{ color: #cd7f32; }}
+        
+        .leaderboard-user {{
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }}
+        
+        .user-avatar-small {{
+            width: 40px;
+            height: 40px;
+            background: rgba(191, 151, 11, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #BF970B;
+        }}
+        
+        .user-info-small h4 {{
+            font-size: 1rem;
+            font-weight: 500;
+            margin: 0 0 4px 0;
+            font-family: 'Oswald', sans-serif;
+        }}
+        
+        .user-info-small p {{
+            font-size: 0.85rem;
+            opacity: 0.7;
+            margin: 0;
+        }}
+        
+        .leaderboard-points {{
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #BF970B;
+        }}
+        
+        /* Profile */
+        .profile-container {{
+            background: #2E3A40;
+            border-radius: 12px;
+            border: 1px solid #3A4A50;
+            padding: 25px;
+        }}
+        
+        .profile-header {{
+            text-align: center;
+            margin-bottom: 25px;
+        }}
+        
+        .profile-avatar {{
+            width: 100px;
+            height: 100px;
+            background: rgba(191, 151, 11, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            color: #BF970B;
+            margin: 0 auto 15px;
+        }}
+        
+        .profile-header h2 {{
+            font-size: 1.8rem;
+            margin: 0 0 10px 0;
+            font-family: 'Oswald', sans-serif;
+            font-weight: 600;
+        }}
+        
+        .profile-rating {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(191, 151, 11, 0.1);
+            padding: 8px 16px;
+            border-radius: 20px;
+            margin-top: 10px;
+        }}
+        
+        /* Footer */
+        .app-footer {{
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #3A4A50;
+            text-align: center;
+            font-size: 0.9rem;
+            opacity: 0.7;
+        }}
+        
+        .telegram-link {{
+            color: #BF970B;
+            text-decoration: none;
+        }}
+        
+        .telegram-link:hover {{
+            text-decoration: underline;
+        }}
+        
+        /* Messages */
+        .message {{
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            text-align: center;
+            animation: slideIn 0.3s ease;
+        }}
+        
+        .error-message {{
+            background: rgba(255, 0, 0, 0.1);
+            border: 1px solid rgba(255, 0, 0, 0.3);
+            color: #ff6b6b;
+        }}
+        
+        .success-message {{
+            background: rgba(0, 255, 0, 0.1);
+            border: 1px solid rgba(0, 255, 0, 0.3);
+            color: #51cf66;
+        }}
+        
+        @keyframes slideIn {{
+            from {{ opacity: 0; transform: translateY(-10px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        
+        /* Loading */
+        .loading {{
+            text-align: center;
+            padding: 40px;
+            color: #BF970B;
+        }}
+        
+        /* Empty States */
+        .empty-state {{
+            text-align: center;
+            padding: 40px;
+            opacity: 0.7;
+        }}
+        
+        /* Responsive */
+        @media (max-width: 768px) {{
+            .app-container {{
+                padding: 15px;
+            }}
+            
+            .app-title {{
+                font-size: 1.5rem;
+            }}
+            
+            .tab-btn {{
+                padding: 12px;
+                font-size: 0.85rem;
+            }}
+            
+            .vent-form-container {{
+                padding: 20px;
+            }}
+            
+            .post-card {{
+                padding: 15px;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="app-container" id="appContainer">
+        <!-- Header -->
+                <!-- Header -->
+                <header class="app-header">
+                    <div class="brand">
+                        <img src="/static/images/vent%20logo.jpg" class="logo" alt="Christian Vent Logo">
+                        <h1 class="app-title"> {app_name}</h1>
+                    </div>
+                    <p class="app-subtitle">A safe space for Christian anonymous venting</p>
+            <div id="userInfo" class="user-info" style="margin-top: 15px; display: none;">
+                <!-- User info will be loaded here -->
+            </div>
+        </header>
+        
+        <!-- Navigation Tabs -->
+        <nav class="tab-navigation">
+            <button class="tab-btn active" data-tab="vent">✍️ Vent</button>
+            <button class="tab-btn" data-tab="posts">📖 Feed</button>
+            <button class="tab-btn" data-tab="leaderboard">🏆 Leaderboard</button>
+            <button class="tab-btn" data-tab="profile">👤 Profile</button>
+            <button class="tab-btn" data-tab="admin" id="adminTab" style="display: none;">🛠 Admin</button>
+        </nav>
+        
+        <!-- Tab Content -->
+        <div class="tab-content">
+            <!-- Vent Tab -->
+            <div id="vent-tab" class="tab-pane active">
+                <div class="vent-form-container">
+                    <h2 class="form-title">Share Your Burden</h2>
+                    <p class="form-description">You are anonymous here. Share what's on your heart without fear.</p>
+                    
+                    <select class="category-select" id="categorySelect">
+                        <option value="PrayForMe">🙏 Pray For Me</option>
+                        <option value="Bible">📖 Bible Study</option>
+                        <option value="WorkLife">💼 Work and Life</option>
+                        <option value="SpiritualLife">🕊️ Spiritual Life</option>
+                        <option value="ChristianChallenges">⚔️ Christian Challenges</option>
+                        <option value="Relationship">❤️ Relationship</option>
+                        <option value="Marriage">💍 Marriage</option>
+                        <option value="Youth">👥 Youth</option>
+                        <option value="Finance">💰 Finance</option>
+                        <option value="Other" selected>📝 Other</option>
+                    </select>
+                    
+                    <textarea 
+                        class="vent-textarea" 
+                        id="ventText" 
+                        placeholder="What's on your heart? Share your thoughts, prayers, or struggles..."
+                        maxlength="5000"
+                    ></textarea>
+                    
+                    <div class="textarea-footer">
+                        <span id="charCount">0/5000 characters</span>
+                        <span class="privacy-note">Your identity is protected</span>
+                    </div>
+                    
+                    <button class="submit-btn" id="submitVent">
+                        Post Anonymously
+                    </button>
+                    
+                    <p class="form-note">Posts are reviewed before appearing in the feed</p>
+                </div>
+            </div>
+            
+            <!-- Posts Tab -->
+            <div id="posts-tab" class="tab-pane">
+                <div class="section-header">
+                    <h2 class="section-title">Recent Vents</h2>
+                    <button class="refresh-btn" id="refreshPosts">Refresh</button>
+                </div>
+                <div class="posts-container" id="postsContainer">
+                    <div class="loading">Loading community posts...</div>
+                </div>
+            </div>
+            
+            <!-- Leaderboard Tab -->
+            <div id="leaderboard-tab" class="tab-pane">
+                <div class="section-header">
+                    <h2 class="section-title">Top Contributors</h2>
+                    <button class="refresh-btn" id="refreshLeaderboard">Refresh</button>
+                </div>
+                <div class="leaderboard-container" id="leaderboardContainer">
+                    <div class="loading">Loading leaderboard...</div>
+                </div>
+            </div>
+            
+            <!-- Profile Tab -->
+            <div id="profile-tab" class="tab-pane">
+                <div class="profile-container" id="profileContainer">
+                    <div class="loading">Loading your profile...</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>
+                Connect with our community on Telegram: 
+                <a href="https://t.me/{bot_username}" class="telegram-link" target="_blank">
+                    @{bot_username}
+                </a>
+            </p>
+            <p style="margin-top: 10px; font-size: 0.85rem;">
+                This is the Christian Vent Mini App. Your identity is protected.
+            </p>
+        </footer>
+    </div>
+    
+    <script>
+        // Christian Vent Mini App - Main JavaScript
+        class ChristianVentApp {{
+            constructor() {{
+                this.user = null;
+                this.token = null;
+                this.userId = null;
+                this.botUsername = "{bot_username}";
+                this.apiBaseUrl = window.location.origin;
+                this.isAdmin = false;
+                this.init();
+            }}
+            
+            async init() {{
+                this.setupEventListeners();
+                
+                // Get token from URL
+                const urlParams = new URLSearchParams(window.location.search);
+                this.token = urlParams.get('token');
+                
+                if (!this.token) {{
+                    this.showMessage('❌ Authentication required. Please use the /webapp command in the Telegram bot.', 'error');
+                    setTimeout(() => {{
+                        window.location.href = '/login';
+                    }}, 3000);
+                    return;
+                }}
+                
+                // Verify token
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/verify-token/${{this.token}}`);
+                    const data = await response.json();
+                    
+                    if (!data.success) {{
+                        this.showMessage('❌ Session expired. Please get a new link from the Telegram bot.', 'error');
+                        setTimeout(() => {{
+                            window.location.href = '/login';
+                        }}, 3000);
+                        return;
+                    }}
+                    
+                    this.userId = data.user_id;
+                    await this.loadUserData();
+                    
+                }} catch (error) {{
+                    console.error('Error verifying token:', error);
+                    this.showMessage('❌ Authentication error. Please try again.', 'error');
+                    setTimeout(() => {{
+                        window.location.href = '/login';
+                    }}, 3000);
+                    return;
+                }}
+                
+                // Load initial data
+                await this.loadPosts();
+                await this.loadLeaderboard();
+            }}
+            
+            async loadUserData() {{
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/profile/${{this.userId}}`);
+                    const data = await response.json();
+                    if (data.success) {{
+                        this.user = data.data;
+                    }}
+                }} catch (error) {{
+                    console.error('Error loading user data:', error);
+                }}
+            }}
+            
+            setupEventListeners() {{
+                // Tab switching
+                document.querySelectorAll('.tab-btn').forEach(btn => {{
+                    btn.addEventListener('click', (e) => {{
+                        const tab = e.target.dataset.tab;
+                        this.switchTab(tab);
+                    }});
+                }});
+                
+                // Character counter
+                const ventText = document.getElementById('ventText');
+                const charCount = document.getElementById('charCount');
+                if (ventText && charCount) {{
+                    ventText.addEventListener('input', () => {{
+                        charCount.textContent = `${{ventText.value.length}}/5000 characters`;
+                    }});
+                }}
+                
+                // Submit vent
+                const submitBtn = document.getElementById('submitVent');
+                if (submitBtn) {{
+                    submitBtn.addEventListener('click', () => this.submitVent());
+                }}
+                
+                // Refresh buttons
+                document.getElementById('refreshPosts')?.addEventListener('click', () => this.loadPosts());
+                document.getElementById('refreshLeaderboard')?.addEventListener('click', () => this.loadLeaderboard());
+            }}
+            
+            switchTab(tabName) {{
+                // Update active tab button
+                document.querySelectorAll('.tab-btn').forEach(btn => {{
+                    btn.classList.toggle('active', btn.dataset.tab === tabName);
+                }});
+                
+                // Update active tab pane
+                document.querySelectorAll('.tab-pane').forEach(pane => {{
+                    pane.classList.toggle('active', pane.id === `${{tabName}}-tab`);
+                }});
+                
+                // Load data for the tab if needed
+                if (tabName === 'profile' && this.userId) {{
+                    this.loadProfile(this.userId);
+                }}
+            }}
+            
+            async loadPosts() {{
+                const container = document.getElementById('postsContainer');
+                if (!container) return;
+                
+                container.innerHTML = '<div class="loading">Loading community posts...</div>';
+                
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/get-posts?page=1&per_page=10`);
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        this.renderPosts(data.data);
+                    }} else {{
+                        container.innerHTML = `
+                            <div class="error-message">
+                                Failed to load posts: ${{data.error || 'Unknown error'}}
+                            </div>
+                        `;
+                    }}
+                }} catch (error) {{
+                    console.error('Error loading posts:', error);
+                    container.innerHTML = `
+                        <div class="error-message">
+                            Network error. Please check your connection.
+                        </div>
+                    `;
+                }}
+            }}
+            
+            renderPosts(posts) {{
+                const container = document.getElementById('postsContainer');
+                if (!container) return;
+                
+                if (!posts || posts.length === 0) {{
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <h3 style="color: #BF970B;">No posts yet</h3>
+                            <p style="opacity: 0.8; margin-bottom: 20px;">Be the first to share what's on your heart</p>
+                            <button onclick="app.switchTab('vent')" 
+                                    style="background: #BF970B; color: #272F32; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer;">
+                                Share Your First Vent
+                            </button>
+                        </div>
+                    `;
+                    return;
+                }}
+                
+                container.innerHTML = posts.map(post => `
+                    <div class="post-card">
+                        <div class="post-header">
+                            <div class="author-avatar">
+                                ${{post.author.sex || '👤'}}
+                            </div>
+                            <div class="author-info">
+                                <h4>${{post.author.name}}</h4>
+                                <div class="post-meta">
+                                    <span class="post-category">${{post.category}}</span>
+                                    <span>•</span>
+                                    <span>${{post.time_ago}}</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="post-content">
+                            ${{this.escapeHtml(post.content)}}
+                        </div>
+                        
+                        <div class="post-footer">
+                            <div class="comment-count">
+                                💬 ${{post.comments}} comment${{post.comments !== 1 ? 's' : ''}}
+                            </div>
+                            <button onclick="window.open('https://t.me/${{this.botUsername}}?start=comments_${{post.id}}', '_blank')" 
+                                    style="background: transparent; color: #BF970B; border: 1px solid #BF970B; padding: 5px 15px; border-radius: 5px; font-size: 0.9rem; cursor: pointer;">
+                                View in Bot
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            }}
+            
+            async loadLeaderboard() {{
+                const container = document.getElementById('leaderboardContainer');
+                if (!container) return;
+                
+                container.innerHTML = '<div class="loading">Loading leaderboard...</div>';
+                
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/leaderboard`);
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        this.renderLeaderboard(data.data);
+                    }} else {{
+                        container.innerHTML = '<div class="error-message">Failed to load leaderboard</div>';
+                    }}
+                }} catch (error) {{
+                    console.error('Error loading leaderboard:', error);
+                    container.innerHTML = '<div class="error-message">Network error</div>';
+                }}
+            }}
+            
+            renderLeaderboard(users) {{
+                const container = document.getElementById('leaderboardContainer');
+                if (!container) return;
+                
+                container.innerHTML = users.map((user, index) => `
+                    <div class="leaderboard-item">
+                        <div class="leaderboard-rank rank-${{index + 1}}">${{index + 1}}</div>
+                        <div class="leaderboard-user">
+                            <div class="user-avatar-small">${{user.sex || '👤'}}</div>
+                            <div class="user-info-small">
+                                <h4>${{user.name}}</h4>
+                                <p>${{user.aura}} Contributor</p>
+                            </div>
+                        </div>
+                        <div class="leaderboard-points">${{user.points}} pts</div>
+                    </div>
+                `).join('');
+            }}
+            
+            async loadProfile(userId) {{
+                const container = document.getElementById('profileContainer');
+                if (!container) return;
+                
+                container.innerHTML = '<div class="loading">Loading profile...</div>';
+                
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/profile/${{userId}}`);
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        const profile = data.data;
+                        container.innerHTML = `
+                            <div class="profile-header">
+                                <div class="profile-avatar">
+                                    ${{profile.sex || '👤'}}
+                                </div>
+                                <h2>${{profile.name}}</h2>
+                                <div class="profile-rating">
+                                    ${{profile.aura}} ${{profile.rating}} points
+                                </div>
+                            </div>
+                            
+                            <div style="background: rgba(191, 151, 11, 0.1); padding: 20px; border-radius: 8px; margin: 20px 0;">
+                                <h4 style="color: #BF970B; margin-bottom: 10px;">Your Statistics</h4>
+                                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center;">
+                                    <div>
+                                        <div style="font-size: 2rem; font-weight: 600; color: #BF970B;">${{profile.stats.posts}}</div>
+                                        <div style="font-size: 0.9rem; opacity: 0.8;">Vents</div>
+                                    </div>
+                                    <div>
+                                        <div style="font-size: 2rem; font-weight: 600; color: #BF970B;">${{profile.stats.comments}}</div>
+                                        <div style="font-size: 0.9rem; opacity: 0.8;">Comments</div>
+                                    </div>
+                                    <div>
+                                        <div style="font-size: 2rem; font-weight: 600; color: #BF970B;">${{profile.stats.followers}}</div>
+                                        <div style="font-size: 0.9rem; opacity: 0.8;">Followers</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }} else {{
+                        container.innerHTML = '<div class="error-message">Failed to load profile</div>';
+                    }}
+                }} catch (error) {{
+                    console.error('Error loading profile:', error);
+                    container.innerHTML = '<div class="error-message">Network error</div>';
+                }}
+            }}
+            
+            async submitVent() {{
+                const ventText = document.getElementById('ventText');
+                const categorySelect = document.getElementById('categorySelect');
+                const submitBtn = document.getElementById('submitVent');
+                
+                if (!ventText || !categorySelect || !submitBtn) return;
+                
+                const content = ventText.value.trim();
+                const category = categorySelect.value;
+                
+                if (!content) {{
+                    this.showMessage('Please write something before posting', 'error');
+                    return;
+                }}
+                
+                if (content.length > 5000) {{
+                    this.showMessage('Text is too long (max 5000 characters)', 'error');
+                    return;
+                }}
+                
+                // Disable button and show loading
+                const originalText = submitBtn.textContent;
+                submitBtn.textContent = 'Posting...';
+                submitBtn.disabled = true;
+                
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/submit-vent`, {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json'
+                        }},
+                        body: JSON.stringify({{
+                            user_id: this.userId,
+                            content: content,
+                            category: category
+                        }})
+                    }});
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        this.showMessage(data.message, 'success');
+                        
+                        // Clear the form
+                        ventText.value = '';
+                        document.getElementById('charCount').textContent = '0/5000 characters';
+                        
+                        // Switch to posts tab after 2 seconds
+                        setTimeout(() => {{
+                            this.switchTab('posts');
+                            this.loadPosts();
+                        }}, 2000);
+                        
+                    }} else {{
+                        this.showMessage(data.error || 'Failed to submit vent', 'error');
+                    }}
+                }} catch (error) {{
+                    console.error('Error submitting vent:', error);
+                    this.showMessage('Network error. Please try again.', 'error');
+                }} finally {{
+                    submitBtn.textContent = originalText;
+                    submitBtn.disabled = false;
+                }}
+            }}
+            
+            showMessage(message, type = 'success') {{
+                // Remove any existing messages
+                const existingMessages = document.querySelectorAll('.message');
+                existingMessages.forEach(msg => msg.remove());
+                
+                // Create new message element
+                const messageEl = document.createElement('div');
+                messageEl.className = `message ${{type === 'error' ? 'error-message' : 'success-message'}}`;
+                messageEl.textContent = message;
+                
+                // Add to top of app container
+                const appContainer = document.getElementById('appContainer');
+                if (appContainer) {{
+                    appContainer.insertBefore(messageEl, appContainer.firstChild);
+                    
+                    // Remove after 5 seconds
+                    setTimeout(() => {{
+                        if (messageEl.parentNode) {{
+                            messageEl.remove();
+                        }}
+                    }}, 5000);
+                }}
+            }}
+            
+            escapeHtml(text) {{
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }}
+        }}
+        
+        // Initialize the app when DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {{
+            window.app = new ChristianVentApp();
+        }});
+    </script>
+</body>
+</html>'''
+    
+    return html
+
+# ==================== MINI APP API ENDPOINTS ====================
+
+# ==================== MINI APP API ENDPOINTS ====================
+
+@flask_app.route('/api/mini-app/submit-vent', methods=['POST'])
+def mini_app_submit_vent():
+    """API endpoint for submitting vents from mini app - SIMPLIFIED"""
+    try:
+        # Get data from request
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        user_id = data.get('user_id')
+        content = data.get('content', '').strip()
+        category = data.get('category', 'Other')
+        
+        if not user_id:
+            return jsonify({'success': False, 'error': 'User ID required'}), 400
+        
+        if not content:
+            return jsonify({'success': False, 'error': 'Content cannot be empty'}), 400
+        
+        # Check if user exists
+        user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        if not user:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        
+        # Insert the post (simple and clean)
+        post_row = db_execute(
+            "INSERT INTO posts (content, author_id, category, media_type, approved) VALUES (%s, %s, %s, 'text', FALSE) RETURNING post_id",
+            (content, user_id, category),
+            fetchone=True
+        )
+        
+        if post_row:
+            post_id = post_row['post_id']
+            
+            # Log it (optional)
+            logger.info(f"📝 Mini App Post submitted: ID {post_id} by {user_id}")
+            
+            return jsonify({
+                'success': True,
+                'message': '✅ Your vent has been submitted for admin approval!',
+                'post_id': post_id
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to create post'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in mini-app submit vent: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Helper function for sync context (since Flask routes can't be async)
+def notify_admin_of_new_post_sync(post_id):
+    """Sync version of notify_admin_of_new_post"""
+    try:
+        if not ADMIN_ID:
+            return
+        
+        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+        if not post:
+            return
+        
+        author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (post['author_id'],))
+        author_name = get_display_name(author)
+        
+        post_preview = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
+        
+        # Create a simple text notification (in real app, you'd send via bot)
+        logger.info(f"🆕 Mini App Post awaiting approval from {author_name}: {post_preview}")
+        
+        # You could also send to a webhook or store in a queue for bot to process
+        # For now, just log it
+        
+    except Exception as e:
+        logger.error(f"Error in sync admin notification: {e}")
+
+@flask_app.route('/api/mini-app/get-posts', methods=['GET'])
+def mini_app_get_posts():
+    """API endpoint for getting posts from mini app"""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 10))
+        offset = (page - 1) * per_page
+        
+        # Get approved posts
+        posts = db_fetch_all('''
+            SELECT 
+                p.post_id,
+                p.content,
+                p.category,
+                p.timestamp,
+                p.comment_count,
+                p.media_type,
+                u.anonymous_name as author_name,
+                u.sex as author_sex
+            FROM posts p
+            JOIN users u ON p.author_id = u.user_id
+            WHERE p.approved = TRUE
+            ORDER BY p.timestamp DESC
+            LIMIT %s OFFSET %s
+        ''', (per_page, offset))
+        
+        # Format posts
+        formatted_posts = []
+        for post in posts:
+            # Format timestamp
+            if isinstance(post['timestamp'], str):
+                post_time = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S')
+            else:
+                post_time = post['timestamp']
+            
+            now = datetime.now()
+            time_diff = now - post_time
+            
+            if time_diff.days > 0:
+                time_ago = f"{time_diff.days}d ago"
+            elif time_diff.seconds > 3600:
+                time_ago = f"{time_diff.seconds // 3600}h ago"
+            elif time_diff.seconds > 60:
+                time_ago = f"{time_diff.seconds // 60}m ago"
+            else:
+                time_ago = "Just now"
+            
+            # Truncate content
+            content_preview = post['content']
+            if len(content_preview) > 300:
+                content_preview = content_preview[:297] + '...'
+            
+            formatted_posts.append({
+                'id': post['post_id'],
+                'content': content_preview,
+                'full_content': post['content'],
+                'category': post['category'],
+                'time_ago': time_ago,
+                'comments': post['comment_count'] or 0,
+                'author': {
+                    'name': post['author_name'],
+                    'sex': post['author_sex']
+                },
+                'has_media': post['media_type'] != 'text'
+            })
+        
+        # Get total count
+        total_posts = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE approved = TRUE")
+        
+        return jsonify({
+            'success': True,
+            'data': formatted_posts,
+            'page': page,
+            'total_posts': total_posts['count'] if total_posts else 0,
+            'has_more': len(posts) == per_page
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in mini-app get posts: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/leaderboard', methods=['GET'])
+def mini_app_leaderboard():
+    """API endpoint for leaderboard data"""
+    try:
+        # Get top 10 users
+        top_users = db_fetch_all('''
+            SELECT 
+                u.user_id,
+                u.anonymous_name,
+                u.sex,
+                (SELECT COUNT(*) FROM posts WHERE author_id = u.user_id AND approved = TRUE) + 
+                (SELECT COUNT(*) FROM comments WHERE author_id = u.user_id) AS total
+            FROM users u
+            ORDER BY total DESC
+            LIMIT 10
+        ''')
+        
+        # Format users
+        formatted_users = []
+        for idx, user in enumerate(top_users, start=1):
+            formatted_users.append({
+                'rank': idx,
+                'name': user['anonymous_name'],
+                'sex': user['sex'],
+                'points': user['total'],
+                'aura': format_aura(user['total'])
+            })
+        
+        return jsonify({
+            'success': True,
+            'data': formatted_users
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in mini-app leaderboard: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/profile/<user_id>', methods=['GET'])
+def mini_app_profile(user_id):
+    """API endpoint for user profile"""
+    try:
+        user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        
+        if not user:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        
+        rating = calculate_user_rating(user_id)
+        
+        followers = db_fetch_one(
+            "SELECT COUNT(*) as count FROM followers WHERE followed_id = %s",
+            (user_id,)
+        )
+        
+        posts = db_fetch_one(
+            "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE",
+            (user_id,)
+        )
+        
+        comments = db_fetch_one(
+            "SELECT COUNT(*) as count FROM comments WHERE author_id = %s",
+            (user_id,)
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'id': user['user_id'],
+                'name': user['anonymous_name'],
+                'sex': user['sex'],
+                'rating': rating,
+                'aura': format_aura(rating),
+                'stats': {
+                    'followers': followers['count'] if followers else 0,
+                    'posts': posts['count'] if posts else 0,
+                    'comments': comments['count'] if comments else 0
+                }
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in mini-app profile: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/admin/pending-posts', methods=['GET'])
+def mini_app_admin_pending_posts():
+    """API endpoint for admin to get pending posts"""
+    try:
+        # Check if admin (you'll need to implement proper authentication)
+        # For now, we'll just return data
+        
+        posts = db_fetch_all('''
+            SELECT 
+                p.post_id,
+                p.content,
+                p.category,
+                p.timestamp,
+                p.media_type,
+                u.anonymous_name as author_name,
+                u.sex as author_sex
+            FROM posts p
+            JOIN users u ON p.author_id = u.user_id
+            WHERE p.approved = FALSE
+            ORDER BY p.timestamp
+        ''')
+        
+        return jsonify({
+            'success': True,
+            'data': posts
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in mini-app admin pending posts: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/admin/approve-post', methods=['POST'])
+def mini_app_admin_approve_post():
+    """API endpoint for admin to approve posts"""
+    try:
+        data = request.get_json()
+        post_id = data.get('post_id')
+        
+        if not post_id:
+            return jsonify({'success': False, 'error': 'Post ID required'}), 400
+        
+        # Update the post to approved
+        success = db_execute(
+            "UPDATE posts SET approved = TRUE WHERE post_id = %s",
+            (post_id,)
+        )
+        
+        if success:
+            return jsonify({'success': True, 'message': 'Post approved'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to approve post'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in mini-app approve post: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/admin/reject-post', methods=['POST'])
+def mini_app_admin_reject_post():
+    """API endpoint for admin to reject posts"""
+    try:
+        data = request.get_json()
+        post_id = data.get('post_id')
+        
+        if not post_id:
+            return jsonify({'success': False, 'error': 'Post ID required'}), 400
+        
+        # Delete the post
+        success = db_execute(
+            "DELETE FROM posts WHERE post_id = %s",
+            (post_id,)
+        )
+        
+        if success:
+            return jsonify({'success': True, 'message': 'Post rejected and deleted'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to reject post'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in mini-app reject post: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 if __name__ == "__main__": 
     # Initialize database first
     try:
