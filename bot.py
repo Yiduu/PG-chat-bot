@@ -5486,7 +5486,6 @@ def mini_app_page():
             .post-card {{
                 padding: 15px;
             }}
-            
         }}
     </style>
 </head>
@@ -6071,13 +6070,13 @@ def notify_admin_of_new_post_sync(post_id):
 
 @flask_app.route('/api/mini-app/get-posts', methods=['GET'])
 def mini_app_get_posts():
-    """API endpoint for getting posts from mini app - SHOW GENDER, HIDE NAME"""
+    """API endpoint for getting posts from mini app"""
     try:
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
         offset = (page - 1) * per_page
         
-        # Get approved posts with gender but not name
+        # Get approved posts
         posts = db_fetch_all('''
             SELECT 
                 p.post_id,
@@ -6086,7 +6085,8 @@ def mini_app_get_posts():
                 p.timestamp,
                 p.comment_count,
                 p.media_type,
-                u.sex as author_sex  # Only get gender, not name
+                u.anonymous_name as author_name,
+                u.sex as author_sex
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             WHERE p.approved = TRUE
@@ -6128,7 +6128,8 @@ def mini_app_get_posts():
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
                 'author': {
-                    'sex': post.get('author_sex', '👤')  # Only gender, no name
+                    'name': post['author_name'],
+                    'sex': post['author_sex']
                 },
                 'has_media': post['media_type'] != 'text'
             })
