@@ -5760,7 +5760,7 @@ def mini_app_page():
                         </div>
                     `;
                     return;
-                }
+                }}
                 
                 container.innerHTML = posts.map(post => `
                     <div class="post-card">
@@ -5794,7 +5794,7 @@ def mini_app_page():
                         </div>
                     </div>
                 `).join('');
-            }
+            }}
             
             async loadLeaderboard() {{
                 const container = document.getElementById('leaderboardContainer');
