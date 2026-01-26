@@ -6076,7 +6076,7 @@ def mini_app_get_posts():
         per_page = int(request.args.get('per_page', 10))
         offset = (page - 1) * per_page
         
-        # Get approved posts
+        # Get approved posts WITHOUT author info
         posts = db_fetch_all('''
             SELECT 
                 p.post_id,
@@ -6084,17 +6084,14 @@ def mini_app_get_posts():
                 p.category,
                 p.timestamp,
                 p.comment_count,
-                p.media_type,
-                u.anonymous_name as author_name,
-                u.sex as author_sex
+                p.media_type
             FROM posts p
-            JOIN users u ON p.author_id = u.user_id
             WHERE p.approved = TRUE
             ORDER BY p.timestamp DESC
             LIMIT %s OFFSET %s
         ''', (per_page, offset))
         
-        # Format posts
+        # Format posts ANONYMOUSLY
         formatted_posts = []
         for post in posts:
             # Format timestamp
@@ -6128,8 +6125,8 @@ def mini_app_get_posts():
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
                 'author': {
-                    'name': post['author_name'],
-                    'sex': post['author_sex']
+                    'name': 'Anonymous',
+                    'sex': '👤'
                 },
                 'has_media': post['media_type'] != 'text'
             })
