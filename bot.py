@@ -6070,13 +6070,13 @@ def notify_admin_of_new_post_sync(post_id):
 
 @flask_app.route('/api/mini-app/get-posts', methods=['GET'])
 def mini_app_get_posts():
-    """API endpoint for getting posts from mini app"""
+    """API endpoint for getting posts from mini app - SHOW SEX ONLY"""
     try:
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
         offset = (page - 1) * per_page
         
-        # Get approved posts WITHOUT author info
+        # Get approved posts WITH sex but WITHOUT name
         posts = db_fetch_all('''
             SELECT 
                 p.post_id,
@@ -6084,14 +6084,16 @@ def mini_app_get_posts():
                 p.category,
                 p.timestamp,
                 p.comment_count,
-                p.media_type
+                p.media_type,
+                u.sex as author_sex
             FROM posts p
+            JOIN users u ON p.author_id = u.user_id
             WHERE p.approved = TRUE
             ORDER BY p.timestamp DESC
             LIMIT %s OFFSET %s
         ''', (per_page, offset))
         
-        # Format posts ANONYMOUSLY
+        # Format posts - ANONYMOUS NAME BUT SHOW SEX
         formatted_posts = []
         for post in posts:
             # Format timestamp
@@ -6125,8 +6127,8 @@ def mini_app_get_posts():
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
                 'author': {
-                    'name': 'Anonymous',
-                    'sex': '👤'
+                    'name': 'Anonymous',  # ANONYMOUS NAME
+                    'sex': post['author_sex'] or '👤'  # SHOW REAL SEX
                 },
                 'has_media': post['media_type'] != 'text'
             })
