@@ -149,16 +149,7 @@ def init_db():
                     target_group TEXT DEFAULT 'all',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-                ''')
-
-                
-                
-                
-                
-                
-        
-    
-        
+                ''')                  
                 async def schedule_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     """Schedule a broadcast for later"""
                     # Similar to execute_broadcast but stores in database
@@ -190,6 +181,16 @@ def init_db():
                 if not c.fetchone():
                     logger.info("Adding missing column: thread_from_post_id to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN thread_from_post_id BIGINT DEFAULT NULL")
+
+                # Check if vent_number column exists, if not add it
+                c.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name='posts' AND column_name='vent_number'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: vent_number to posts table")
+                    c.execute("ALTER TABLE posts ADD COLUMN vent_number INTEGER DEFAULT NULL")
                 
                 # Add other missing columns if needed in the future
                 # Example for future migrations:
@@ -214,6 +215,95 @@ def init_db():
     except Exception as e:
         logging.error(f"Database initialization failed: {e}")
 # ==================== LOADING ANIMATIONS ====================
+def assign_vent_numbers_to_existing_posts():
+    """Assign vent numbers to existing approved posts"""
+    try:
+        # Get all approved posts without vent numbers
+        posts = db_fetch_all(
+            "SELECT post_id FROM posts WHERE approved = TRUE AND vent_number IS NULL ORDER BY timestamp ASC"
+        )
+        
+        if not posts:
+            return
+        
+        # Get current max vent number
+        max_vent = db_fetch_one("SELECT MAX(vent_number) as max_num FROM posts WHERE approved = TRUE")
+        next_vent_number = (max_vent['max_num'] or 0) + 1
+        
+        # Assign numbers sequentially
+        for post in posts:
+            db_execute(
+                "UPDATE posts SET vent_number = %s WHERE post_id = %s",
+                (next_vent_number, post['post_id'])
+            )
+            
+            # Try to update the channel post if it exists
+            post_data = db_fetch_one(
+                "SELECT content, category, channel_message_id FROM posts WHERE post_id = %s",
+                (post['post_id'],)
+            )
+            
+            if post_data and post_data['channel_message_id']:
+                try:
+                    # Update the channel post
+                    vent_number_str = f"Vent - {next_vent_number:03d}"
+                    hashtag = f"#{post_data['category']}"
+                    
+                    new_caption = (
+                        f"`{vent_number_str}`\n\n"
+                        f"{post_data['content']}\n\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"{hashtag}\n"
+                        f"[Telegram](https://t.me/christianvent)| [Bot](https://t.me/{BOT_USERNAME})"
+                    )
+                    
+                    # We can't edit the message here without the bot instance
+                    # This would need to be run in a context where we have access to the bot
+                    logger.info(f"Post {post['post_id']} should be updated to Vent - {next_vent_number:03d}")
+                    
+                except Exception as e:
+                    logger.error(f"Error updating post {post['post_id']}: {e}")
+            
+            next_vent_number += 1
+        
+        logger.info(f"Assigned vent numbers to {len(posts)} existing posts")
+        
+    except Exception as e:
+        logger.error(f"Error assigning vent numbers: {e}")
+
+async def fix_vent_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+                    """Admin command to fix vent numbers"""
+                    user_id = str(update.effective_user.id)
+                    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+                    
+                    if not user or not user['is_admin']:
+                        await update.message.reply_text("❌ You don't have permission to use this command.")
+                        return
+                    
+                    await update.message.reply_text("🔄 Reassigning vent numbers to all approved posts...")
+                    
+                    try:
+                        # Reset all vent numbers first
+                        db_execute("UPDATE posts SET vent_number = NULL WHERE approved = TRUE")
+                        
+                        # Get all approved posts in chronological order
+                        posts = db_fetch_all(
+                            "SELECT post_id FROM posts WHERE approved = TRUE ORDER BY timestamp ASC"
+                        )
+                        
+                        count = 0
+                        for idx, post in enumerate(posts, start=1):
+                            db_execute(
+                                "UPDATE posts SET vent_number = %s WHERE post_id = %s",
+                                (idx, post['post_id'])
+                            )
+                            count += 1
+                        
+                        await update.message.reply_text(f"✅ Successfully assigned vent numbers to {count} posts.")
+                        
+                    except Exception as e:
+                        logger.error(f"Error in fix_vent_numbers: {e}")
+                        await update.message.reply_text(f"❌ Error: {str(e)}")
 async def show_loading(update_or_message, loading_text="⏳ Processing...", edit_message=True):
     """Show a loading animation"""
     try:
@@ -1696,16 +1786,25 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         return
     
     try:
-        # Format the post content for the channel
+        # Get the next vent number FIRST
+        max_vent = db_fetch_one("SELECT MAX(vent_number) as max_num FROM posts WHERE approved = TRUE")
+        next_vent_number = (max_vent['max_num'] or 0) + 1
+        
+        # Format the post content for the channel with vent number
         hashtag = f"#{post['category']}"
+        
+        # Create the vent number text (copyable format)
+        vent_number_str = f"Vent - {next_vent_number:03d}"
+        
         caption_text = (
+            f"`{vent_number_str}`\n\n"
             f"{post['content']}\n\n"
             f"━━━━━━━━━━━━━━━\n"
             f"{hashtag}\n"
             f"[Telegram](https://t.me/christianvent)| [Bot](https://t.me/{BOT_USERNAME})"
         )
         
-        # Create the comments button
+        # Create the comments button (original format)
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(f"💬 Comments (0)", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
         ])
@@ -1752,10 +1851,10 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             await query.answer("❌ Unsupported media type.", show_alert=True)
             return
         
-        # Update the post in database
+        # Update the post in database with vent number
         success = db_execute(
-            "UPDATE posts SET approved = TRUE, admin_approved_by = %s, channel_message_id = %s WHERE post_id = %s",
-            (user_id, msg.message_id, post_id)
+            "UPDATE posts SET approved = TRUE, admin_approved_by = %s, channel_message_id = %s, vent_number = %s WHERE post_id = %s",
+            (user_id, msg.message_id, next_vent_number, post_id)
         )
         
         if not success:
@@ -1774,12 +1873,12 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         # Update the admin's message
         try:
             await query.edit_message_text(
-                f"✅ Post approved and published!\n\n{post['content'][:100]}...",
+                f"✅ Post approved and published as {vent_display}!\n\n{post['content'][:100]}...",
                 parse_mode=ParseMode.MARKDOWN
             )
         except BadRequest:
             await query.message.reply_text(
-                f"✅ Post approved and published!\n\n{post['content'][:100]}...",
+                f"✅ Post approved and published as {vent_display}!\n\n{post['content'][:100]}...",
                 parse_mode=ParseMode.MARKDOWN
             )
         db_execute("DELETE FROM pending_notifications WHERE post_id = %s", (post_id,))
@@ -4884,14 +4983,21 @@ async def mini_app_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard,
         parse_mode=ParseMode.MARKDOWN
     )
+    
 def main():
     # Initialize database before starting the bot
     try:
         init_db()
         logger.info("Database initialized successfully")
+        
+        # Assign vent numbers to existing posts
+        assign_vent_numbers_to_existing_posts()
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
         return
+
+
+
     
     # Create and run Telegram bot
     app = Application.builder().token(TOKEN).post_init(set_bot_commands).build()
@@ -4904,6 +5010,7 @@ def main():
     app.add_handler(CommandHandler("settings", show_settings))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("inbox", show_inbox))
+    app.add_handler(CommandHandler("fixventnumbers", fix_vent_numbers))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_message_text))
