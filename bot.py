@@ -5769,25 +5769,24 @@ def mini_app_page():
                                 ${{post.author.sex || '👤'}}
                             </div>
                             <div class="author-info">
+                                <h4>${{post.author.name}}</h4>
                                 <div class="post-meta">
-                                    <span class="post-category">${{post.category}</span>
+                                    <span class="post-category">${{post.category}}</span>
                                     <span>•</span>
-                                    <span>${{post.time_ago}</span>
-                                    <span>•</span>
-                                    <span style="opacity: 0.7;">${{post.author.sex || '👤'}</span>
+                                    <span>${{post.time_ago}}</span>
                                 </div>
                             </div>
                         </div>
                         
                         <div class="post-content">
-                            ${{this.escapeHtml(post.content)}
+                            ${{this.escapeHtml(post.content)}}
                         </div>
                         
                         <div class="post-footer">
                             <div class="comment-count">
-                                💬 ${{post.comments} comment${{post.comments !== 1 ? 's' : ''}
+                                💬 ${{post.comments}} comment${{post.comments !== 1 ? 's' : ''}}
                             </div>
-                            <button onclick="window.open('https://t.me/${{this.botUsername}?start=comments_${{post.id}', '_blank')" 
+                            <button onclick="window.open('https://t.me/${{this.botUsername}}?start=comments_${{post.id}}', '_blank')" 
                                     style="background: transparent; color: #BF970B; border: 1px solid #BF970B; padding: 5px 15px; border-radius: 5px; font-size: 0.9rem; cursor: pointer;">
                                 View in Bot
                             </button>
