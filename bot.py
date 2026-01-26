@@ -5486,6 +5486,7 @@ def mini_app_page():
             .post-card {{
                 padding: 15px;
             }}
+            
         }}
     </style>
 </head>
@@ -5743,11 +5744,11 @@ def mini_app_page():
                 }}
             }}
             
-            renderPosts(posts) {{
+            renderPosts(posts) {
                 const container = document.getElementById('postsContainer');
                 if (!container) return;
                 
-                if (!posts || posts.length === 0) {{
+                if (!posts || posts.length === 0) {
                     container.innerHTML = `
                         <div class="empty-state">
                             <h3 style="color: #BF970B;">No posts yet</h3>
@@ -5759,40 +5760,41 @@ def mini_app_page():
                         </div>
                     `;
                     return;
-                }}
+                }
                 
                 container.innerHTML = posts.map(post => `
                     <div class="post-card">
                         <div class="post-header">
                             <div class="author-avatar">
-                                ${{post.author.sex || '👤'}}
+                                ${post.author.sex || '👤'}
                             </div>
                             <div class="author-info">
-                                <h4>${{post.author.name}}</h4>
                                 <div class="post-meta">
-                                    <span class="post-category">${{post.category}}</span>
+                                    <span class="post-category">${post.category}</span>
                                     <span>•</span>
-                                    <span>${{post.time_ago}}</span>
+                                    <span>${post.time_ago}</span>
+                                    <span>•</span>
+                                    <span style="opacity: 0.7;">${post.author.sex || '👤'}</span>
                                 </div>
                             </div>
                         </div>
                         
                         <div class="post-content">
-                            ${{this.escapeHtml(post.content)}}
+                            ${this.escapeHtml(post.content)}
                         </div>
                         
                         <div class="post-footer">
                             <div class="comment-count">
-                                💬 ${{post.comments}} comment${{post.comments !== 1 ? 's' : ''}}
+                                💬 ${post.comments} comment${post.comments !== 1 ? 's' : ''}
                             </div>
-                            <button onclick="window.open('https://t.me/${{this.botUsername}}?start=comments_${{post.id}}', '_blank')" 
+                            <button onclick="window.open('https://t.me/${this.botUsername}?start=comments_${post.id}', '_blank')" 
                                     style="background: transparent; color: #BF970B; border: 1px solid #BF970B; padding: 5px 15px; border-radius: 5px; font-size: 0.9rem; cursor: pointer;">
                                 View in Bot
                             </button>
                         </div>
                     </div>
                 `).join('');
-            }}
+            }
             
             async loadLeaderboard() {{
                 const container = document.getElementById('leaderboardContainer');
@@ -6070,13 +6072,13 @@ def notify_admin_of_new_post_sync(post_id):
 
 @flask_app.route('/api/mini-app/get-posts', methods=['GET'])
 def mini_app_get_posts():
-    """API endpoint for getting posts from mini app"""
+    """API endpoint for getting posts from mini app - SHOW GENDER, HIDE NAME"""
     try:
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
         offset = (page - 1) * per_page
         
-        # Get approved posts
+        # Get approved posts with gender but not name
         posts = db_fetch_all('''
             SELECT 
                 p.post_id,
@@ -6085,8 +6087,7 @@ def mini_app_get_posts():
                 p.timestamp,
                 p.comment_count,
                 p.media_type,
-                u.anonymous_name as author_name,
-                u.sex as author_sex
+                u.sex as author_sex  # Only get gender, not name
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             WHERE p.approved = TRUE
@@ -6128,8 +6129,7 @@ def mini_app_get_posts():
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
                 'author': {
-                    'name': post['author_name'],
-                    'sex': post['author_sex']
+                    'sex': post.get('author_sex', '👤')  # Only gender, no name
                 },
                 'has_media': post['media_type'] != 'text'
             })
