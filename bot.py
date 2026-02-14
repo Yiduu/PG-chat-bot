@@ -32,6 +32,7 @@ import random
 import time
 import asyncio
 from typing import Optional
+import re
 
 # Load environment variables first
 load_dotenv()
@@ -42,6 +43,23 @@ TOKEN = os.getenv('TOKEN')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', 0))
 BOT_USERNAME = os.getenv('BOT_USERNAME')
 ADMIN_ID = os.getenv('ADMIN_ID')
+# Add color variables near the top of bot.py (after loading env)
+PRIMARY_COLOR = os.getenv('PRIMARY_COLOR')
+SECONDARY_COLOR = os.getenv('SECONDARY_COLOR')
+CARD_BG_COLOR = os.getenv('CARD_BG_COLOR')
+BORDER_COLOR = os.getenv('BORDER_COLOR')
+TEXT_COLOR = os.getenv('TEXT_COLOR')
+def hex_to_rgb(hex_color):
+    """Convert #RRGGBB to "R, G, B" string for CSS rgba() usage."""
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 6:
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+        return f"{r}, {g}, {b}"
+    return "191, 151, 11"  # fallback to default gold
+
+PRIMARY_RGB = hex_to_rgb(PRIMARY_COLOR)
 
 # Initialize database tables with schema migration
 def init_db():
@@ -501,64 +519,74 @@ def main_page():
 # Login page for mini app
 @flask_app.route('/login')
 def login_page():
-    """Show login page for mini app"""
+    """Show login page for mini app with brand colors"""
     bot_username = BOT_USERNAME
-    
-    html = '''<!DOCTYPE html>
+    primary = PRIMARY_COLOR
+    secondary = SECONDARY_COLOR
+    card_bg = CARD_BG_COLOR
+    border = BORDER_COLOR
+    text_color = TEXT_COLOR
+    primary_rgb = PRIMARY_RGB
+
+    html = f'''<!DOCTYPE html>
 <html>
 <head>
     <title>Christian Vent - Login</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body {
+        :root {{
+            --primary: {primary};
+            --primary-rgb: {primary_rgb};
+            --secondary: {secondary};
+            --card-bg: {card_bg};
+            --border: {border};
+            --text: {text_color};
+        }}
+        body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #272F32;
-            color: #E0E0E0;
+            background: var(--secondary);
+            color: var(--text);
             margin: 0;
             padding: 20px;
             min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
-        }
-        
-        .login-container {
-            background: #2E3A40;
+        }}
+        .login-container {{
+            background: var(--card-bg);
             padding: 40px;
             border-radius: 12px;
-            border: 1px solid #3A4A50;
+            border: 1px solid var(--border);
             max-width: 500px;
             width: 100%;
             text-align: center;
-        }
-        
-        .logo {
+        }}
+        .logo {{
             width: 90px;
             height: auto;
             margin-bottom: 15px;
-        }
-        .title {
-            color: #BF970B;
+        }}
+        .title {{
+            color: var(--primary);
             font-size: 2.8rem;
             font-weight: 700;
             letter-spacing: 3px;
             font-family: 'Oswald', sans-serif;
             text-transform: uppercase;
             margin: 0;
-        }
-        h1 {
-            color: #BF970B;
+        }}
+        h1 {{
+            color: var(--primary);
             margin-bottom: 10px;
-        }
-        
-        p {
+        }}
+        p {{
             opacity: 0.8;
             line-height: 1.6;
             margin-bottom: 30px;
-        }
-        
-        .telegram-btn {
+        }}
+        .telegram-btn {{
             background: #0088cc;
             color: white;
             border: none;
@@ -571,42 +599,35 @@ def login_page():
             margin-bottom: 20px;
             text-decoration: none;
             display: inline-block;
-        }
-        
-        .telegram-btn:hover {
+        }}
+        .telegram-btn:hover {{
             background: #0077b3;
-        }
-        
-        .bot-link {
-            color: #BF970B;
+        }}
+        .bot-link {{
+            color: var(--primary);
             text-decoration: none;
             font-weight: 600;
-        }
-        
-        .bot-link:hover {
+        }}
+        .bot-link:hover {{
             text-decoration: underline;
-        }
-        
-        .features {
+        }}
+        .features {{
             text-align: left;
             margin-top: 30px;
-            background: rgba(191, 151, 11, 0.1);
+            background: rgba(var(--primary-rgb), 0.1);
             padding: 20px;
             border-radius: 8px;
-        }
-        
-        .features h3 {
-            color: #BF970B;
+        }}
+        .features h3 {{
+            color: var(--primary);
             margin-top: 0;
-        }
-        
-        .features ul {
+        }}
+        .features ul {{
             padding-left: 20px;
-        }
-        
-        .features li {
+        }}
+        .features li {{
             margin-bottom: 10px;
-        }
+        }}
     </style>
 </head>
 <body>
@@ -615,17 +636,10 @@ def login_page():
             <img src="/static/images/vent%20logo.jpg" class="logo" alt="Christian Vent Logo">
             <h1 class="title">CHRISTIAN VENT</h1>
         </div>
-
         <p>Share your thoughts anonymously with the Christian community</p>
-        
         <p>To use the mini app, you need to authenticate with the Telegram bot:</p>
-        
-        <a href="https://t.me/''' + bot_username + '''" class="telegram-btn" target="_blank">
-            Open Telegram Bot
-        </a>
-        
-        <p>Or use this link: <a href="https://t.me/''' + bot_username + '''" class="bot-link" target="_blank">@''' + bot_username + '''</a></p>
-        
+        <a href="https://t.me/{bot_username}" class="telegram-btn" target="_blank">Open Telegram Bot</a>
+        <p>Or use this link: <a href="https://t.me/{bot_username}" class="bot-link" target="_blank">@{bot_username}</a></p>
         <div class="features">
             <h3>Features:</h3>
             <ul>
@@ -636,16 +650,13 @@ def login_page():
                 <li>Manage your profile and settings</li>
             </ul>
         </div>
-        
         <p style="margin-top: 30px; font-size: 0.9rem; opacity: 0.7;">
             After opening the bot, use the /webapp command to get authenticated access to the mini app.
         </p>
     </div>
 </body>
 </html>'''
-    
     return html
-
 # Generate token for mini app (called by bot)
 @flask_app.route('/api/generate-token/<user_id>')
 def generate_token(user_id):
@@ -5240,11 +5251,18 @@ def main():
 
 @flask_app.route('/mini_app')
 def mini_app_page():
-    """Complete Mini App served from the bot service"""
+    """Complete Mini App served from the bot service with brand colors"""
     bot_username = BOT_USERNAME
     app_name = "Christian Vent"
-    
-    # Build the HTML for the mini app - FIXED VERSION
+
+    # Use environment colors
+    primary = PRIMARY_COLOR
+    secondary = SECONDARY_COLOR
+    card_bg = CARD_BG_COLOR
+    border = BORDER_COLOR
+    text_color = TEXT_COLOR
+    primary_rgb = PRIMARY_RGB
+
     html = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5254,6 +5272,15 @@ def mini_app_page():
     <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
+        :root {{
+            --primary: {primary};
+            --primary-rgb: {primary_rgb};
+            --secondary: {secondary};
+            --card-bg: {card_bg};
+            --border: {border};
+            --text: {text_color};
+        }}
+
         * {{
             margin: 0;
             padding: 0;
@@ -5262,8 +5289,8 @@ def mini_app_page():
         
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: #272F32;
-            color: #E0E0E0;
+            background: var(--secondary);
+            color: var(--text);
             min-height: 100vh;
             padding: 0;
         }}
@@ -5271,6 +5298,7 @@ def mini_app_page():
         h1, h2, h3, h4, h5, h6 {{
             font-family: 'Oswald', sans-serif;
             font-weight: 600;
+            color: var(--primary);
         }}
         
         .app-container {{
@@ -5281,12 +5309,11 @@ def mini_app_page():
         }}
         
         /* Header */
-                /* Header */
         .app-header {{
             text-align: center;
             padding: 20px 0;
             margin-bottom: 20px;
-            border-bottom: 1px solid #3A4A50;
+            border-bottom: 1px solid var(--border);
         }}
         
         .app-header .brand {{
@@ -5301,13 +5328,13 @@ def mini_app_page():
             height: 80px;
             object-fit: contain;
             border-radius: 50%;
-            border: 2px solid #BF970B;
-            background: #2E3A40;
+            border: 2px solid var(--primary);
+            background: var(--card-bg);
             padding: 5px;
         }}
         
         .app-title {{
-            color: #BF970B;
+            color: var(--primary);
             font-size: 2.2rem;
             margin: 0;
             font-weight: 700;
@@ -5320,17 +5347,16 @@ def mini_app_page():
             opacity: 0.8;
             margin-top: 8px;
             font-size: 0.95rem;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }}
         
         /* Tabs */
         .tab-navigation {{
             display: flex;
-            background: #2E3A40;
+            background: var(--card-bg);
             border-radius: 10px;
             margin-bottom: 25px;
             overflow: hidden;
-            border: 1px solid #3A4A50;
+            border: 1px solid var(--border);
         }}
         
         .tab-btn {{
@@ -5338,7 +5364,7 @@ def mini_app_page():
             padding: 15px;
             background: none;
             border: none;
-            color: #E0E0E0;
+            color: var(--text);
             cursor: pointer;
             transition: all 0.3s;
             opacity: 0.7;
@@ -5348,13 +5374,13 @@ def mini_app_page():
         
         .tab-btn:hover {{
             opacity: 1;
-            background: rgba(191, 151, 11, 0.1);
+            background: rgba(var(--primary-rgb), 0.1);
         }}
         
         .tab-btn.active {{
             opacity: 1;
-            color: #BF970B;
-            background: rgba(191, 151, 11, 0.1);
+            color: var(--primary);
+            background: rgba(var(--primary-rgb), 0.1);
         }}
         
         /* Tab Content */
@@ -5378,15 +5404,15 @@ def mini_app_page():
         
         /* Vent Form */
         .vent-form-container {{
-            background: #2E3A40;
+            background: var(--card-bg);
             padding: 25px;
             border-radius: 12px;
-            border: 1px solid #3A4A50;
+            border: 1px solid var(--border);
             margin-bottom: 25px;
         }}
         
         .form-title {{
-            color: #BF970B;
+            color: var(--primary);
             margin-bottom: 10px;
             font-weight: 600;
             font-family: 'Oswald', sans-serif;
@@ -5403,9 +5429,9 @@ def mini_app_page():
         .category-select {{
             width: 100%;
             padding: 12px 15px;
-            background: #272F32;
-            border: 1px solid #3A4A50;
-            color: #E0E0E0;
+            background: var(--secondary);
+            border: 1px solid var(--border);
+            color: var(--text);
             border-radius: 8px;
             font-size: 1rem;
             margin-bottom: 20px;
@@ -5414,16 +5440,16 @@ def mini_app_page():
         
         .category-select:focus {{
             outline: none;
-            border-color: #BF970B;
+            border-color: var(--primary);
         }}
         
         .vent-textarea {{
             width: 100%;
             min-height: 150px;
             padding: 15px;
-            background: #272F32;
-            border: 1px solid #3A4A50;
-            color: #E0E0E0;
+            background: var(--secondary);
+            border: 1px solid var(--border);
+            color: var(--text);
             border-radius: 8px;
             font-size: 1rem;
             font-family: inherit;
@@ -5434,8 +5460,8 @@ def mini_app_page():
         
         .vent-textarea:focus {{
             outline: none;
-            border-color: #BF970B;
-            box-shadow: 0 0 0 2px rgba(191, 151, 11, 0.2);
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.2);
         }}
         
         .textarea-footer {{
@@ -5448,15 +5474,15 @@ def mini_app_page():
         }}
         
         .privacy-note {{
-            color: #BF970B;
+            color: var(--primary);
             font-size: 0.85rem;
         }}
         
         .submit-btn {{
             width: 100%;
             padding: 15px;
-            background: #BF970B;
-            color: #272F32;
+            background: var(--primary);
+            color: var(--secondary);
             border: none;
             border-radius: 8px;
             font-size: 1.1rem;
@@ -5468,9 +5494,9 @@ def mini_app_page():
         }}
         
         .submit-btn:hover {{
-            background: #d4a90f;
+            background: color-mix(in srgb, var(--primary) 90%, white);
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(191, 151, 11, 0.3);
+            box-shadow: 0 5px 15px rgba(var(--primary-rgb), 0.3);
         }}
         
         .submit-btn:disabled {{
@@ -5499,7 +5525,7 @@ def mini_app_page():
         }}
         
         .section-title {{
-            color: #BF970B;
+            color: var(--primary);
             font-weight: 600;
             margin: 0;
             font-family: 'Oswald', sans-serif;
@@ -5508,9 +5534,9 @@ def mini_app_page():
         }}
         
         .refresh-btn {{
-            background: #3A4A50;
-            border: 1px solid #3A4A50;
-            color: #E0E0E0;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            color: var(--text);
             padding: 8px 16px;
             border-radius: 20px;
             cursor: pointer;
@@ -5519,14 +5545,14 @@ def mini_app_page():
         }}
         
         .refresh-btn:hover {{
-            background: #BF970B;
-            color: #272F32;
+            background: var(--primary);
+            color: var(--secondary);
         }}
         
         /* Post Cards */
         .post-card {{
-            background: #2E3A40;
-            border: 1px solid #3A4A50;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
             border-radius: 12px;
             padding: 20px;
             margin-bottom: 15px;
@@ -5535,7 +5561,7 @@ def mini_app_page():
         }}
         
         .post-card:hover {{
-            border-color: #BF970B;
+            border-color: var(--primary);
             transform: translateY(-2px);
             box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
         }}
@@ -5549,12 +5575,12 @@ def mini_app_page():
         .author-avatar {{
             width: 40px;
             height: 40px;
-            background: rgba(191, 151, 11, 0.2);
+            background: rgba(var(--primary-rgb), 0.2);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #BF970B;
+            color: var(--primary);
             font-weight: bold;
             margin-right: 12px;
         }}
@@ -5564,6 +5590,7 @@ def mini_app_page():
             font-weight: 500;
             margin: 0 0 5px 0;
             font-family: 'Oswald', sans-serif;
+            color: var(--text);
         }}
         
         .post-meta {{
@@ -5576,8 +5603,8 @@ def mini_app_page():
         
         .post-category {{
             display: inline-block;
-            background: rgba(191, 151, 11, 0.1);
-            color: #BF970B;
+            background: rgba(var(--primary-rgb), 0.1);
+            color: var(--primary);
             padding: 4px 12px;
             border-radius: 20px;
             font-size: 0.8rem;
@@ -5595,16 +5622,16 @@ def mini_app_page():
             align-items: center;
             margin-top: 15px;
             padding-top: 15px;
-            border-top: 1px solid #3A4A50;
+            border-top: 1px solid var(--border);
             font-size: 0.9rem;
             opacity: 0.8;
         }}
         
         /* Leaderboard */
         .leaderboard-container {{
-            background: #2E3A40;
+            background: var(--card-bg);
             border-radius: 12px;
-            border: 1px solid #3A4A50;
+            border: 1px solid var(--border);
             overflow: hidden;
         }}
         
@@ -5612,7 +5639,7 @@ def mini_app_page():
             display: flex;
             align-items: center;
             padding: 15px 20px;
-            border-bottom: 1px solid #3A4A50;
+            border-bottom: 1px solid var(--border);
             transition: background 0.3s;
         }}
         
@@ -5621,14 +5648,14 @@ def mini_app_page():
         }}
         
         .leaderboard-item:hover {{
-            background: rgba(191, 151, 11, 0.05);
+            background: rgba(var(--primary-rgb), 0.05);
         }}
         
         .leaderboard-rank {{
             width: 40px;
             font-size: 1.2rem;
             font-weight: 600;
-            color: #BF970B;
+            color: var(--primary);
         }}
         
         .rank-1 {{ color: gold; }}
@@ -5645,13 +5672,13 @@ def mini_app_page():
         .user-avatar-small {{
             width: 40px;
             height: 40px;
-            background: rgba(191, 151, 11, 0.2);
+            background: rgba(var(--primary-rgb), 0.2);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: bold;
-            color: #BF970B;
+            color: var(--primary);
         }}
         
         .user-info-small h4 {{
@@ -5659,6 +5686,7 @@ def mini_app_page():
             font-weight: 500;
             margin: 0 0 4px 0;
             font-family: 'Oswald', sans-serif;
+            color: var(--text);
         }}
         
         .user-info-small p {{
@@ -5670,14 +5698,14 @@ def mini_app_page():
         .leaderboard-points {{
             font-size: 1.1rem;
             font-weight: 600;
-            color: #BF970B;
+            color: var(--primary);
         }}
         
         /* Profile */
         .profile-container {{
-            background: #2E3A40;
+            background: var(--card-bg);
             border-radius: 12px;
-            border: 1px solid #3A4A50;
+            border: 1px solid var(--border);
             padding: 25px;
         }}
         
@@ -5689,13 +5717,13 @@ def mini_app_page():
         .profile-avatar {{
             width: 100px;
             height: 100px;
-            background: rgba(191, 151, 11, 0.2);
+            background: rgba(var(--primary-rgb), 0.2);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 2.5rem;
-            color: #BF970B;
+            color: var(--primary);
             margin: 0 auto 15px;
         }}
         
@@ -5710,7 +5738,7 @@ def mini_app_page():
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            background: rgba(191, 151, 11, 0.1);
+            background: rgba(var(--primary-rgb), 0.1);
             padding: 8px 16px;
             border-radius: 20px;
             margin-top: 10px;
@@ -5720,14 +5748,14 @@ def mini_app_page():
         .app-footer {{
             margin-top: 30px;
             padding-top: 20px;
-            border-top: 1px solid #3A4A50;
+            border-top: 1px solid var(--border);
             text-align: center;
             font-size: 0.9rem;
             opacity: 0.7;
         }}
         
         .telegram-link {{
-            color: #BF970B;
+            color: var(--primary);
             text-decoration: none;
         }}
         
@@ -5765,7 +5793,7 @@ def mini_app_page():
         .loading {{
             text-align: center;
             padding: 40px;
-            color: #BF970B;
+            color: var(--primary);
         }}
         
         /* Empty States */
@@ -5803,18 +5831,15 @@ def mini_app_page():
 <body>
     <div class="app-container" id="appContainer">
         <!-- Header -->
-                <!-- Header -->
-                <header class="app-header">
-                    <div class="brand">
-                        <img src="/static/images/vent%20logo.jpg" class="logo" alt="Christian Vent Logo">
-                        <h1 class="app-title"> {app_name}</h1>
-                    </div>
-                    <p class="app-subtitle">A safe space for Christian anonymous venting</p>
-            <div id="userInfo" class="user-info" style="margin-top: 15px; display: none;">
-                <!-- User info will be loaded here -->
+        <header class="app-header">
+            <div class="brand">
+                <img src="/static/images/vent%20logo.jpg" class="logo" alt="Christian Vent Logo">
+                <h1 class="app-title">{app_name}</h1>
             </div>
+            <p class="app-subtitle">A safe space for Christian anonymous venting</p>
+            <div id="userInfo" class="user-info" style="margin-top: 15px; display: none;"></div>
         </header>
-        
+
         <!-- Navigation Tabs -->
         <nav class="tab-navigation">
             <button class="tab-btn active" data-tab="vent">✍️ Vent</button>
@@ -5823,7 +5848,7 @@ def mini_app_page():
             <button class="tab-btn" data-tab="profile">👤 Profile</button>
             <button class="tab-btn" data-tab="admin" id="adminTab" style="display: none;">🛠 Admin</button>
         </nav>
-        
+
         <!-- Tab Content -->
         <div class="tab-content">
             <!-- Vent Tab -->
@@ -5831,7 +5856,7 @@ def mini_app_page():
                 <div class="vent-form-container">
                     <h2 class="form-title">Share Your Burden</h2>
                     <p class="form-description">You are anonymous here. Share what's on your heart without fear.</p>
-                    
+
                     <select class="category-select" id="categorySelect">
                         <option value="PrayForMe">🙏 Pray For Me</option>
                         <option value="Bible">📖 Bible Study</option>
@@ -5844,27 +5869,27 @@ def mini_app_page():
                         <option value="Finance">💰 Finance</option>
                         <option value="Other" selected>📝 Other</option>
                     </select>
-                    
+
                     <textarea 
                         class="vent-textarea" 
                         id="ventText" 
                         placeholder="What's on your heart? Share your thoughts, prayers, or struggles..."
                         maxlength="5000"
                     ></textarea>
-                    
+
                     <div class="textarea-footer">
                         <span id="charCount">0/5000 characters</span>
                         <span class="privacy-note">Your identity is protected</span>
                     </div>
-                    
+
                     <button class="submit-btn" id="submitVent">
                         Post Anonymously
                     </button>
-                    
+
                     <p class="form-note">Posts are reviewed before appearing in the feed</p>
                 </div>
             </div>
-            
+
             <!-- Posts Tab -->
             <div id="posts-tab" class="tab-pane">
                 <div class="section-header">
@@ -5875,7 +5900,7 @@ def mini_app_page():
                     <div class="loading">Loading community posts...</div>
                 </div>
             </div>
-            
+
             <!-- Leaderboard Tab -->
             <div id="leaderboard-tab" class="tab-pane">
                 <div class="section-header">
@@ -5886,7 +5911,7 @@ def mini_app_page():
                     <div class="loading">Loading leaderboard...</div>
                 </div>
             </div>
-            
+
             <!-- Profile Tab -->
             <div id="profile-tab" class="tab-pane">
                 <div class="profile-container" id="profileContainer">
@@ -5894,7 +5919,7 @@ def mini_app_page():
                 </div>
             </div>
         </div>
-        
+
         <!-- Footer -->
         <footer class="app-footer">
             <p>
@@ -5908,7 +5933,7 @@ def mini_app_page():
             </p>
         </footer>
     </div>
-    
+
     <script>
         // Christian Vent Mini App - Main JavaScript
         class ChristianVentApp {{
@@ -5925,7 +5950,6 @@ def mini_app_page():
             async init() {{
                 this.setupEventListeners();
                 
-                // Get token from URL
                 const urlParams = new URLSearchParams(window.location.search);
                 this.token = urlParams.get('token');
                 
@@ -5937,7 +5961,6 @@ def mini_app_page():
                     return;
                 }}
                 
-                // Verify token
                 try {{
                     const response = await fetch(`${{this.apiBaseUrl}}/api/verify-token/${{this.token}}`);
                     const data = await response.json();
@@ -5962,7 +5985,6 @@ def mini_app_page():
                     return;
                 }}
                 
-                // Load initial data
                 await this.loadPosts();
                 await this.loadLeaderboard();
             }}
@@ -5980,7 +6002,6 @@ def mini_app_page():
             }}
             
             setupEventListeners() {{
-                // Tab switching
                 document.querySelectorAll('.tab-btn').forEach(btn => {{
                     btn.addEventListener('click', (e) => {{
                         const tab = e.target.dataset.tab;
@@ -5988,7 +6009,6 @@ def mini_app_page():
                     }});
                 }});
                 
-                // Character counter
                 const ventText = document.getElementById('ventText');
                 const charCount = document.getElementById('charCount');
                 if (ventText && charCount) {{
@@ -5997,29 +6017,23 @@ def mini_app_page():
                     }});
                 }}
                 
-                // Submit vent
                 const submitBtn = document.getElementById('submitVent');
                 if (submitBtn) {{
                     submitBtn.addEventListener('click', () => this.submitVent());
                 }}
                 
-                // Refresh buttons
                 document.getElementById('refreshPosts')?.addEventListener('click', () => this.loadPosts());
                 document.getElementById('refreshLeaderboard')?.addEventListener('click', () => this.loadLeaderboard());
             }}
             
             switchTab(tabName) {{
-                // Update active tab button
                 document.querySelectorAll('.tab-btn').forEach(btn => {{
                     btn.classList.toggle('active', btn.dataset.tab === tabName);
                 }});
-                
-                // Update active tab pane
                 document.querySelectorAll('.tab-pane').forEach(pane => {{
                     pane.classList.toggle('active', pane.id === `${{tabName}}-tab`);
                 }});
                 
-                // Load data for the tab if needed
                 if (tabName === 'profile' && this.userId) {{
                     this.loadProfile(this.userId);
                 }}
@@ -6028,7 +6042,6 @@ def mini_app_page():
             async loadPosts() {{
                 const container = document.getElementById('postsContainer');
                 if (!container) return;
-                
                 container.innerHTML = '<div class="loading">Loading community posts...</div>';
                 
                 try {{
@@ -6038,19 +6051,11 @@ def mini_app_page():
                     if (data.success) {{
                         this.renderPosts(data.data);
                     }} else {{
-                        container.innerHTML = `
-                            <div class="error-message">
-                                Failed to load posts: ${{data.error || 'Unknown error'}}
-                            </div>
-                        `;
+                        container.innerHTML = `<div class="error-message">Failed to load posts: ${{data.error || 'Unknown error'}}</div>`;
                     }}
                 }} catch (error) {{
                     console.error('Error loading posts:', error);
-                    container.innerHTML = `
-                        <div class="error-message">
-                            Network error. Please check your connection.
-                        </div>
-                    `;
+                    container.innerHTML = `<div class="error-message">Network error. Please check your connection.</div>`;
                 }}
             }}
             
@@ -6061,10 +6066,10 @@ def mini_app_page():
                 if (!posts || posts.length === 0) {{
                     container.innerHTML = `
                         <div class="empty-state">
-                            <h3 style="color: #BF970B;">No posts yet</h3>
+                            <h3 style="color: var(--primary);">No posts yet</h3>
                             <p style="opacity: 0.8; margin-bottom: 20px;">Be the first to share what's on your heart</p>
                             <button onclick="app.switchTab('vent')" 
-                                    style="background: #BF970B; color: #272F32; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer;">
+                                    style="background: var(--primary); color: var(--secondary); border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer;">
                                 Share Your First Vent
                             </button>
                         </div>
@@ -6075,9 +6080,7 @@ def mini_app_page():
                 container.innerHTML = posts.map(post => `
                     <div class="post-card">
                         <div class="post-header">
-                            <div class="author-avatar">
-                                ${{post.author.sex || '👤'}}
-                            </div>
+                            <div class="author-avatar">${{post.author.sex || '👤'}}</div>
                             <div class="author-info">
                                 <h4>${{post.author.name}}</h4>
                                 <div class="post-meta">
@@ -6087,17 +6090,11 @@ def mini_app_page():
                                 </div>
                             </div>
                         </div>
-                        
-                        <div class="post-content">
-                            ${{this.escapeHtml(post.content)}}
-                        </div>
-                        
+                        <div class="post-content">${{this.escapeHtml(post.content)}}</div>
                         <div class="post-footer">
-                            <div class="comment-count">
-                                💬 ${{post.comments}} comment${{post.comments !== 1 ? 's' : ''}}
-                            </div>
+                            <div class="comment-count">💬 ${{post.comments}} comment${{post.comments !== 1 ? 's' : ''}}</div>
                             <button onclick="window.open('https://t.me/${{this.botUsername}}?start=comments_${{post.id}}', '_blank')" 
-                                    style="background: transparent; color: #BF970B; border: 1px solid #BF970B; padding: 5px 15px; border-radius: 5px; font-size: 0.9rem; cursor: pointer;">
+                                    style="background: transparent; color: var(--primary); border: 1px solid var(--primary); padding: 5px 15px; border-radius: 5px; font-size: 0.9rem; cursor: pointer;">
                                 View in Bot
                             </button>
                         </div>
@@ -6108,7 +6105,6 @@ def mini_app_page():
             async loadLeaderboard() {{
                 const container = document.getElementById('leaderboardContainer');
                 if (!container) return;
-                
                 container.innerHTML = '<div class="loading">Loading leaderboard...</div>';
                 
                 try {{
@@ -6148,7 +6144,6 @@ def mini_app_page():
             async loadProfile(userId) {{
                 const container = document.getElementById('profileContainer');
                 if (!container) return;
-                
                 container.innerHTML = '<div class="loading">Loading profile...</div>';
                 
                 try {{
@@ -6159,30 +6154,16 @@ def mini_app_page():
                         const profile = data.data;
                         container.innerHTML = `
                             <div class="profile-header">
-                                <div class="profile-avatar">
-                                    ${{profile.sex || '👤'}}
-                                </div>
+                                <div class="profile-avatar">${{profile.sex || '👤'}}</div>
                                 <h2>${{profile.name}}</h2>
-                                <div class="profile-rating">
-                                    ${{profile.aura}} ${{profile.rating}} points
-                                </div>
+                                <div class="profile-rating">${{profile.aura}} ${{profile.rating}} points</div>
                             </div>
-                            
-                            <div style="background: rgba(191, 151, 11, 0.1); padding: 20px; border-radius: 8px; margin: 20px 0;">
-                                <h4 style="color: #BF970B; margin-bottom: 10px;">Your Statistics</h4>
+                            <div style="background: rgba(var(--primary-rgb), 0.1); padding: 20px; border-radius: 8px; margin: 20px 0;">
+                                <h4 style="color: var(--primary); margin-bottom: 10px;">Your Statistics</h4>
                                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center;">
-                                    <div>
-                                        <div style="font-size: 2rem; font-weight: 600; color: #BF970B;">${{profile.stats.posts}}</div>
-                                        <div style="font-size: 0.9rem; opacity: 0.8;">Vents</div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 2rem; font-weight: 600; color: #BF970B;">${{profile.stats.comments}}</div>
-                                        <div style="font-size: 0.9rem; opacity: 0.8;">Comments</div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 2rem; font-weight: 600; color: #BF970B;">${{profile.stats.followers}}</div>
-                                        <div style="font-size: 0.9rem; opacity: 0.8;">Followers</div>
-                                    </div>
+                                    <div><div style="font-size: 2rem; font-weight: 600; color: var(--primary);">${{profile.stats.posts}}</div><div style="font-size: 0.9rem; opacity: 0.8;">Vents</div></div>
+                                    <div><div style="font-size: 2rem; font-weight: 600; color: var(--primary);">${{profile.stats.comments}}</div><div style="font-size: 0.9rem; opacity: 0.8;">Comments</div></div>
+                                    <div><div style="font-size: 2rem; font-weight: 600; color: var(--primary);">${{profile.stats.followers}}</div><div style="font-size: 0.9rem; opacity: 0.8;">Followers</div></div>
                                 </div>
                             </div>
                         `;
@@ -6215,7 +6196,6 @@ def mini_app_page():
                     return;
                 }}
                 
-                // Disable button and show loading
                 const originalText = submitBtn.textContent;
                 submitBtn.textContent = 'Posting...';
                 submitBtn.disabled = true;
@@ -6223,9 +6203,7 @@ def mini_app_page():
                 try {{
                     const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/submit-vent`, {{
                         method: 'POST',
-                        headers: {{
-                            'Content-Type': 'application/json'
-                        }},
+                        headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{
                             user_id: this.userId,
                             content: content,
@@ -6237,17 +6215,12 @@ def mini_app_page():
                     
                     if (data.success) {{
                         this.showMessage(data.message, 'success');
-                        
-                        // Clear the form
                         ventText.value = '';
                         document.getElementById('charCount').textContent = '0/5000 characters';
-                        
-                        // Switch to posts tab after 2 seconds
                         setTimeout(() => {{
                             this.switchTab('posts');
                             this.loadPosts();
                         }}, 2000);
-                        
                     }} else {{
                         this.showMessage(data.error || 'Failed to submit vent', 'error');
                     }}
@@ -6261,25 +6234,18 @@ def mini_app_page():
             }}
             
             showMessage(message, type = 'success') {{
-                // Remove any existing messages
                 const existingMessages = document.querySelectorAll('.message');
                 existingMessages.forEach(msg => msg.remove());
                 
-                // Create new message element
                 const messageEl = document.createElement('div');
                 messageEl.className = `message ${{type === 'error' ? 'error-message' : 'success-message'}}`;
                 messageEl.textContent = message;
                 
-                // Add to top of app container
                 const appContainer = document.getElementById('appContainer');
                 if (appContainer) {{
                     appContainer.insertBefore(messageEl, appContainer.firstChild);
-                    
-                    // Remove after 5 seconds
                     setTimeout(() => {{
-                        if (messageEl.parentNode) {{
-                            messageEl.remove();
-                        }}
+                        if (messageEl.parentNode) messageEl.remove();
                     }}, 5000);
                 }}
             }}
@@ -6291,13 +6257,13 @@ def mini_app_page():
             }}
         }}
         
-        // Initialize the app when DOM is loaded
         document.addEventListener('DOMContentLoaded', () => {{
             window.app = new ChristianVentApp();
         }});
     </script>
 </body>
 </html>'''
+    return html
     
     return html
 
