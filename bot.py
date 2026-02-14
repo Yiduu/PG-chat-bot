@@ -5251,7 +5251,7 @@ def main():
 
 @flask_app.route('/mini_app')
 def mini_app_page():
-    """Complete Mini App served from the bot service with brand colors"""
+    """Complete Mini App with particle background effect"""
     bot_username = BOT_USERNAME
     app_name = "Christian Vent"
 
@@ -5293,6 +5293,8 @@ def mini_app_page():
             color: var(--text);
             min-height: 100vh;
             padding: 0;
+            position: relative;
+            overflow-x: hidden;
         }}
         
         h1, h2, h3, h4, h5, h6 {{
@@ -5301,11 +5303,25 @@ def mini_app_page():
             color: var(--primary);
         }}
         
+        /* Canvas for particles - behind everything */
+        #particleCanvas {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            pointer-events: none;
+            display: block;
+        }}
+        
         .app-container {{
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
             min-height: 100vh;
+            position: relative;
+            z-index: 1;
         }}
         
         /* Header */
@@ -5829,6 +5845,9 @@ def mini_app_page():
     </style>
 </head>
 <body>
+    <!-- Particle canvas (behind everything) -->
+    <canvas id="particleCanvas"></canvas>
+
     <div class="app-container" id="appContainer">
         <!-- Header -->
         <header class="app-header">
@@ -5935,7 +5954,7 @@ def mini_app_page():
     </div>
 
     <script>
-        // Christian Vent Mini App - Main JavaScript
+        // Christian Vent Mini App - Main JavaScript with Particle Background
         class ChristianVentApp {{
             constructor() {{
                 this.user = null;
@@ -5944,9 +5963,76 @@ def mini_app_page():
                 this.botUsername = "{bot_username}";
                 this.apiBaseUrl = window.location.origin;
                 this.isAdmin = false;
+                this.initParticles();
                 this.init();
             }}
             
+            // ----- Particle Background -----
+            initParticles() {{
+                const canvas = document.getElementById('particleCanvas');
+                if (!canvas) return;
+                
+                const ctx = canvas.getContext('2d');
+                let width, height;
+                let particles = [];
+
+                // Get primary color RGB from CSS variable
+                const primaryRgb = getComputedStyle(document.documentElement)
+                    .getPropertyValue('--primary-rgb').trim() || '191, 151, 11';
+
+                const resizeCanvas = () => {{
+                    width = window.innerWidth;
+                    height = window.innerHeight;
+                    canvas.width = width;
+                    canvas.height = height;
+                }};
+
+                const createParticles = () => {{
+                    const particleCount = 60; // Slightly more for effect
+                    particles = [];
+                    for (let i = 0; i < particleCount; i++) {{
+                        particles.push({{
+                            x: Math.random() * width,
+                            y: Math.random() * height,
+                            radius: Math.random() * 3 + 1,
+                            speedX: (Math.random() - 0.5) * 0.25,
+                            speedY: (Math.random() - 0.5) * 0.25,
+                            color: `rgba(${{primaryRgb}}, ${{Math.random() * 0.3 + 0.1}})`
+                        }});
+                    }}
+                }};
+
+                const animate = () => {{
+                    ctx.clearRect(0, 0, width, height);
+                    particles.forEach(p => {{
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                        ctx.fillStyle = p.color;
+                        ctx.fill();
+
+                        p.x += p.speedX;
+                        p.y += p.speedY;
+
+                        // Wrap around edges
+                        if (p.x < 0) p.x = width;
+                        if (p.x > width) p.x = 0;
+                        if (p.y < 0) p.y = height;
+                        if (p.y > height) p.y = 0;
+                    }});
+                    requestAnimationFrame(animate);
+                }};
+
+                window.addEventListener('resize', () => {{
+                    resizeCanvas();
+                    createParticles();
+                }});
+
+                resizeCanvas();
+                createParticles();
+                animate();
+            }}
+
+            // ----- Rest of the app (unchanged) -----
             async init() {{
                 this.setupEventListeners();
                 
@@ -6265,7 +6351,6 @@ def mini_app_page():
 </html>'''
     return html
     
-    return html
 
 # ==================== MINI APP API ENDPOINTS ====================
 
