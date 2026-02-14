@@ -805,12 +805,24 @@ def format_aura(rating):
         return "⚪️"  # White aura for new users (0-9 points)
 
 def count_all_comments(post_id):
-    """Return total number of comments (including all replies) for a given post."""
-    result = db_fetch_one(
-        "SELECT COUNT(*) as cnt FROM comments WHERE post_id = %s",
-        (post_id,)
-    )
-    return result['cnt'] if result else 0
+    def count_replies(parent_id=None):
+        if parent_id is None:
+            comments = db_fetch_all(
+                "SELECT comment_id FROM comments WHERE post_id = %s AND parent_comment_id = 0",
+                (post_id,)
+            )
+        else:
+            comments = db_fetch_all(
+                "SELECT comment_id FROM comments WHERE parent_comment_id = %s",
+                (parent_id,)
+            )
+        
+        total = len(comments)
+        for comment in comments:
+            total += count_replies(comment['comment_id'])
+        return total
+    
+    return count_replies()
 def get_cancel_reply_keyboard():
     """Create cancel button for reply keyboard (text) - ONLY for input states"""
     return ReplyKeyboardMarkup(
@@ -2710,144 +2722,7 @@ def escape_markdown_v2(text):
     for char in escape_chars:
         text = text.replace(char, '\\' + char)
     return text
-async def send_comment_fast(context, chat_id, comment_data, reactions, reply_to_message_id=None):
-    """
-    Send a comment using pre‑fetched data.
-    - comment_data: dict with keys: comment_id, content, type, file_id, author_name, author_sex, author_id
-    - reactions: dict with keys 'likes', 'dislikes' (counts)
-    """
-    comment_id = comment_data['comment_id']
-    content = comment_data['content']
-    comment_type = comment_data['type']
-    file_id = comment_data['file_id']
-    author_name = comment_data['author_name']
-    author_sex = comment_data['author_sex']
-    author_id = comment_data['author_id']
 
-    likes = reactions.get('likes', 0)
-    dislikes = reactions.get('dislikes', 0)
-
-    # Build author text
-    # (Similar to original but using pre‑fetched data)
-    post_author_id = getattr(context, '_post_author_id', None)
-    if str(author_id) == str(post_author_id):
-        author_text = (
-            f"{author_sex} ✅ _[vent author](https://t.me/{BOT_USERNAME}?start=profileid_{author_id})_ "
-            f"⚡ _Aura_ {calculate_user_rating(author_id)} {format_aura(calculate_user_rating(author_id))}"
-        )
-    else:
-        author_text = (
-            f"{author_sex} _[{escape_markdown(author_name, version=2)}](https://t.me/{BOT_USERNAME}?start=profileid_{author_id})_ "
-            f"⚡ _Aura_ {calculate_user_rating(author_id)} {format_aura(calculate_user_rating(author_id))}"
-        )
-
-    # Build keyboard
-    user_id = getattr(context, '_user_id', None)
-    user_reaction = None
-    if user_id:
-        # We could also pre‑fetch user reactions, but for simplicity we keep a separate query
-        user_reaction = db_fetch_one(
-            "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
-            (comment_id, user_id)
-        )
-
-    like_emoji = "👍" if user_reaction and user_reaction['type'] == 'like' else "👍"
-    dislike_emoji = "👎" if user_reaction and user_reaction['type'] == 'dislike' else "👎"
-
-    kb_buttons = []
-    if comment_type == 'text' or True:  # For all types we show reactions and reply
-        if comment_type == 'text':
-            reply_callback = f"reply_{comment_data['post_id']}_{comment_id}"
-        else:
-            reply_callback = f"reply_{comment_data['post_id']}_{comment_id}"  # same
-
-        kb_buttons.append([
-            InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likecomment_{comment_id}"),
-            InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikecomment_{comment_id}"),
-            InlineKeyboardButton("Reply", callback_data=reply_callback)
-        ])
-
-        # Edit/delete for author
-        if author_id == user_id:
-            if comment_type == 'text':
-                kb_buttons.append([
-                    InlineKeyboardButton("✏️ Edit", callback_data=f"edit_comment_{comment_id}"),
-                    InlineKeyboardButton("🗑 Delete", callback_data=f"delete_comment_{comment_id}")
-                ])
-            else:
-                kb_buttons.append([
-                    InlineKeyboardButton("🗑 Delete", callback_data=f"delete_comment_{comment_id}")
-                ])
-
-    kb = InlineKeyboardMarkup(kb_buttons)
-
-    # Send message based on type
-    try:
-        escaped_content = escape_markdown_v2(content) if content else ""
-        message_text = f"{escaped_content}\n\n{author_text}"
-
-        if comment_type == 'text':
-            msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=message_text,
-                reply_markup=kb,
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_to_message_id=reply_to_message_id,
-                disable_web_page_preview=True
-            )
-            return msg.message_id
-        elif comment_type == 'voice' and file_id:
-            msg = await context.bot.send_voice(
-                chat_id=chat_id,
-                voice=file_id,
-                caption=message_text,
-                reply_markup=kb,
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_to_message_id=reply_to_message_id
-            )
-            return msg.message_id
-        elif comment_type == 'gif' and file_id:
-            msg = await context.bot.send_animation(
-                chat_id=chat_id,
-                animation=file_id,
-                caption=message_text,
-                reply_markup=kb,
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_to_message_id=reply_to_message_id
-            )
-            return msg.message_id
-        elif comment_type == 'sticker' and file_id:
-            msg = await context.bot.send_sticker(
-                chat_id=chat_id,
-                sticker=file_id,
-                reply_to_message_id=reply_to_message_id
-            )
-            return msg.message_id
-        else:
-            # fallback
-            msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=message_text,
-                reply_markup=kb,
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_to_message_id=reply_to_message_id,
-                disable_web_page_preview=True
-            )
-            return msg.message_id
-    except Exception as e:
-        logger.error(f"Error sending comment {comment_id}: {e}")
-        # fallback without markdown
-        try:
-            msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"[Media] {content}\n\n{author_text}",
-                reply_markup=kb,
-                reply_to_message_id=reply_to_message_id,
-                disable_web_page_preview=True
-            )
-            return msg.message_id
-        except:
-            return None
 async def send_comment_message(context, chat_id, comment, author_text, reply_to_message_id=None):
     """Helper function to send comments with proper media handling"""
     comment_id = comment['comment_id']
@@ -2977,134 +2852,155 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
         except Exception as e2:
             logger.error(f"Fallback also failed: {e2}")
             return None
-async def show_comments_page(update, context, post_id, page=1):
+async def show_comments_page(update, context, post_id, page=1, reply_pages=None):
+    if update.effective_chat is None:
+        logger.error("Cannot determine chat from update: %s", update)
+        return
     chat_id = update.effective_chat.id
 
-    # Store user_id and post_author_id in context for use in send_comment_fast
-    user_id = str(update.effective_user.id)
-    context._user_id = user_id
+    # Show typing animation
+    await typing_animation(context, chat_id, 0.5)
+    
+    # Show loading message
+    loading_msg = None
+    if page == 1:
+        try:
+            if hasattr(update, 'callback_query') and update.callback_query:
+                loading_msg = await update.callback_query.message.edit_text("💬 Loading comments...")
+            elif hasattr(update, 'message') and update.message:
+                loading_msg = await context.bot.send_message(chat_id, "💬 Loading comments...")
+        except:
+            pass
 
-    # Get post details
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post:
-        await context.bot.send_message(chat_id, "❌ Post not found.")
+        if loading_msg:
+            try:
+                await loading_msg.delete()
+            except:
+                pass
+        await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=main_menu)
         return
-    context._post_author_id = post['author_id']
 
-    per_page = 5
+    post_author_id = post['author_id']
+
+    per_page = 5  # Top-level comments per page
     offset = (page - 1) * per_page
 
-    # ---- 1. Fetch top-level comments for this page (with author info) ----
-    top_comments = db_fetch_all('''
-        SELECT c.*,
-               u.anonymous_name as author_name,
-               u.sex as author_sex,
-               u.user_id as author_id
-        FROM comments c
-        JOIN users u ON c.author_id = u.user_id
-        WHERE c.post_id = %s AND c.parent_comment_id = 0
-        ORDER BY c.timestamp ASC
-        LIMIT %s OFFSET %s
-    ''', (post_id, per_page, offset))
+    # Show oldest first, newest last
+    comments = db_fetch_all(
+        "SELECT * FROM comments WHERE post_id = %s AND parent_comment_id = 0 ORDER BY timestamp ASC LIMIT %s OFFSET %s",
+        (post_id, per_page, offset)
+    )
 
-    if not top_comments and page == 1:
-        await context.bot.send_message(chat_id, "_No comments yet._", parse_mode=ParseMode.MARKDOWN_V2)
+    # Count only top-level comments for pagination
+    total_comments_row = db_fetch_one(
+        "SELECT COUNT(*) as cnt FROM comments WHERE post_id = %s AND parent_comment_id = 0",
+        (post_id,)
+    )
+    total_comments = total_comments_row['cnt'] if total_comments_row else 0
+    total_pages = (total_comments + per_page - 1) // per_page
+
+    if not comments and page == 1:
+        if loading_msg:
+            try:
+                await loading_msg.delete()
+            except:
+                pass
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="\\_No comments yet.\\_",
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=main_menu
+        )
         return
 
-    # ---- 2. Fetch all replies for these top comments (with author info) ----
-    comment_ids = [c['comment_id'] for c in top_comments]
-    replies = {}
-    if comment_ids:
-        reply_rows = db_fetch_all('''
-            SELECT c.*,
-                   u.anonymous_name as author_name,
-                   u.sex as author_sex,
-                   u.user_id as author_id
-            FROM comments c
-            JOIN users u ON c.author_id = u.user_id
-            WHERE c.parent_comment_id = ANY(%s)
-            ORDER BY c.timestamp ASC
-        ''', (comment_ids,))
+    user_id = str(update.effective_user.id)
+    context._user_id = user_id
+    context._post_author_id = post_author_id
 
-        for row in reply_rows:
-            parent = row['parent_comment_id']
-            replies.setdefault(parent, []).append(row)
+    if reply_pages is None:
+        reply_pages = {}
 
-    # ---- 3. Fetch all reaction counts for these comments (top + replies) ----
-    all_comment_ids = comment_ids.copy()
-    for rep_list in replies.values():
-        all_comment_ids.extend([r['comment_id'] for r in rep_list])
+    # Delete loading message if it exists
+    if loading_msg:
+        try:
+            await loading_msg.delete()
+        except:
+            pass
 
-    reaction_counts = {}
-    if all_comment_ids:
-        count_rows = db_fetch_all('''
-            SELECT comment_id,
-                   COUNT(*) FILTER (WHERE type = 'like') as likes,
-                   COUNT(*) FILTER (WHERE type = 'dislike') as dislikes
-            FROM reactions
-            WHERE comment_id = ANY(%s)
-            GROUP BY comment_id
-        ''', (all_comment_ids,))
-        for row in count_rows:
-            reaction_counts[row['comment_id']] = {
-                'likes': row['likes'],
-                'dislikes': row['dislikes']
-            }
+    # Show each top-level comment with LIMITED replies
+    for comment in comments:
+        commenter_id = comment['author_id']
+        commenter = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (commenter_id,))
+        display_sex = get_display_sex(commenter)
+        display_name = get_display_name(commenter)
+        rating = calculate_user_rating(commenter_id)
+        profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}"
 
-    # ---- 4. Send each top comment and its first 3 replies ----
-    for top in top_comments:
-        # Send top comment
-        await send_comment_fast(
-            context, chat_id, top,
-            reaction_counts.get(top['comment_id'], {'likes':0, 'dislikes':0}),
-            reply_to_message_id=None
-        )
-
-        # Send its first 3 replies
-        for reply in replies.get(top['comment_id'], [])[:3]:
-            await send_comment_fast(
-                context, chat_id, reply,
-                reaction_counts.get(reply['comment_id'], {'likes':0, 'dislikes':0}),
-                reply_to_message_id=None   # optionally set to the top comment's message id if you want threading
+        # Check if commenter is the vent author
+        if str(commenter_id) == str(post_author_id):
+            author_text = (
+                f"{display_sex} "
+                f"✅ _[vent author]({escape_markdown(profile_link, version=2)})_ "
+                f"⚡ _Aura_ {rating} {format_aura(rating)}"
+            )
+        else:
+            author_text = (
+                f"{display_sex} "
+                f"_[{escape_markdown(display_name, version=2)}]({escape_markdown(profile_link, version=2)})_ "
+                f"⚡ _Aura_ {rating} {format_aura(rating)}"
             )
 
-        # If there are more replies, add "Show more" button
-        total_replies = len(replies.get(top['comment_id'], []))
-        if total_replies > 3:
-            remaining = total_replies - 3
-            # We need the message_id of the last sent comment (the top comment) to reply to it.
-            # For simplicity, we send a separate message with the button.
+        # Send the top-level comment
+        msg_id = await send_comment_message(context, chat_id, comment, author_text, None)
+
+        # Show LIMITED replies for this comment (first 3 replies)
+        replies_per_comment = 3
+        replies = db_fetch_all(
+            "SELECT * FROM comments WHERE parent_comment_id = %s ORDER BY timestamp ASC LIMIT %s",
+            (comment['comment_id'], replies_per_comment)
+        )
+        
+        # Count total replies for this comment
+        total_replies_row = db_fetch_one(
+            "SELECT COUNT(*) as cnt FROM comments WHERE parent_comment_id = %s",
+            (comment['comment_id'],)
+        )
+        total_replies = total_replies_row['cnt'] if total_replies_row else 0
+        
+        for reply in replies:
+            await send_reply_message(context, chat_id, reply, post_author_id, msg_id)
+
+        # Add "Show more replies" button if there are more replies
+        if total_replies > replies_per_comment:
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton(
-                    f"📨 Show more replies ({remaining} more)",
-                    callback_data=f"show_more_replies_{top['comment_id']}_1"
+                    f"📨 Show more replies ({total_replies - replies_per_comment} more)", 
+                    callback_data=f"show_more_replies_{comment['comment_id']}_1"
                 )]
             ])
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="",
-                reply_markup=keyboard
+                reply_markup=keyboard,
+                reply_to_message_id=msg_id
             )
-
-    # ---- 5. Pagination buttons for top-level comments ----
-    total_top_comments = db_fetch_one(
-        "SELECT COUNT(*) as cnt FROM comments WHERE post_id = %s AND parent_comment_id = 0",
-        (post_id,)
-    )['cnt']
-    total_pages = (total_top_comments + per_page - 1) // per_page
-
+    
+    # Pagination buttons for top-level comments
     pagination_buttons = []
     if page > 1:
-        pagination_buttons.append(InlineKeyboardButton("⬅️ Older", callback_data=f"viewcomments_{post_id}_{page-1}"))
+        pagination_buttons.append(InlineKeyboardButton("⬅️ Older Comments", callback_data=f"viewcomments_{post_id}_{page-1}"))
     if page < total_pages:
-        pagination_buttons.append(InlineKeyboardButton("Newer ➡️", callback_data=f"viewcomments_{post_id}_{page+1}"))
-
+        pagination_buttons.append(InlineKeyboardButton("Newer Comments ➡️", callback_data=f"viewcomments_{post_id}_{page+1}"))
+    
     if pagination_buttons:
         pagination_markup = InlineKeyboardMarkup([pagination_buttons])
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"📄 Page {page}/{total_pages} (oldest first)",
-            reply_markup=pagination_markup
+            text=f"📄 Page {page}/{total_pages} (Oldest to Newest)",
+            reply_markup=pagination_markup,
+            disable_web_page_preview=True
         )
 async def send_reply_message(context, chat_id, reply, post_author_id, reply_to_message_id):
     """Send a single reply message with proper formatting"""
