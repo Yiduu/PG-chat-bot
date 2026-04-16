@@ -2129,9 +2129,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ----- NO INLINE KEYBOARD – only the reply menu -----
     await update.message.reply_text(
-        "✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n"
-        "Use the buttons below to navigate:",
+        "✝️ *እንኳን ወደ Christian vent በሰላም መጡ* \n\n"
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n",
         reply_markup=main_menu,
         parse_mode=ParseMode.MARKDOWN
     )
