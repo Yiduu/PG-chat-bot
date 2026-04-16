@@ -872,7 +872,7 @@ async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, 
         
         # Update the channel message button
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"💬 Comments ({total_comments})", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
+            [InlineKeyboardButton(f"💬 Add/view Comments ({total_comments})", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
         ])
         
         # Try to edit the message in the channel
