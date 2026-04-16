@@ -749,14 +749,13 @@ def static_files(filename):
 # Create main menu keyboard with improved buttons
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("🌟 Share My Thoughts")],
-        [KeyboardButton("👤 Profile"), KeyboardButton("📚 My Posts")],
-        [KeyboardButton("🏆 Leaderboard"), KeyboardButton("⚙️ Settings")],
-        [KeyboardButton("❓ Help")]
+        [KeyboardButton("✍️ Share")],
+        [KeyboardButton("👤 Profile"), KeyboardButton("📚 Posts")],
+        [KeyboardButton("🏆 Top"), KeyboardButton("⚙️ Settings")]
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
-    input_field_placeholder="Choose an option"
+    input_field_placeholder="Choose option"
 )
 # Cancel-only menu for input states
 cancel_menu = ReplyKeyboardMarkup(
@@ -4932,7 +4931,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Handle main menu buttons
-    if text == "🌟 Share My Thoughts":
+    if text == "✍️ Share":
         await update.message.reply_text(
             "📚 *Choose a category:*",
             reply_markup=build_category_buttons(),
@@ -4944,7 +4943,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_updated_profile(user_id, update.message.chat.id, context)
         return 
 
-    elif text == "🏆 Leaderboard":
+    elif text == "🏆 Top":
         await show_leaderboard(update, context)
         return
 
