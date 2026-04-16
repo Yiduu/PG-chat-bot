@@ -2157,33 +2157,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_inbox(update, context)
             return
     
-    # Show main menu with improved buttons
-    keyboard = [
-        [
-            InlineKeyboardButton("🌟 Share My Thoughts", callback_data='ask'),
-            InlineKeyboardButton("👤 View Profile", callback_data='profile')
-        ],
-        [
-            InlineKeyboardButton("📚 My Content", callback_data='my_content_menu'),
-            InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard')
-        ],
-        [
-            InlineKeyboardButton("⚙️ Settings", callback_data='settings'),
-            InlineKeyboardButton("❓ Help", callback_data='help')
-        ]
-    ]
-    
     await update.message.reply_text(
         "✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
         "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN
-    )
-    
-    await update.message.reply_text(
-        "You can also use the buttons below to navigate:",
-        reply_markup=main_menu
     )
 
 async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
@@ -3091,42 +3070,24 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             reply_to_message_id=query.message.reply_to_message.message_id
         )
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [
-            InlineKeyboardButton("🌟 Share My Thoughts", callback_data='ask'),
-            InlineKeyboardButton("👤 View Profile", callback_data='profile')
-        ],
-        [
-            InlineKeyboardButton("📚 My Content", callback_data='my_content_menu'),
-            InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard')
-        ],
-        [
-            InlineKeyboardButton("⚙️ Settings", callback_data='settings'),
-            InlineKeyboardButton("❓ Help", callback_data='help')
-        ]
-    ]
-    
-    if hasattr(update, 'message') and update.message:
-        await update.message.reply_text(
-            "📱 *Main Menu*\nChoose an option below:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+    # If called from a callback query, answer it first
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(
+            "📱 *Main Menu*\nUse the buttons below:",
+            reply_markup=main_menu,
             parse_mode=ParseMode.MARKDOWN
         )
-        
+        # Optional: delete the old inline message to avoid clutter
+        try:
+            await update.callback_query.message.delete()
+        except:
+            pass
+    else:
         await update.message.reply_text(
-            "You can also use these buttons:",
-            reply_markup=main_menu
-        )
-    elif hasattr(update, 'callback_query') and update.callback_query:
-        await update.callback_query.message.reply_text(
-            "📱 *Main Menu*\nChoose an option below:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            "📱 *Main Menu*\nUse the buttons below:",
+            reply_markup=main_menu,
             parse_mode=ParseMode.MARKDOWN
-        )
-        
-        await update.callback_query.message.reply_text(
-            "You can also use these buttons:",
-            reply_markup=main_menu
         )
 
 async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE):
@@ -3633,32 +3594,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         elif query.data == 'menu':
-            keyboard = [
-                [
-                    InlineKeyboardButton("🌟 Share My Thoughts", callback_data='ask'),
-                    InlineKeyboardButton("👤 View Profile", callback_data='profile')
-                ],
-                [
-                    InlineKeyboardButton("📚 My Content", callback_data='my_content_menu'),
-                    InlineKeyboardButton("🏆 Leaderboard", callback_data='leaderboard')
-                ],
-                [
-                    InlineKeyboardButton("⚙️ Settings", callback_data='settings'),
-                    InlineKeyboardButton("❓ Help", callback_data='help')
-                ]
-            ]
+            await query.answer()
+            await query.message.reply_text(
+                "📱 Main Menu\nUse the buttons below:",
+                reply_markup=main_menu,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            # Delete the old inline message to keep chat clean
             try:
-                await query.message.edit_text(
-                    "📱 *Main Menu*\nChoose an option below:",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            except BadRequest:
-                await query.message.reply_text(
-                    "📱 *Main Menu*\nChoose an option below:",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.MARKDOWN
-                )
+                await query.message.delete()
+            except:
+                pass
 
         # Handle cancel input button
         elif query.data == 'cancel_input':
