@@ -750,12 +750,13 @@ def static_files(filename):
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton("🌟 Share My Thoughts")],
-        [KeyboardButton("👤 View Profile"), KeyboardButton("📚 My Previous Posts")],
+        [KeyboardButton("👤 Profile"), KeyboardButton("📚 My Posts")],
         [KeyboardButton("🏆 Leaderboard"), KeyboardButton("⚙️ Settings")],
-        [KeyboardButton("🌐 Web App"), KeyboardButton("❓ Help")]
+        [KeyboardButton("❓ Help")]
     ],
     resize_keyboard=True,
-    one_time_keyboard=False
+    one_time_keyboard=False,
+    input_field_placeholder="Choose an option"
 )
 # Cancel-only menu for input states
 cancel_menu = ReplyKeyboardMarkup(
