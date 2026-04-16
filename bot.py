@@ -1860,7 +1860,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         
         # Create the comments button
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"💬 Comments (0)", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
+            [InlineKeyboardButton(f"💬 Add/View Comments (0)", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
         ])
         
         # Check if this is a thread continuation
