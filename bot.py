@@ -2033,11 +2033,10 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
-    # Check if user exists and create if not - FIXED
+    # Check if user exists and create if not
     user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
     if not user:
         anon = create_anonymous_name(user_id)
-        # FIXED: Properly set is_admin based on ADMIN_ID comparison
         is_admin = str(user_id) == str(ADMIN_ID)
         success = db_execute(
             "INSERT INTO users (user_id, anonymous_name, sex, is_admin) VALUES (%s, %s, %s, %s)",
@@ -2082,60 +2081,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     content = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
                     preview_text = f"💬 *Replying to:*\n{escape_markdown(content, version=2)}"
                 
-                await query.message.reply_text(
+                # FIXED: use update.message (not query.message)
+                await update.message.reply_text(
                     f"{preview_text}\n\n✍️ Please type your comment or send a voice message, GIF, or sticker:\n\nTap ❌ Cancel to return to menu.",
                     reply_markup=cancel_menu,
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
                 return
         
-        # FIXED: Use profileid_ with user_id instead of profile_ with name
         elif arg.startswith("profileid_"):
             target_user_id = arg.split("_", 1)[1]
-            
-            user_data = db_fetch_one(
-                "SELECT * FROM users WHERE user_id = %s",
-                (target_user_id,)
-            )
-            
+            user_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (target_user_id,))
             if user_data:
-                followers = db_fetch_all(
-                    "SELECT * FROM followers WHERE followed_id = %s",
-                    (user_data['user_id'],)
-                )
-                
+                followers = db_fetch_all("SELECT * FROM followers WHERE followed_id = %s", (user_data['user_id'],))
                 rating = calculate_user_rating(user_data['user_id'])
-                
                 current_user_id = user_id
                 btn = []
                 
-                # Follow / Unfollow buttons
                 if user_data['user_id'] != current_user_id:
                     is_following = db_fetch_one(
                         "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
                         (current_user_id, user_data['user_id'])
                     )
-                    
                     if is_following:
-                        btn.append([
-                            InlineKeyboardButton(
-                                "🚫 Unfollow",
-                                callback_data=f'unfollow_{user_data["user_id"]}'
-                            )
-                        ])
-                        btn.append([
-                            InlineKeyboardButton(
-                                "✉️ Send Message",
-                                callback_data=f'message_{user_data["user_id"]}'
-                            )
-                        ])
+                        btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
+                        btn.append([InlineKeyboardButton("✉️ Send Message", callback_data=f'message_{user_data["user_id"]}')])
                     else:
-                        btn.append([
-                            InlineKeyboardButton(
-                                "🫂 Follow",
-                                callback_data=f'follow_{user_data["user_id"]}'
-                            )
-                        ])
+                        btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
                 
                 display_name = get_display_name(user_data)
                 display_sex = get_display_sex(user_data)
@@ -2157,6 +2129,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_inbox(update, context)
             return
     
+    # ----- No deep link: send the main menu (inline keyboard) -----
+    # Create the inline keyboard for the main menu
+    
     await update.message.reply_text(
         "✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2164,7 +2139,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN
     )
-
+    
+    # Also send the reply keyboard (buttons above typing area)
+    await update.message.reply_text(
+        "You can also use the buttons below to navigate:",
+        reply_markup=main_menu
+    )
 async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
     """Show user's inbox with clean, modern UI"""
     user_id = str(update.effective_user.id)
@@ -4963,7 +4943,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return 
 
-    elif text == "👤 View Profile":
+    elif text == "👤 Profile":
         await send_updated_profile(user_id, update.message.chat.id, context)
         return 
 
@@ -4975,7 +4955,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_settings(update, context)
         return
 
-    elif text == "📚 My Previous Posts":
+    elif text == "📚 My Posts":
         await show_my_content_menu(update, context)  # Show menu instead of direct posts
         return
 
