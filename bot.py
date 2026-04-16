@@ -2081,7 +2081,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     content = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
                     preview_text = f"💬 *Replying to:*\n{escape_markdown(content, version=2)}"
                 
-                # FIXED: use update.message (not query.message)
                 await update.message.reply_text(
                     f"{preview_text}\n\n✍️ Please type your comment or send a voice message, GIF, or sticker:\n\nTap ❌ Cancel to return to menu.",
                     reply_markup=cancel_menu,
@@ -2129,14 +2128,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_inbox(update, context)
             return
     
-    # ----- No deep link: send the main menu (inline keyboard) -----
-    # Create the inline keyboard for the main menu
-    
+    # ----- NO INLINE KEYBOARD – only the reply menu -----
     await update.message.reply_text(
-        "✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n የሚከተሉትን ምረጡ :",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        "✝️ *እንኳን ወደ Christian vent በሰላም መጡ* ✝️\n\n"
+        "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n"
+        "Use the buttons below to navigate:",
+        reply_markup=main_menu,
         parse_mode=ParseMode.MARKDOWN
     )
     
