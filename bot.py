@@ -4950,7 +4950,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_settings(update, context)
         return
 
-    elif text == "📚 My Posts":
+    elif text == "📚 Posts":
         await show_my_content_menu(update, context)  # Show menu instead of direct posts
         return
 
