@@ -3811,17 +3811,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (post_id, user_id)
                 )
                 
-                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-                preview_text = "Original content not found"
-                if post:
-                    content = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
-                    # Use simple text without markdown for preview
-                    preview_text = f"💬 Replying to:\n{content}"
-                
                 await query.message.reply_text(
-                    f"{preview_text}\n\n✍️ Please type your comment or send a voice message, GIF, or sticker:\n\nTap ❌ Cancel to return to menu.",
+                    "✍️ Please type your comment or send a voice message, GIF, or sticker:\n\nTap ❌ Cancel to return to menu.",
                     reply_markup=cancel_menu,
-                    parse_mode=ParseMode.HTML  # Changed to HTML to avoid markdown issues
+                    parse_mode=ParseMode.HTML
                 )
                 return
         # FIXED: Like/Dislike reaction handling
@@ -4150,42 +4143,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (post_id, comment_id, user_id)
                 )
                 
-                comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
-                preview_text = "Original comment not found"
-                if comment:
-                    content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
-                    # Use simple text without markdown for preview
-                    preview_text = f"💬 Replying to:\n{content}"
-                
                 await query.message.reply_text(
-                    f"{preview_text}\n\n↩️ Please type your *reply* or send a voice message, GIF, or sticker:\n\nTap ❌ Cancel to return to menu.",
+                    "↩️ Please type your reply or send a voice message, GIF, or sticker:\n\nTap ❌ Cancel to return to menu.",
                     reply_markup=cancel_menu,
-                    parse_mode=ParseMode.HTML  # Changed to HTML
+                    parse_mode=ParseMode.HTML
                 )
                 
         elif query.data.startswith("replytoreply_"):
             parts = query.data.split("_")
             if len(parts) == 4:
                 post_id = int(parts[1])
-                # parts[2] is the immediate parent id (not needed for storage)
-                comment_id = int(parts[3])   # this is the comment/reply the user is replying TO
-                # Store the exact comment id being replied to in comment_idx
+                comment_id = int(parts[3])
                 db_execute(
                     "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
                     (post_id, comment_id, user_id)
                 )
-        
-                comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
-                preview_text = "Original reply not found"
-                if comment:
-                    content = comment['content'][:100] + '...' if len(comment['content']) > 100 else comment['content']
-                    # Use simple text without markdown for preview
-                    preview_text = f"💬 Replying to:\n{content}"
-        
+                
                 await query.message.reply_text(
-                    f"{preview_text}\n\n↩️ Please type your *reply* or send a voice message, GIF, or sticker:\n\nTap ❌ Cancel to return to menu.",
+                    "↩️ Please type your reply or send a voice message, GIF, or sticker:\n\nTap ❌ Cancel to return to menu.",
                     reply_markup=cancel_menu,
-                    parse_mode=ParseMode.HTML  # Changed to HTML
+                    parse_mode=ParseMode.HTML
                 )
         # UPDATED: Handle Previous Posts pagination
         elif query.data.startswith('show_more_replies_'):
