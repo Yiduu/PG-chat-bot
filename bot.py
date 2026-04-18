@@ -2837,6 +2837,14 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=main_menu)
         return
 
+    # Show loading toast if triggered by a button
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer("🔄 Loading comments...", show_alert=False)
+        except Exception as e:
+            logger.error(f"Error answering comment callback: {e}")
+
     post_author_id = post['author_id']
 
     per_page = 10  # All comments (parents + replies) per page
@@ -3565,10 +3573,8 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    try:
-        await query.answer()
-    except Exception as e:
-        logger.error(f"Error answering callback query: {e}")
+    # We will call query.answer() with specific text in the branches below
+    # to show the premium "black toast" loading animations.
     
     user_id = str(query.from_user.id)
     
@@ -3589,6 +3595,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif query.data.startswith('category_'):
+            await query.answer("✍️ Opening Category...", show_alert=False)
             category = query.data.split('_', 1)[1]
             db_execute(
                 "UPDATE users SET waiting_for_post = TRUE, selected_category = %s WHERE user_id = %s",
@@ -3602,7 +3609,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         elif query.data == 'menu':
-            await query.answer()
+            await query.answer("📱 Opening Menu...", show_alert=False)
             await query.message.reply_text(
                 "📱 Main Menu\nUse the buttons below:",
                 reply_markup=main_menu,
@@ -3643,14 +3650,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif query.data == 'profile':
+            await query.answer("👤 Loading Profile...", show_alert=False)
             await send_updated_profile(user_id, query.message.chat.id, context)
 
         elif query.data == 'leaderboard':
-            await query.answer()
+            await query.answer("🏆 Loading Leaderboard...", show_alert=False)
             await typing_animation(context, query.message.chat_id, 0.3)
             await show_leaderboard(update, context)
 
         elif query.data == 'settings':
+            await query.answer("⚙️ Loading Settings...", show_alert=False)
             await show_settings(update, context)
 
         elif query.data == 'toggle_notifications':
@@ -3674,6 +3683,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_settings(update, context)
 
         elif query.data == 'help':
+            await query.answer("ℹ️ Loading Help...", show_alert=False)
             help_text = (
                 "ℹ️ *የዚህ ቦት አጠቃቀም:*\n"
                 "•  menu button በመጠቀም የተለያዩ አማራጮችን ማየት ይችላሉ.\n"
@@ -3687,6 +3697,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
         elif query.data == 'about':
+            await query.answer("ℹ️ Loading About...", show_alert=False)
             about_text = (
                 "👤 Creator: Yididiya Tamiru\n\n"
                 "🔗 Telegram: @YIDIDIYATAMIRUU\n"
@@ -3696,6 +3707,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(about_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
         elif query.data == 'edit_name':
+            await query.answer("✏️ Renaming...", show_alert=False)
             db_execute(
                 "UPDATE users SET awaiting_name = TRUE WHERE user_id = %s",
                 (user_id,)
@@ -3707,6 +3719,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif query.data == 'edit_sex':
+            await query.answer("⚧️ Changing sex...", show_alert=False)
             btns = [
                 [InlineKeyboardButton("👨 Male", callback_data='sex_male')],
                 [InlineKeyboardButton("👩 Female", callback_data='sex_female')]
@@ -3729,6 +3742,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_updated_profile(user_id, query.message.chat.id, context)
 
         elif query.data.startswith(('follow_', 'unfollow_')):
+            await query.answer("👤 Updating Follow...", show_alert=False)
             target_uid = query.data.split('_', 1)[1]
             if query.data.startswith('follow_'):
                 try:
@@ -3747,6 +3761,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_updated_profile(target_uid, query.message.chat.id, context)
         
         elif query.data.startswith('viewcomments_'):
+            await query.answer("🔄 Loading comments...", show_alert=False)
             try:
                 parts = query.data.split('_')
                 if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
@@ -3758,6 +3773,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Error loading comments")
   
         elif query.data.startswith('writecomment_'):
+            await query.answer("✍️ Opening Writer...", show_alert=False)
             post_id_str = query.data.split('_', 1)[1]
             if post_id_str.isdigit():
                 post_id = int(post_id_str)
@@ -4141,7 +4157,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_my_content_menu(update, context)
 
         elif query.data.startswith("my_posts_"):
-            await query.answer()
+            await query.answer("📚 Loading your posts...", show_alert=False)
             await typing_animation(context, query.message.chat_id, 0.3)
             try:
                 page = int(query.data.split('_')[2])
@@ -4153,7 +4169,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_previous_posts(update, context, 1)
 
         elif query.data.startswith("viewpost_"):
-            await query.answer()
+            await query.answer("📄 Loading vent...", show_alert=False)
             await typing_animation(context, query.message.chat_id, 0.3)
             try:
                 parts = query.data.split('_')
@@ -4169,7 +4185,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Error loading post", show_alert=True)
 
         elif query.data.startswith('my_comments_'):
-            await query.answer()
+            await query.answer("🗨️ Loading your comments...", show_alert=False)
             await typing_animation(context, query.message.chat_id, 0.3)
             try:
                 page = int(query.data.split('_')[2])
