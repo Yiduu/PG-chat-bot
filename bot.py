@@ -666,7 +666,7 @@ def login_page():
 <body>
     <div class="login-container">
         <div class="brand">
-            <img src="/static/images/vent$20logo.png" class="logo" alt="Christian Vent Logo">
+            <img src="/static/images/vent%20logo.jpg" class="logo" alt="Christian Vent Logo">
             <h1 class="title">CHRISTIAN VENT</h1>
         </div>
         <p>Share your thoughts anonymously with the Christian community</p>
@@ -6077,10 +6077,10 @@ def mini_app_page():
         <!-- Header -->
         <header class="app-header">
             <div class="brand">
-                <img src="/static/images/vent$20logo.png" class="logo" alt="Christian Vent Logo">
+                <img src="/static/images/vent%20logo.png" class="logo" alt="Christian Vent Logo">
                 <h1 class="app-title">{app_name}</h1>
             </div>
-            <p class="app-subtitle">A safe space for Christian anonymous venting</p>
+            <p class="app-subtitle">A safe space to vent anonymously</p>
             <div id="userInfo" class="user-info" style="margin-top: 15px; display: none;"></div>
         </header>
 
@@ -6114,8 +6114,8 @@ def mini_app_page():
             <!-- Vent Tab -->
             <div id="vent-tab" class="tab-pane active">
                 <div class="glass-card">
-                    <h2 class="form-title">Spiritual Venting</h2>
-                    <p class="form-description">Share your burdens anonymously. Your identity is protected by your soulful aura.</p>
+                    <h2 class="form-title">Share Your Thoughts</h2>
+                    <p class="form-description">Share your struggles anonymously. Your identity is always hidden.</p>
 
                     <select class="category-select" id="categorySelect">
                         <option value="PrayForMe">🙏 Pray For Me</option>
@@ -6134,7 +6134,7 @@ def mini_app_page():
                     <textarea 
                         class="vent-textarea" 
                         id="ventText" 
-                        placeholder="What's on your heart? Share your thoughts, prayers, or struggles..."
+                        placeholder="What's on your mind?..."
                         maxlength="5000"
                     ></textarea>
 
@@ -6144,10 +6144,10 @@ def mini_app_page():
                     </div>
 
                     <button class="submit-btn" id="submitVent">
-                        Publish Heart Vent
+                        Post Anonymously
                     </button>
 
-                    <p class="form-note">Soulful posts are reviewed for community safety</p>
+                    <p class="form-note">Posts are reviewed briefly to keep our community safe</p>
                 </div>
             </div>
 
@@ -6160,7 +6160,7 @@ def mini_app_page():
                 </div>
                 <div class="posts-container" id="postsContainer">
                     <!-- Cards will be injected as glass-cards via JS -->
-                    <div class="loading">Aligning spiritual feed...</div>
+                    <div class="loading">Loading posts...</div>
                 </div>
             </div>
 
@@ -6168,12 +6168,12 @@ def mini_app_page():
             <!-- Leaderboard Tab -->
             <div id="leaderboard-tab" class="tab-pane">
                 <div class="section-header" style="padding: 0 10px;">
-                    <h2 class="section-title">Prestige Ranking</h2>
+                    <h2 class="section-title">Leaderboard</h2>
                     <button class="refresh-btn" id="refreshLeaderboard" style="background: rgba(var(--primary-rgb), 0.1); border-color: rgba(var(--primary-rgb), 0.2);">↻ Refresh</button>
                 </div>
                 <div class="glass-card" style="padding: 0; overflow: hidden;">
                     <div class="leaderboard-container" id="leaderboardContainer">
-                        <div class="loading">Fetching elite contributors...</div>
+                        <div class="loading">Loading leaderboard...</div>
                     </div>
                 </div>
             </div>
@@ -6182,7 +6182,7 @@ def mini_app_page():
             <!-- Profile Tab -->
             <div id="profile-tab" class="tab-pane">
                 <div id="profileContainer">
-                    <div class="loading">Ascending to your profile...</div>
+                    <div class="loading">Loading profile...</div>
                 </div>
             </div>
 
@@ -6391,7 +6391,7 @@ def mini_app_page():
                     if (data.success) {{
                         this.renderPosts(data.data);
                     }} else {{
-                        container.innerHTML = `<div class="message error-message">Failed to load spiritual feed.</div>`;
+                        container.innerHTML = `<div class="message error-message">Failed to load posts.</div>`;
                     }}
                 }} catch (error) {{
                     container.innerHTML = `<div class="message error-message">Network error. Check connection.</div>`;
@@ -6406,8 +6406,8 @@ def mini_app_page():
                 if (!posts || posts.length === 0) {{
                     container.innerHTML = `
                         <div class="glass-card" style="text-align: center;">
-                            <h3 style="color: var(--primary);">Silence of Soul</h3>
-                            <p style="opacity: 0.6; margin: 15px 0;">Be the first to break the sacred silence.</p>
+                            <h3 style="color: var(--primary);">No Posts Yet</h3>
+                            <p style="opacity: 0.6; margin: 15px 0;">Be the first to share something.</p>
                             <button onclick="app.switchTab('vent')" class="submit-btn" style="padding: 10px 20px; font-size: 0.9rem;">Start Venting</button>
                         </div>
                     `;
