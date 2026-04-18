@@ -962,6 +962,8 @@ async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, 
     except BadRequest as e:
         if "message is not modified" not in str(e).lower():
             logger.error(f"Failed to update comment count in channel: {e}")
+
+
     except Exception as e:
         logger.error(f"Error updating channel post comment count: {e}")
 
@@ -1007,14 +1009,17 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     
     # Create clean header
-    leaderboard_text = "*🏆 Christian Vent Leaderboard*\n\n"
+    leaderboard_text = rf"*🏆 Christian Vent Leaderboard*\n\n"
     
     # Define medal emojis for top 3
     medal_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
     
     # Format each user
     for idx, user in enumerate(top_users, start=1):
-        aura = format_aura(user['total'])
+        safe_name = escape_markdown(user['anonymous_name'], version=2)
+        safe_sex = escape_markdown(user['sex'], version=2)
+        safe_total = escape_markdown(str(user['total']), version=2)
+        safe_aura = escape_markdown(format_aura(user['total']), version=2)
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{user['user_id']}"
         
         # Create clean line
@@ -1023,11 +1028,14 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             rank_prefix = f"{idx}."
         
+        safe_rank = escape_markdown(rank_prefix, version=2)
+
         leaderboard_text += (
-            f"{rank_prefix} {user['sex']} "
-            f"[{user['anonymous_name']}]({profile_link})\n"
-            f"   {user['total']} pts {aura}\n\n"
+            rf"{safe_rank} {safe_sex} "
+            rf"[{safe_name}]({profile_link})\n"
+            rf"   {safe_total} pts {safe_aura}\n\n"
         )
+
     
     # Add current user's rank
     user_id = str(update.effective_user.id)
@@ -1037,14 +1045,18 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data = db_fetch_one("SELECT anonymous_name, sex FROM users WHERE user_id = %s", (user_id,))
         if user_data:
             user_contributions = calculate_user_rating(user_id)
-            aura = format_aura(user_contributions)
-            profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{user_id}"
+            safe_user_name = escape_markdown(user_data['anonymous_name'], version=2)
+            safe_user_sex = escape_markdown(user_data['sex'], version=2)
+            safe_user_aura = escape_markdown(format_aura(user_contributions), version=2)
+            safe_user_pts = escape_markdown(str(user_contributions), version=2)
+            safe_user_rank = escape_markdown(str(user_rank), version=2)
             
-            leaderboard_text += f"*Your position:* {user_rank}\n"
-            leaderboard_text += f"{user_data['sex']} {user_data['anonymous_name']} • {user_contributions} pts {aura}\n\n"
+            leaderboard_text += rf"*Your position:* {safe_user_rank}\n"
+            leaderboard_text += rf"{safe_user_sex} {safe_user_name} • {safe_user_pts} pts {safe_user_aura}\n\n"
     
     # Add subtle footer
-    leaderboard_text += "_Click names to view profiles • Updated daily_"
+    leaderboard_text += rf"_Click names to view profiles • Updated daily_"
+
     
     # Create clean buttons
     keyboard = [
@@ -1184,10 +1196,11 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
                 thread_text = f"🔄 *Threading from previous post:*\n{escape_markdown(thread_preview, version=2)}\n\n"
     
     preview_text = (
-        f"{thread_text}📝 *Post Preview* [{category}]\n\n"
-        f"{escape_markdown(post_content, version=2)}\n\n"
-        f"Please confirm your post:"
+        rf"{thread_text}📝 *Post Preview* [{escape_markdown(category, 2)}]\n\n"
+        rf"{escape_markdown(post_content, version=2)}\n\n"
+        rf"Please confirm your post\:"
     )
+
     
     context.user_data['pending_post'] = {
         'content': post_content,
@@ -1274,12 +1287,17 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
         post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
         
+        safe_replier_name = escape_markdown(replier_name, version=2)
+        safe_post_preview = escape_markdown(post_preview, version=2)
+        safe_comment_preview = escape_markdown(comment['content'][:100], version=2)
+
         notification_text = (
-            f"💬 {replier_name} replied to your comment:\n\n"
-            f"🗨 {escape_markdown(comment['content'][:100], version=2)}\n\n"
-            f"📝 Post: {escape_markdown(post_preview, version=2)}\n\n"
-            f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+            rf"💬 {safe_replier_name} replied to your comment\:\n\n"
+            rf"🗨 {safe_comment_preview}\n\n"
+            rf"📝 Post\: {safe_post_preview}\n\n"
+            rf"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
         )
+
         
         await context.bot.send_message(
             chat_id=original_author['user_id'],
@@ -1339,12 +1357,16 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         # Truncate long messages for the notification
         preview_content = message_content[:100] + '...' if len(message_content) > 100 else message_content
         
+        safe_sender_name = escape_markdown(sender_name, version=2)
+        safe_preview_content = escape_markdown(preview_content, version=2)
+
         notification_text = (
-            f"📩 *New Private Message*\n\n"
-            f"👤 From: {escape_markdown(sender_name, version=2)}\n\n"
-            f"💬 {escape_markdown(preview_content, version=2)}\n\n"
-            f"💭 _Use /inbox to view all messages_"
+            rf"📩 *New Private Message*\n\n"
+            rf"👤 From: {safe_sender_name}\n\n"
+            rf"💬 {safe_preview_content}\n\n"
+            rf"💭 _Use /inbox to view all messages_"
         )
+
         
         # Create inline keyboard with reply and block buttons
         keyboard = InlineKeyboardMarkup([
@@ -2229,20 +2251,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 is_target_admin = user_data.get('is_admin', False)
                 if is_target_admin:
+                    # Standardize escaping for V2
+                    safe_name = escape_markdown(display_name, version=2)
+                    safe_sex = escape_markdown(display_sex, version=2)
+                    safe_bio = escape_markdown(bio, version=2)
+                    
                     profile_text = (
-                        f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
-                        f"🛡 *Role:* Administrator\n"
-                        f"👥 *Followers:* {len(followers)}\n\n"
-                        f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
+                        rf"👤 *{safe_name}* {safe_sex}\n\n"
+                        rf"🛡 *Role:* Administrator\n"
+                        rf"👥 *Followers:* {len(followers)}\n\n"
+                        rf"📖 *About:*\n_{safe_bio}_\n"
                     )
                 else:
+                    # Standardize escaping for V2
+                    safe_name = escape_markdown(display_name, version=2)
+                    safe_sex = escape_markdown(display_sex, version=2)
+                    safe_bio = escape_markdown(bio, version=2)
+                    safe_level = escape_markdown(str(level), version=2)
+                    safe_rating = escape_markdown(str(rating), version=2)
+                    safe_aura = escape_markdown(format_aura(rating), version=2)
+
                     profile_text = (
-                        f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
-                        f"✨ *Aura Level:* {level} \({format_aura(rating)}\)\n"
-                        f"⭐️ *Points:* {rating}\n"
-                        f"👥 *Followers:* {len(followers)}\n\n"
-                        f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
+                        rf"👤 *{safe_name}* {safe_sex}\n\n"
+                        rf"✨ *Aura Level:* {safe_level} \({safe_aura}\)\n"
+                        rf"⭐️ *Points:* {safe_rating}\n"
+                        rf"👥 *Followers:* {len(followers)}\n\n"
+                        rf"📖 *About:*\n_{safe_bio}_\n"
                     )
+
 
                 
                 await update.message.reply_text(
@@ -3212,7 +3248,6 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 )
             except Exception as e:
                 logger.error(f"Error sending additional replies button: {e}")
-                # Fallback: send without reply_to_id
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text="🗨 *Even more replies below:*",
@@ -3257,8 +3292,8 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     
     bio = user.get('bio', 'No bio set.')
     level = (rating // 10) + 1
+    follower_count = len(followers)
     
-    # PREMIUM Redesign
     # PREMIUM Grid Layout
     kb = InlineKeyboardMarkup([
         [
@@ -3279,25 +3314,33 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     
     is_admin = user.get('is_admin', False)
     
+    # Standardize escaping for V2
+    safe_name = escape_markdown(display_name, version=2)
+    safe_sex = escape_markdown(display_sex, version=2)
+    safe_bio = escape_markdown(bio, version=2)
+    safe_level = escape_markdown(str(level), version=2)
+    safe_rating = escape_markdown(str(rating), version=2)
+    safe_aura = escape_markdown(format_aura(rating), version=2)
+    follower_count = len(followers)
+
+    
     if is_admin:
         profile_text = (
-            f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
-            f"🛡 *Role:* Administrator\n"
-            f"👥 *Followers:* {len(followers)}\n\n"
-            f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
-            f"_Use /menu to return_"
+            rf"👤 *{safe_name}* {safe_sex}\n\n"
+            rf"🛡 *Role:* Administrator\n"
+            rf"👥 *Followers:* {follower_count}\n\n"
+            rf"📖 *About:*\n_{safe_bio}_\n"
+            rf"_Use /menu to return_"
         )
     else:
         profile_text = (
-            f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
-            f"✨ *Aura Level:* {level} \({format_aura(rating)}\)\n"
-            f"⭐️ *Points:* {rating}\n"
-            f"👥 *Followers:* {len(followers)}\n\n"
-            f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
-            f"_Use /menu to return_"
+            rf"👤 *{safe_name}* {safe_sex}\n\n"
+            rf"✨ *Aura Level:* {safe_level} \({safe_aura}\)\n"
+            rf"⭐️ *Points:* {safe_rating}\n"
+            rf"👥 *Followers:* {follower_count}\n\n"
+            rf"📖 *About:*\n_{safe_bio}_\n"
+            rf"_Use /menu to return_"
         )
-
-
     
     await context.bot.send_message(
         chat_id=chat_id,
@@ -3330,8 +3373,9 @@ async def show_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TY
     text = (
         "🎭 *Select Avatar Emoji*\n\n"
         "Choose an emoji to display next to your name:\n\n"
-        "_This will appear on your profile, comments, and the leaderboard\._"
+        rf"_This will appear on your profile, comments, and the leaderboard\._"
     )
+
     
     await query.message.edit_text(
         text,
@@ -3695,16 +3739,20 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         
         reply_markup = InlineKeyboardMarkup(keyboard)
     else:
-        text = f"💬 \\*My Comments\\* \\(Page {page}/{total_pages}\\)\n\n"
+        safe_page = escape_markdown(str(page), version=2)
+        safe_total_pages = escape_markdown(str(total_pages), version=2)
+        text = rf"💬 *My Comments* \(Page {safe_page}/{safe_total_pages}\)\n\n"
         
         for idx, comment in enumerate(comments):
             comment_num = (page - 1) * per_page + idx + 1
+            safe_num = escape_markdown(str(comment_num), version=2)
             
             # Truncate content
             comment_preview = comment['content'][:80] + '...' if len(comment['content']) > 80 else comment['content']
-            escaped_comment_preview = escape_markdown(comment_preview, version=2)
+            safe_comment_preview = escape_markdown(comment_preview, version=2)
             
-            text += f"\\*\\*{comment_num}\\.\\*\\* {escaped_comment_preview}\n\n"
+            text += rf"**{safe_num}.** {safe_comment_preview}\n\n"
+
         
         # Build keyboard
         keyboard = []
@@ -4135,12 +4183,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reaction_icon = "✨" if reaction_type == 'like' else "⚠️"
                         
                         notification_text = (
-                            f"{reaction_icon} *New Interaction\!*\n\n"
-                            f"👤 {escape_markdown(reactor_name, version=2)} *{reaction_label}* your comment\:\n\n"
-                            f"🗨 _{escape_markdown(comment['content'][:150], version=2)}_\n\n"
-                            f"📝 *Post Context\:*\n{escape_markdown(post_preview, version=2)}\n\n"
-                            f"🔗 [View Discussion](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+                            rf"{reaction_icon} *New Interaction\!*\n\n"
+                            rf"👤 {escape_markdown(reactor_name, version=2)} *{reaction_label}* your comment\:\n\n"
+                            rf"🗨 _{escape_markdown(comment['content'][:150], version=2)}_\n\n"
+                            rf"📝 *Post Context\:*\n{escape_markdown(post_preview, version=2)}\n\n"
+                            rf"🔗 [View Discussion](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
                         )
+
                         
                         await context.bot.send_message(
                             chat_id=comment_author['user_id'],
@@ -5747,6 +5796,7 @@ def mini_app_page():
         }}
 
         /* Bottom Navigation Bar */
+        /* Bottom Navigation Bar */
         .bottom-nav {{
             position: fixed;
             bottom: 20px;
@@ -5766,7 +5816,7 @@ def mini_app_page():
             z-index: 1000;
             box-shadow: 0 15px 40px rgba(0,0,0,0.5);
             padding: 0 10px;
-        }
+        }}
         
         .nav-item {{
             display: flex;
@@ -5780,13 +5830,13 @@ def mini_app_page():
             flex: 1;
             padding: 10px 0;
             border-radius: 15px;
-        }
+        }}
         
         .nav-item.active {{
             opacity: 1;
             color: var(--primary);
             background: rgba(var(--primary-rgb), 0.1);
-        }
+        }}
         
         .nav-icon {{ font-size: 1.4rem; }}
         .nav-label {{ font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }}
@@ -5802,7 +5852,7 @@ def mini_app_page():
             font-family: inherit;
             font-size: 1rem;
             transition: all 0.3s ease;
-        }
+        }}
         
         /* Feed & Card Styles */
         .post-card {{
@@ -5812,14 +5862,14 @@ def mini_app_page():
             padding: 20px;
             margin-bottom: 20px;
             transition: all 0.3s;
-        }
+        }}
         
         .post-author {{
             display: flex;
             align-items: center;
             gap: 12px;
             margin-bottom: 15px;
-        }
+        }}
         
         .author-icon {{
             width: 45px;
@@ -5831,7 +5881,7 @@ def mini_app_page():
             align-items: center;
             justify-content: center;
             border: 1px solid rgba(var(--primary-rgb), 0.2);
-        }
+        }}
         
         .form-note {{
             text-align: center;
@@ -5839,322 +5889,99 @@ def mini_app_page():
             font-size: 0.9rem;
             opacity: 0.7;
         }}
-        
-        /* Posts Section */
-        .posts-container {{
-            margin-top: 10px;
-        }}
-        
+
+        /* Shared Components */
         .section-header {{
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            margin: 25px 0 15px;
+            padding: 0 5px;
         }}
-        
+
         .section-title {{
-            color: var(--primary);
-            font-weight: 600;
-            margin: 0;
-            font-family: 'Oswald', sans-serif;
-            font-size: 1.3rem;
-            text-transform: uppercase;
-        }}
-        
-        .refresh-btn {{
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            color: var(--text);
-            padding: 8px 16px;
-            border-radius: 20px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            transition: all 0.3s;
-        }}
-        
-        .refresh-btn:hover {{
-            background: var(--primary);
-            color: var(--secondary);
-        }}
-        
-        /* Post Cards */
-        .post-card {{
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 15px;
-            transition: all 0.3s;
-            cursor: pointer;
-        }}
-        
-        .post-card:hover {{
-            border-color: var(--primary);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
-        }}
-        
-        .post-header {{
-            display: flex;
-            align-items: center;
-            margin-bottom: 15px;
-        }}
-        
-        .author-avatar {{
-            width: 40px;
-            height: 40px;
-            background: rgba(var(--primary-rgb), 0.2);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--primary);
-            font-weight: bold;
-            margin-right: 12px;
-        }}
-        
-        .author-info h4 {{
-            font-size: 1rem;
-            font-weight: 500;
-            margin: 0 0 5px 0;
-            font-family: 'Oswald', sans-serif;
-            color: var(--text);
-        }}
-        
-        .post-meta {{
-            font-size: 0.85rem;
-            opacity: 0.8;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        
-        .post-category {{
-            display: inline-block;
-            background: rgba(var(--primary-rgb), 0.1);
-            color: var(--primary);
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-        }}
-        
-        .post-content {{
-            margin: 15px 0;
-            line-height: 1.7;
-            font-size: 1rem;
-        }}
-        
-        .post-footer {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 1px solid var(--border);
-            font-size: 0.9rem;
-            opacity: 0.8;
-        }}
-        
-        /* Leaderboard */
-        .leaderboard-container {{
-            background: var(--card-bg);
-            border-radius: 12px;
-            border: 1px solid var(--border);
-            overflow: hidden;
-        }}
-        
-        .leaderboard-item {{
-            display: flex;
-            align-items: center;
-            padding: 15px 20px;
-            border-bottom: 1px solid var(--border);
-            transition: background 0.3s;
-        }}
-        
-        .leaderboard-item:last-child {{
-            border-bottom: none;
-        }}
-        
-        .leaderboard-item:hover {{
-            background: rgba(var(--primary-rgb), 0.05);
-        }}
-        
-        .leaderboard-rank {{
-            width: 40px;
             font-size: 1.2rem;
-            font-weight: 600;
             color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }}
-        
-        .rank-1 {{ color: gold; }}
-        .rank-2 {{ color: silver; }}
-        .rank-3 {{ color: #cd7f32; }}
-        
-        .leaderboard-user {{
-            flex: 1;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }}
-        
-        .user-avatar-small {{
-            width: 40px;
-            height: 40px;
-            background: rgba(var(--primary-rgb), 0.2);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
+
+        .refresh-btn {{
+            background: rgba(var(--primary-rgb), 0.1);
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
             color: var(--primary);
-        }}
-        
-        .user-info-small h4 {{
-            font-size: 1rem;
-            font-weight: 500;
-            margin: 0 0 4px 0;
-            font-family: 'Oswald', sans-serif;
-            color: var(--text);
-        }}
-        
-        .user-info-small p {{
-            font-size: 0.85rem;
-            opacity: 0.7;
-            margin: 0;
-        }}
-        
-        .leaderboard-points {{
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: var(--primary);
-        }}
-        
-        /* Profile */
-        .profile-container {{
-            background: var(--card-bg);
+            padding: 6px 12px;
             border-radius: 12px;
-            border: 1px solid var(--border);
-            padding: 25px;
-        }}
-        
-        .profile-header {{
-            text-align: center;
-            margin-bottom: 25px;
-        }}
-        
-        .profile-avatar {{
-            width: 100px;
-            height: 100px;
-            background: rgba(var(--primary-rgb), 0.2);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 2.5rem;
-            color: var(--primary);
-            margin: 0 auto 15px;
-        }}
-        
-        .profile-header h2 {{
-            font-size: 1.8rem;
-            margin: 0 0 10px 0;
+            font-size: 0.8rem;
+            cursor: pointer;
             font-family: 'Oswald', sans-serif;
-            font-weight: 600;
+            transition: all 0.3s ease;
         }}
-        
-        .profile-rating {{
+
+        .refresh-btn:hover {{
+            background: rgba(var(--primary-rgb), 0.2);
+            transform: scale(1.05);
+        }}
+
+        .identity-badge {{
             display: inline-flex;
             align-items: center;
             gap: 8px;
             background: rgba(var(--primary-rgb), 0.1);
             padding: 8px 16px;
             border-radius: 20px;
-            margin-top: 10px;
+            font-size: 0.85rem;
+            color: var(--text);
+            border: 1px solid rgba(var(--primary-rgb), 0.1);
         }}
-        
-        /* Footer */
-        .app-footer {{
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid var(--border);
-            text-align: center;
-            font-size: 0.9rem;
-            opacity: 0.7;
+
+        .aura-sticker {{
+            font-size: 1.2rem;
+            filter: drop-shadow(0 0 5px rgba(255,255,255,0.3));
         }}
-        
-        .telegram-link {{
-            color: var(--primary);
-            text-decoration: none;
-        }}
-        
-        .telegram-link:hover {{
-            text-decoration: underline;
-        }}
-        
-        /* Messages */
-        .message {{
+
+        /* Leaderboard Specifics */
+        .lb-item {{
+            display: flex;
+            align-items: center;
             padding: 15px;
-            border-radius: 8px;
-            margin: 15px 0;
-            text-align: center;
-            animation: slideIn 0.3s ease;
+            gap: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            transition: background 0.3s ease;
         }}
-        
-        .error-message {{
-            background: rgba(255, 0, 0, 0.1);
-            border: 1px solid rgba(255, 0, 0, 0.3);
-            color: #ff6b6b;
-        }}
-        
-        .success-message {{
-            background: rgba(0, 255, 0, 0.1);
-            border: 1px solid rgba(0, 255, 0, 0.3);
-            color: #51cf66;
-        }}
-        
-        @keyframes slideIn {{
-            from {{ opacity: 0; transform: translateY(-10px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
-        
-        /* Loading */
-        .loading {{
-            text-align: center;
-            padding: 40px;
+
+        .lb-item:hover {{ background: rgba(255,255,255,0.03); }}
+
+        .lb-rank {{
+            width: 30px;
+            font-family: 'Oswald';
+            font-size: 1.2rem;
+            font-weight: 700;
             color: var(--primary);
         }}
-        
-        /* Empty States */
-        .empty-state {{
-            text-align: center;
-            padding: 40px;
-            opacity: 0.7;
+
+        .rank-1 {{ color: #FFD700; font-size: 1.5rem; }}
+        .rank-2 {{ color: #C0C0C0; }}
+        .rank-3 {{ color: #CD7F32; }}
+
+        /* Skeleton Loading Animation */
+        .skeleton {{
+            background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%);
+            background-size: 200% 100%;
+            animation: loading 1.5s infinite;
+            border-radius: 15px;
+            margin-bottom: 15px;
         }}
-        
-        /* Responsive */
-        @media (max-width: 768px) {{
-            .app-container {{
-                padding: 15px;
-            }}
-            
-            .app-title {{
-                font-size: 1.5rem;
-            }}
-            
-            .tab-btn {{
-                padding: 12px;
-                font-size: 0.85rem;
-            }}
-            
-            .vent-form-container {{
-                padding: 20px;
-            }}
-            
-            .post-card {{
-                padding: 15px;
-            }}
+
+        @keyframes loading {{
+            0% {{ background-position: 200% 0; }}
+            100% {{ background-position: -200% 0; }}
         }}
+
+
+        
     </style>
+
 </head>
 <body>
     <!-- Particle canvas (behind everything) -->
