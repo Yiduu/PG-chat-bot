@@ -3210,15 +3210,21 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     level = (rating // 10) + 1
     
     # PREMIUM Redesign
+    # PREMIUM Grid Layout
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
-        [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
-        [InlineKeyboardButton("📝 Set My Bio", callback_data='edit_bio')],
-        [InlineKeyboardButton("🎭 Set Avatar Emoji", callback_data='select_avatar')],
-        [InlineKeyboardButton("📚 My Content", callback_data='my_content_menu')],
-
-        [InlineKeyboardButton("📭 Inbox", callback_data='inbox')],
-        [InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
+        [
+            InlineKeyboardButton("✏️ Name", callback_data='edit_name'),
+            InlineKeyboardButton("⚧️ Sex", callback_data='edit_sex'),
+            InlineKeyboardButton("📝 Bio", callback_data='edit_bio')
+        ],
+        [
+            InlineKeyboardButton("🎭 Avatar", callback_data='select_avatar'),
+            InlineKeyboardButton("📚 Content", callback_data='my_content_menu')
+        ],
+        [
+            InlineKeyboardButton("📭 Inbox", callback_data='inbox'),
+            InlineKeyboardButton("⚙️ Settings", callback_data='settings')
+        ],
         [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
     ])
     
@@ -3275,7 +3281,7 @@ async def show_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TY
     text = (
         "🎭 *Select Avatar Emoji*\n\n"
         "Choose an emoji to display next to your name:\n\n"
-        "_This will appear on your profile, comments, and the leaderboard._"
+        "_This will appear on your profile, comments, and the leaderboard\._"
     )
     
     await query.message.edit_text(
