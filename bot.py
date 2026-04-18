@@ -777,6 +777,7 @@ main_menu = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
+    is_persistent=True,
     input_field_placeholder="Choose option"
 )
 # Cancel-only menu for input states
@@ -785,7 +786,8 @@ cancel_menu = ReplyKeyboardMarkup(
         [KeyboardButton("❌ Cancel")]
     ],
     resize_keyboard=True,
-    one_time_keyboard=False
+    one_time_keyboard=False,
+    is_persistent=True
 )
 
 logging.basicConfig(
