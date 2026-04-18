@@ -6250,47 +6250,47 @@ def mini_app_page():
                 }}
             }}
             
-            setupEventListeners() {
+            setupEventListeners() {{
                 // Listen to Bottom Nav items
-                document.querySelectorAll('.nav-item').forEach(item => {
-                    item.addEventListener('click', (e) => {
+                document.querySelectorAll('.nav-item').forEach(item => {{
+                    item.addEventListener('click', (e) => {{
                         const tab = e.currentTarget.dataset.tab;
                         this.switchTab(tab);
-                    });
-                });
+                    }});
+                }});
                 
                 const ventText = document.getElementById('ventText');
                 const charCount = document.getElementById('charCount');
-                if (ventText && charCount) {
-                    ventText.addEventListener('input', () => {
-                        charCount.textContent = `${ventText.value.length}/5000 characters`;
-                    });
-                }
+                if (ventText && charCount) {{
+                    ventText.addEventListener('input', () => {{
+                        charCount.textContent = `${{ventText.value.length}}/5000 characters`;
+                    }});
+                }}
                 
                 const submitBtn = document.getElementById('submitVent');
-                if (submitBtn) {
+                if (submitBtn) {{
                     submitBtn.addEventListener('click', () => this.submitVent());
-                }
+                }}
                 
                 document.getElementById('refreshPosts')?.addEventListener('click', () => this.loadPosts());
                 document.getElementById('refreshLeaderboard')?.addEventListener('click', () => this.loadLeaderboard());
-            }
+            }}
             
-            switchTab(tabName) {
-                document.querySelectorAll('.nav-item').forEach(item => {
+            switchTab(tabName) {{
+                document.querySelectorAll('.nav-item').forEach(item => {{
                     item.classList.toggle('active', item.dataset.tab === tabName);
-                });
-                document.querySelectorAll('.tab-pane').forEach(pane => {
-                    pane.classList.toggle('active', pane.id === `${tabName}-tab`);
-                });
+                }});
+                document.querySelectorAll('.tab-pane').forEach(pane => {{
+                    pane.classList.toggle('active', pane.id === `${{tabName}}-tab`);
+                }});
                 
-                if (tabName === 'profile' && this.userId) {
+                if (tabName === 'profile' && this.userId) {{
                     this.loadProfile(this.userId);
-                }
-            }
+                }}
+            }}
 
             
-            async loadPosts() {
+            async loadPosts() {{
                 const container = document.getElementById('postsContainer');
                 if (!container) return;
                 container.innerHTML = `
@@ -6298,26 +6298,26 @@ def mini_app_page():
                     <div class="glass-card skeleton" style="height: 150px;"></div>
                 `;
                 
-                try {
-                    const response = await fetch(`${this.apiBaseUrl}/api/mini-app/get-posts?page=1&per_page=15`);
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/get-posts?page=1&per_page=15`);
                     const data = await response.json();
                     
-                    if (data.success) {
+                    if (data.success) {{
                         this.renderPosts(data.data);
-                    } else {
+                    }} else {{
                         container.innerHTML = `<div class="message error-message">Failed to load spiritual feed.</div>`;
-                    }
-                } catch (error) {
+                    }}
+                }} catch (error) {{
                     container.innerHTML = `<div class="message error-message">Network error. Check connection.</div>`;
-                }
-            }
+                }}
+            }}
 
             
-            renderPosts(posts) {
+            renderPosts(posts) {{
                 const container = document.getElementById('postsContainer');
                 if (!container) return;
                 
-                if (!posts || posts.length === 0) {
+                if (!posts || posts.length === 0) {{
                     container.innerHTML = `
                         <div class="glass-card" style="text-align: center;">
                             <h3 style="color: var(--primary);">Silence of Soul</h3>
@@ -6326,37 +6326,37 @@ def mini_app_page():
                         </div>
                     `;
                     return;
-                }
+                }}
                 
                 container.innerHTML = posts.map(post => `
                     <div class="post-card">
                         <div class="post-header">
                             <div class="author-icon">
-                                ${post.author.avatar || (post.author.sex === 'Female' ? '👩' : '👨')}
+                                ${{post.author.avatar || (post.author.sex === 'Female' ? '👩' : '👨')}}
                             </div>
                             <div class="author-info">
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <h4 style="color: var(--text); font-family: 'Outfit'; text-transform: none; letter-spacing: 0;">Anonymous</h4>
-                                    <span class="aura-sticker">${post.author.aura || ''}</span>
+                                    <span class="aura-sticker">${{post.author.aura || ''}}</span>
                                 </div>
                                 <div class="post-meta">
-                                    <span class="identity-badge" style="font-size: 0.7rem; padding: 2px 8px;">${post.category}</span>
+                                    <span class="identity-badge" style="font-size: 0.7rem; padding: 2px 8px;">${{post.category}}</span>
                                     <span>•</span>
-                                    <span>${post.time_ago}</span>
+                                    <span>${{post.time_ago}}</span>
                                 </div>
                             </div>
                         </div>
-                        <div class="post-content" style="font-weight: 300; line-height: 1.8;">${this.escapeHtml(post.content)}</div>
+                        <div class="post-content" style="font-weight: 300; line-height: 1.8;">${{this.escapeHtml(post.content)}}</div>
                         <div class="post-footer" style="border-top-color: rgba(255,255,255,0.05);">
-                            <div class="comment-count" style="font-weight: 500; color: var(--primary);">🕊️ ${post.comments} Responses</div>
-                            <button onclick="window.open('https://t.me/${this.botUsername}?start=comments_${post.id}', '_blank')" 
+                            <div class="comment-count" style="font-weight: 500; color: var(--primary);">🕊️ ${{post.comments}} Responses</div>
+                            <button onclick="window.open('https://t.me/${{this.botUsername}}?start=comments_${{post.id}}', '_blank')" 
                                     style="background: transparent; color: var(--primary); border: 1px solid rgba(var(--primary-rgb), 0.3); padding: 8px 15px; border-radius: 12px; font-size: 0.8rem; cursor: pointer; font-family: 'Oswald';">
                                 VIEW IN BOT
                             </button>
                         </div>
                     </div>
                 `).join('');
-            }
+            }}
 
             
             async loadLeaderboard() {{
@@ -6379,33 +6379,33 @@ def mini_app_page():
                 }}
             }}
             
-            renderLeaderboard(users) {
+            renderLeaderboard(users) {{
                 const container = document.getElementById('leaderboardContainer');
                 if (!container) return;
                 
                 container.innerHTML = users.map((user, index) => `
                     <div class="lb-item">
-                        <div class="lb-rank ${index < 3 ? 'rank-' + (index + 1) : ''}">
-                            ${index === 0 ? '👑' : index + 1}
+                        <div class="lb-rank ${{index < 3 ? 'rank-' + (index + 1) : ''}}">
+                            ${{index === 0 ? '👑' : index + 1}}
                         </div>
                         <div style="flex: 1; display: flex; align-items: center; gap: 12px;">
                             <div class="author-icon" style="width: 35px; height: 35px; font-size: 1.1rem;">
-                                ${user.avatar || (user.sex === 'Female' ? '👩' : '👨')}
+                                ${{user.avatar || (user.sex === 'Female' ? '👩' : '👨')}}
                             </div>
                             <div>
                                 <div style="display: flex; align-items: center; gap: 6px;">
-                                    <span style="font-weight: 600; font-size: 0.95rem;">${user.name}</span>
-                                    <span style="font-size: 0.9rem;">${user.aura}</span>
+                                    <span style="font-weight: 600; font-size: 0.95rem;">${{user.name}}</span>
+                                    <span style="font-size: 0.9rem;">${{user.aura}}</span>
                                 </div>
                             </div>
                         </div>
                         <div style="text-align: right;">
-                            <div style="color: var(--primary); font-family: 'Oswald'; font-weight: 700;">${user.points}</div>
+                            <div style="color: var(--primary); font-family: 'Oswald'; font-weight: 700;">${{user.points}}</div>
                             <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Points</div>
                         </div>
                     </div>
                 `).join('');
-            }
+            }}
 
             
             async loadProfile(userId) {{
@@ -6417,36 +6417,36 @@ def mini_app_page():
                     const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/profile/${{userId}}`);
                     const data = await response.json();
                     
-                    if (data.success) {
+                    if (data.success) {{
                         const profile = data.data;
                         container.innerHTML = `
                             <div class="glass-card" style="text-align: center; padding-top: 40px;">
                                 <div class="logo" style="width: 120px; height: 120px; font-size: 3rem; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; animation: none; border-width: 3px;">
-                                    ${profile.avatar || (profile.sex === 'Female' ? '👩' : '👨')}
+                                    ${{profile.avatar || (profile.sex === 'Female' ? '👩' : '👨')}}
                                 </div>
-                                <h2 style="font-size: 2rem; color: var(--text);">${profile.name}</h2>
+                                <h2 style="font-size: 2rem; color: var(--text);">${{profile.name}}</h2>
                                 <div class="identity-badge" style="margin: 15px 0;">
-                                    <span>${profile.aura}</span>
-                                    <span style="font-family: 'Oswald'; font-weight: 700; color: var(--primary);">${profile.rating} PTS</span>
+                                    <span>${{profile.aura}}</span>
+                                    <span style="font-family: 'Oswald'; font-weight: 700; color: var(--primary);">${{profile.rating}} PTS</span>
                                 </div>
                                 
                                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px;">
                                     <div>
-                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${profile.stats.posts}</div>
+                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${{profile.stats.posts}}</div>
                                         <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Vents</div>
                                     </div>
                                     <div>
-                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${profile.stats.comments}</div>
+                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${{profile.stats.comments}}</div>
                                         <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Replies</div>
                                     </div>
                                     <div>
-                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${profile.stats.followers}</div>
+                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${{profile.stats.followers}}</div>
                                         <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Aura</div>
                                     </div>
                                 </div>
                             </div>
                         `;
-                    }
+                    }}
  else {{
                         container.innerHTML = '<div class="error-message">Failed to load profile</div>';
                     }}
