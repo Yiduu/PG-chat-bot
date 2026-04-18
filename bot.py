@@ -183,9 +183,9 @@ def init_db():
                         AND scheduled_time <= CURRENT_TIMESTAMP
                     ''')
 
-                # Ensure existing database has new columns
-                c.execute("PRAGMA table_info(users)")
-                columns = [column[1] for column in c.fetchall()]
+                # Ensure existing database has new columns (PostgreSQL compatible)
+                c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
+                columns = [column[0] for column in c.fetchall()]
                 if 'bio' not in columns:
                     c.execute("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT 'No bio set.'")
                     logger.info("Added 'bio' column to users table")
@@ -4655,8 +4655,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Handle cancel command from text
     if text.lower() in ["❌ cancel", "cancel", "/cancel"]:
         # Check if user is in input state
-        if user and (user['waiting_for_post'] or user['waiting_for_comment'] or 
-                     user['awaiting_name'] or user['waiting_for_private_message'] or user['awaiting_bio']):
+        if user and (user.get('waiting_for_post') or user.get('waiting_for_comment') or 
+                     user.get('awaiting_name') or user.get('waiting_for_private_message') or user.get('awaiting_bio')):
             # Reset all waiting states
             await reset_user_waiting_states(
                 user_id, 
@@ -5002,14 +5002,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if user and user['awaiting_name']:
+    if user and user.get('awaiting_name'):
         new_name = text.strip()
         if new_name and len(new_name) <= 30:
             db_execute(
                 "UPDATE users SET anonymous_name = %s, awaiting_name = FALSE WHERE user_id = %s",
                 (new_name, user_id)
             )
-            await update.message.reply_text(f"✅ Name updated to *{new_name}*!", parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text(
+                f"✅ Name updated to *{new_name}*!", 
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=main_menu
+            )
             await send_updated_profile(user_id, update.message.chat.id, context)
         else:
             await update.message.reply_text("❌ Name cannot be empty or longer than 30 characters. Please try again.")
@@ -5028,7 +5032,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_updated_profile(user_id, update.message.chat.id, context)
         return
         
-    if user and user['awaiting_bio']:
+    if user and user.get('awaiting_bio'):
         if not text:
             await update.message.reply_text("❌ Bio must be text. Please try again.")
             return
@@ -5038,7 +5042,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
              return
              
         db_execute("UPDATE users SET bio = %s, awaiting_bio = FALSE WHERE user_id = %s", (text, user_id))
-        await update.message.reply_text("✅ Bio updated successfully!")
+        await update.message.reply_text("✅ Bio updated successfully!", reply_markup=main_menu)
         await send_updated_profile(user_id, update.message.chat.id, context)
         return 
 
