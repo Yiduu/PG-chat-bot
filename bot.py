@@ -666,7 +666,7 @@ def login_page():
 <body>
     <div class="login-container">
         <div class="brand">
-            <img src="/static/images/vent%20logo.jpg" class="logo" alt="Christian Vent Logo">
+            <img src="/static/images/vent$20logo.png" class="logo" alt="Christian Vent Logo">
             <h1 class="title">CHRISTIAN VENT</h1>
         </div>
         <p>Share your thoughts anonymously with the Christian community</p>
@@ -6077,7 +6077,7 @@ def mini_app_page():
         <!-- Header -->
         <header class="app-header">
             <div class="brand">
-                <img src="/static/images/vent%20logo.jpg" class="logo" alt="Christian Vent Logo">
+                <img src="/static/images/vent$20logo.png" class="logo" alt="Christian Vent Logo">
                 <h1 class="app-title">{app_name}</h1>
             </div>
             <p class="app-subtitle">A safe space for Christian anonymous venting</p>
