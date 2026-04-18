@@ -2935,8 +2935,22 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         """, (comment['comment_id'],))
         total_replies = total_replies_row['cnt'] if total_replies_row else 0
         
+        # Tracking message IDs for nested replies (indentation)
+        msg_ids = {comment['comment_id']: msg_id}
+        
         for reply in replies:
-            await send_reply_message(context, chat_id, reply, post_author_id, msg_id)
+            try:
+                # Use the actual parent's message ID if we have it, otherwise fallback to top-level
+                parent_id = reply.get('parent_comment_id')
+                reply_to_id = msg_ids.get(parent_id, msg_id)
+                
+                reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, reply_to_id)
+                
+                # Store this message ID for any children of this reply
+                if reply_msg_id:
+                    msg_ids[reply['comment_id']] = reply_msg_id
+            except Exception as e:
+                logger.error(f"Error sending reply {reply.get('comment_id')}: {e}")
 
         # Add "Show more replies" button if there are more replies
         if total_replies > replies_per_comment:
@@ -2994,7 +3008,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, reply_to_m
         )
 
     # Send the reply
-    await send_comment_message(context, chat_id, reply, reply_author_text, reply_to_message_id)
+    return await send_comment_message(context, chat_id, reply, reply_author_text, reply_to_message_id)
 
 async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, comment_id: int, page: int):
     """Show additional replies for a comment (paginated)"""
@@ -3054,13 +3068,24 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         pass
     
     # Send the replies for this page
-    reply_to_id = None
+    # Track message IDs for chaining (indentation)
+    # We start with the original button's reply_to_message_id as the base parent
+    base_reply_to_id = None
     if query.message and query.message.reply_to_message:
-        reply_to_id = query.message.reply_to_message.message_id
+        base_reply_to_id = query.message.reply_to_message.message_id
+    
+    msg_ids = {comment_id: base_reply_to_id}
 
     for reply in replies:
         try:
-            await send_reply_message(context, chat_id, reply, post_author_id, reply_to_id)
+            parent_id = reply.get('parent_comment_id')
+            # Link to the actual parent if shown in this batch, else fallback to base
+            target_msg_id = msg_ids.get(parent_id, base_reply_to_id)
+            
+            reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, target_msg_id)
+            
+            if reply_msg_id:
+                msg_ids[reply['comment_id']] = reply_msg_id
         except Exception as e:
             logger.error(f"Error sending reply {reply.get('comment_id')}: {e}")
     
