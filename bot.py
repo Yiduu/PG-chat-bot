@@ -2912,16 +2912,27 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
         # Show LIMITED replies for this comment (first 3 replies)
         replies_per_comment = 3
-        replies = db_fetch_all(
-            "SELECT * FROM comments WHERE parent_comment_id = %s ORDER BY timestamp ASC LIMIT %s",
-            (comment['comment_id'], replies_per_comment)
-        )
+        # Fetch all descendants (replies to replies) using Recursive CTE
+        replies = db_fetch_all("""
+            WITH RECURSIVE comment_tree AS (
+                SELECT * FROM comments WHERE parent_comment_id = %s
+                UNION ALL
+                SELECT c.* FROM comments c
+                JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
+            )
+            SELECT * FROM comment_tree ORDER BY timestamp ASC LIMIT %s
+        """, (comment['comment_id'], replies_per_comment))
         
-        # Count total replies for this comment
-        total_replies_row = db_fetch_one(
-            "SELECT COUNT(*) as cnt FROM comments WHERE parent_comment_id = %s",
-            (comment['comment_id'],)
-        )
+        # Count total descendants for this comment thread
+        total_replies_row = db_fetch_one("""
+            WITH RECURSIVE comment_tree AS (
+                SELECT comment_id FROM comments WHERE parent_comment_id = %s
+                UNION ALL
+                SELECT c.comment_id FROM comments c
+                JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
+            )
+            SELECT COUNT(*) as cnt FROM comment_tree
+        """, (comment['comment_id'],))
         total_replies = total_replies_row['cnt'] if total_replies_row else 0
         
         for reply in replies:
@@ -3007,22 +3018,32 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     # Skip the first 3 replies already shown in the comment view
     offset = 3 + (page - 1) * replies_per_page
     
-    # Get replies for this page
+    # Get replies for this page using Recursive CTE to include deep nesting
     try:
-        replies = db_fetch_all(
-            "SELECT * FROM comments WHERE parent_comment_id = %s ORDER BY timestamp ASC LIMIT %s OFFSET %s",
-            (comment_id, replies_per_page, offset)
-        )
+        replies = db_fetch_all("""
+            WITH RECURSIVE comment_tree AS (
+                SELECT * FROM comments WHERE parent_comment_id = %s
+                UNION ALL
+                SELECT c.* FROM comments c
+                JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
+            )
+            SELECT * FROM comment_tree ORDER BY timestamp ASC LIMIT %s OFFSET %s
+        """, (comment_id, replies_per_page, offset))
     except Exception as e:
         logger.error(f"Error fetching more replies for comment {comment_id}: {e}")
         await query.answer("❌ Error loading replies", show_alert=True)
         return
     
-    # Count total replies
-    total_replies_row = db_fetch_one(
-        "SELECT COUNT(*) as cnt FROM comments WHERE parent_comment_id = %s",
-        (comment_id,)
-    )
+    # Count total descendants (all replies in the thread)
+    total_replies_row = db_fetch_one("""
+        WITH RECURSIVE comment_tree AS (
+            SELECT comment_id FROM comments WHERE parent_comment_id = %s
+            UNION ALL
+            SELECT c.comment_id FROM comments c
+            JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
+        )
+        SELECT COUNT(*) as cnt FROM comment_tree
+    """, (comment_id,))
     total_replies = total_replies_row['cnt'] if total_replies_row else 0
     total_pages = (total_replies + replies_per_page - 1) // replies_per_page
     
