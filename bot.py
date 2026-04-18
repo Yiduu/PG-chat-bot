@@ -181,37 +181,25 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 ''')                  
-                async def schedule_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-                    """Schedule a broadcast for later"""
-                    # Similar to execute_broadcast but stores in database
-                    pass
+                # ---------------- Database Schema Migration (Postgres Robust) ----------------
                 
-                async def check_scheduled_broadcasts(context: ContextTypes.DEFAULT_TYPE):
-                    """Check and send scheduled broadcasts"""
-                    scheduled = db_fetch_all('''
-                        SELECT * FROM scheduled_broadcasts 
-                        WHERE status = 'scheduled' 
-                        AND scheduled_time <= CURRENT_TIMESTAMP
-                    ''')
+                # Check for 'bio' column in users
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='users' AND column_name='bio'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: bio to users table")
+                    c.execute("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT 'No bio set.'")
 
-                # Ensure existing database has new columns (PostgreSQL compatible)
-                # ADD COLUMN IF NOT EXISTS is the safest way for Postgres 10+
-                try:
-                    c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT 'No bio set.'")
-                    c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS awaiting_bio BOOLEAN DEFAULT FALSE")
-                    logger.info("Checked/Added bio columns to users table")
-                except Exception as e:
-                    logger.warning(f"Note during migration: {e}")
-
-
-                    
-                    for broadcast in scheduled:
-                        # Send the broadcast
-                        # Update status to 'sent'
-                        pass
-                
-                # Schedule this to run every minute in main():
-                job_queue.run_repeating(check_scheduled_broadcasts, interval=60, first=10)
+                # Check for 'awaiting_bio' column in users
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='users' AND column_name='awaiting_bio'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: awaiting_bio to users table")
+                    c.execute("ALTER TABLE users ADD COLUMN awaiting_bio BOOLEAN DEFAULT FALSE")
 
                 # ---------------- Database Schema Migration ----------------
                 # Check if thread_from_post_id column exists, if not add it
