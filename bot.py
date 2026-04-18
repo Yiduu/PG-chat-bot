@@ -813,25 +813,48 @@ def create_anonymous_name(user_id):
 
 @lru_cache(maxsize=1024)
 def calculate_user_rating(user_id):
-    post_row = db_fetch_one(
-        "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE",
-        (user_id,)
-    )
-    post_count = post_row['count'] if post_row else 0
+    # Weighted Scoring Logic:
+    # Approved Posts: +10 | Comments: +2 | Likes: +1 | Dislikes: -2 | Blocks: -10
     
-    comment_row = db_fetch_one(
-        "SELECT COUNT(*) as count FROM comments WHERE author_id = %s",
-        (user_id,)
-    )
-    comment_count = comment_row['count'] if comment_row else 0
+    # 1. Post Points (+10 per approved post)
+    post_res = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE", (user_id,))
+    post_points = (post_res['count'] if post_res else 0) * 10
     
-    return post_count + comment_count
+    # 2. Comment Points (+2 per comment)
+    comm_res = db_fetch_one("SELECT COUNT(*) as count FROM comments WHERE author_id = %s", (user_id,))
+    comm_points = (comm_res['count'] if comm_res else 0) * 2
+    
+    # 3. Reactions Points (Likes +1, Dislikes -2)
+    # We join with comments to find reactions ON the user's content
+    rx_res = db_fetch_one("""
+        SELECT 
+            SUM(CASE WHEN r.type = 'like' THEN 1 ELSE 0 END) as likes,
+            SUM(CASE WHEN r.type = 'dislike' THEN 1 ELSE 0 END) as dislikes
+        FROM reactions r
+        JOIN comments c ON r.comment_id = c.comment_id
+        WHERE c.author_id = %s
+    """, (user_id,))
+    
+    likes = rx_res['likes'] if rx_res and rx_res['likes'] else 0
+    dislikes = rx_res['dislikes'] if rx_res and rx_res['dislikes'] else 0
+    rx_points = (likes * 1) - (dislikes * 2)
+    
+    # 4. Block Points (-10 per block received)
+    block_res = db_fetch_one("SELECT COUNT(*) as count FROM blocks WHERE blocked_id = %s", (user_id,))
+    block_points = (block_res['count'] if block_res else 0) * -10
+    
+    return post_points + comm_points + rx_points + block_points
+
 
 @lru_cache(maxsize=128)
 def format_aura(rating):
-    """Create aura based on contribution points."""
-    if rating >= 100:
-        return "🟣"  # Purple aura for elite users (100+ points)
+    """Create aura based on weighted contribution points."""
+    if rating < 0:
+        return "🔴"  # Red aura for negative rank (Shame)
+    elif rating >= 500:
+        return "👑"  # Crown aura for legendary contributors (500+ points)
+    elif rating >= 100:
+        return "🟣"  # Purple aura for elite users (100-499 points)
     elif rating >= 50:
         return "🔵"  # Blue aura for advanced users (50-99 points)
     elif rating >= 25:
@@ -839,7 +862,8 @@ def format_aura(rating):
     elif rating >= 10:
         return "🟡"  # Yellow aura for active users (10-24 points)
     else:
-        return "⚪️"  # White aura for new users (0-9 points)
+        return "⚪️"  # White aura for new/neutral users (0-9 points)
+
 
 def count_all_comments(post_id):
     def count_replies(parent_id=None):
@@ -888,12 +912,22 @@ def get_display_sex(user_data):
 def get_user_rank(user_id):
     users = db_fetch_all('''
         SELECT user_id, 
-               (SELECT COUNT(*) FROM posts WHERE author_id = users.user_id AND approved = TRUE) + 
-               (SELECT COUNT(*) FROM comments WHERE author_id = users.user_id) AS total
-        FROM users
-        WHERE is_admin = FALSE
+               (
+                (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
+                (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
+                COALESCE((
+                    SELECT SUM(CASE WHEN r.type = 'like' THEN 1 WHEN r.type = 'dislike' THEN -2 ELSE 0 END)
+                    FROM reactions r
+                    JOIN comments c2 ON r.comment_id = c2.comment_id
+                    WHERE c2.author_id = u.user_id
+                ), 0) -
+                (SELECT COUNT(*) FROM blocks b WHERE b.blocked_id = u.user_id) * 10
+               ) as total
+        FROM users u
+        WHERE u.is_admin = FALSE
         ORDER BY total DESC
     ''')
+
     
     for rank, user in enumerate(users, start=1):
         if user['user_id'] == user_id:
@@ -951,16 +985,26 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if loading_msg:
         await animated_loading(loading_msg, "Loading leaderboard", 3)
     
-    # Get top 10 users
+    # Get top 10 users with weighted aura
     top_users = db_fetch_all('''
-        SELECT user_id, anonymous_name, sex,
-               (SELECT COUNT(*) FROM posts WHERE author_id = users.user_id AND approved = TRUE) + 
-               (SELECT COUNT(*) FROM comments WHERE author_id = users.user_id) AS total
-        FROM users
-        WHERE is_admin = FALSE
+        SELECT u.user_id, u.anonymous_name, u.sex,
+               (
+                (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
+                (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
+                COALESCE((
+                    SELECT SUM(CASE WHEN r.type = 'like' THEN 1 WHEN r.type = 'dislike' THEN -2 ELSE 0 END)
+                    FROM reactions r
+                    JOIN comments c2 ON r.comment_id = c2.comment_id
+                    WHERE c2.author_id = u.user_id
+                ), 0) -
+                (SELECT COUNT(*) FROM blocks b WHERE b.blocked_id = u.user_id) * 10
+               ) as total
+        FROM users u
+        WHERE u.is_admin = FALSE
         ORDER BY total DESC
         LIMIT 10
     ''')
+
     
     # Create clean header
     leaderboard_text = "*🏆 Christian Vent Leaderboard*\n\n"
@@ -1958,6 +2002,11 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             "UPDATE posts SET approved = TRUE, admin_approved_by = %s, channel_message_id = %s, vent_number = %s WHERE post_id = %s",
             (user_id, msg.message_id, next_vent_number, post_id)
         )
+        
+        # Clear Aura Cache for real-time accuracy
+        calculate_user_rating.cache_clear()
+        format_aura.cache_clear()
+
         
         if not success:
             await query.answer("❌ Failed to update database.", show_alert=True)
@@ -3967,6 +4016,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "INSERT INTO reactions (comment_id, user_id, type) VALUES (%s, %s, %s)",
                         (comment_id, user_id, reaction_type)
                     )
+                
+                # Clear Aura Cache
+                calculate_user_rating.cache_clear()
+                format_aura.cache_clear()
+
+                
+                # Clear rating cache for consistency
+                calculate_user_rating.cache_clear()
+                format_aura.cache_clear()
+
 
                 # Get updated counts
                 likes_row = db_fetch_one(
@@ -4793,6 +4852,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('unblock_user_'):
             target_id = query.data.split('_', 2)[2]
             db_execute("DELETE FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (user_id, target_id))
+            
+            # Clear Aura Cache for real-time accuracy
+            calculate_user_rating.cache_clear()
+            format_aura.cache_clear()
+            
             await query.answer("✅ User unblocked!", show_alert=False)
             
             # Refresh view (either profiles or list)
@@ -4827,7 +4891,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "INSERT INTO blocks (blocker_id, blocked_id) VALUES (%s, %s)",
                     (user_id, target_id)
                 )
+                
+                # Clear Aura Cache for real-time accuracy
+                calculate_user_rating.cache_clear()
+                format_aura.cache_clear()
+                
                 await query.message.reply_text("✅ User has been blocked. They can no longer send you messages.")
+
             except psycopg2.IntegrityError:
                 await query.message.reply_text("❌ User is already blocked.")
             
@@ -5185,6 +5255,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (post_id, parent_comment_id, user_id, content, comment_type, file_id),
             fetchone=True
         )
+        
+        # Clear Aura Cache
+        calculate_user_rating.cache_clear()
+        format_aura.cache_clear()
+
     
         # Reset state
         db_execute(
