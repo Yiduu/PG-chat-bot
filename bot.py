@@ -4173,7 +4173,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             await query.answer("✅ Request accepted!", show_alert=False)
-            await query.message.edit_text("✅ *You accepted the chat request!*", parse_mode=ParseMode.MARKDOWN_V2)
+            await query.message.edit_text("✅ *You accepted the chat request\\!*", parse_mode=ParseMode.MARKDOWN_V2)
             
             receiver_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
             receiver_name = get_display_name(receiver_data)
@@ -4628,21 +4628,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except (IndexError, ValueError):
                 await show_inbox(update, context, 1)
             
-        elif query.data.startswith('message_'):
-            target_id = query.data.split('_', 1)[1]
-            db_execute(
-                "UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s",
-                (target_id, user_id)
-            )
-            
-            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
-            target_name = target_user['anonymous_name'] if target_user else "this user"
-            
-            await query.message.reply_text(
-                f"✉️ *Composing message to {target_name}*\n\nPlease type your message:\n\nTap ❌ Cancel to return to menu.",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=cancel_menu
-            )
             
         
                     
