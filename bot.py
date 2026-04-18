@@ -33,6 +33,7 @@ import time
 import asyncio
 from typing import Optional
 import re
+from functools import lru_cache
 
 # Load environment variables first
 load_dotenv()
@@ -800,6 +801,7 @@ def create_anonymous_name(user_id):
     # Simply return "Anonymous" without numbers for all new users
     return "Anonymous"
 
+@lru_cache(maxsize=1024)
 def calculate_user_rating(user_id):
     post_row = db_fetch_one(
         "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE",
@@ -815,6 +817,7 @@ def calculate_user_rating(user_id):
     
     return post_count + comment_count
 
+@lru_cache(maxsize=128)
 def format_aura(rating):
     """Create aura based on contribution points."""
     if rating >= 100:
