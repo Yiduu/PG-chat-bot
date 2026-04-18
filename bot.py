@@ -2112,50 +2112,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
         
-        elif arg.startswith("profileid_"):
-            target_user_id = arg.split("_", 1)[1]
-            user_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (target_user_id,))
-            if user_data:
-                followers = db_fetch_all("SELECT * FROM followers WHERE followed_id = %s", (user_data['user_id'],))
-                rating = calculate_user_rating(user_data['user_id'])
-                current_user_id = user_id
-                btn = []
+                # Handle 3-part arg: profileid_{user_id}_{post_id}
+                post_id = None
+                parts = arg.split("_")
+                if len(parts) >= 3:
+                    post_id = parts[2]
                 
-                if user_data['user_id'] != current_user_id:
-                    is_following = db_fetch_one(
-                        "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
-                        (current_user_id, user_data['user_id'])
-                    )
-                    # Check if blocked to show toggle
-                    is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id']))
-                    
-                    if is_following:
-                        btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
-                        btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'chatrequest_{user_data["user_id"]}')])
-                    else:
-                        btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
-                        btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'chatrequest_{user_data["user_id"]}')])
-                    
-                    if is_blocked:
-                        btn.append([InlineKeyboardButton("🔓 Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
-                    else:
-                        btn.append([InlineKeyboardButton("⛔ Block User", callback_data=f'block_user_{user_data["user_id"]}')])
-                
+                # Contextual Anonymity Check
                 display_name = get_display_name(user_data)
+                if post_id:
+                    post_info = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
+                    if post_info and str(post_info['author_id']) == str(target_user_id) and str(target_user_id) != str(user_id):
+                        display_name = "🛡 Vent Author"
+
                 display_sex = get_display_sex(user_data)
-                
                 level = (rating // 10) + 1
                 bio = user_data.get('bio', 'No bio set.')
                 
                 profile_text = (
-                    f"👤 *{escape_markdown(display_name, version=2)}*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🌀 *Aura:* {format_aura(rating)} {level}\n"
+                    f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
+                    f"✨ *Aura Level:* {level} \({format_aura(rating)}\)\n"
                     f"⭐️ *Points:* {rating}\n"
                     f"👥 *Followers:* {len(followers)}\n\n"
-                    f"📖 *Bio:*\n_{escape_markdown(bio, version=2)}_\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
                 )
+
                 
                 await update.message.reply_text(
                     profile_text,
@@ -2941,7 +2922,8 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         display_sex = get_display_sex(commenter)
         display_name = get_display_name(commenter)
         rating = calculate_user_rating(commenter_id)
-        profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}"
+        profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}_{post_id}"
+
 
         # Format author text
         if str(commenter_id) == str(post_author_id):
@@ -2985,7 +2967,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             reply_markup=pagination_markup,
             disable_web_page_preview=True
         )
-async def send_reply_message(context, chat_id, reply, post_author_id, reply_to_message_id):
+async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id):
     """Send a single reply message with proper formatting"""
     reply_user_id = reply['author_id']
     reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (reply_user_id,))
@@ -2993,7 +2975,8 @@ async def send_reply_message(context, chat_id, reply, post_author_id, reply_to_m
     reply_display_sex = get_display_sex(reply_user)
     rating_reply = calculate_user_rating(reply_user_id)
     
-    reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply_user_id}"
+    reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply_user_id}_{post_id}"
+
     
     # Check if reply author is the vent author
     if str(reply_user_id) == str(post_author_id):
@@ -3084,7 +3067,7 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             # Link to the actual parent if shown in this batch, else fallback to base
             target_msg_id = msg_ids.get(parent_id, base_reply_to_id)
             
-            reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, target_msg_id)
+            reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, post_id, target_msg_id)
             
             if reply_msg_id:
                 msg_ids[reply['comment_id']] = reply_msg_id
@@ -3175,15 +3158,14 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     ])
     
     profile_text = (
-        f"👤 *{escape_markdown(display_name, version=2)}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🌀 *Aura:* {format_aura(rating)} {level}\n"
+        f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
+        f"✨ *Aura Level:* {level} \({format_aura(rating)}\)\n"
         f"⭐️ *Points:* {rating}\n"
         f"👥 *Followers:* {len(followers)}\n\n"
-        f"📖 *Bio:*\n_{escape_markdown(bio, version=2)}_\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
         f"_Use /menu to return_"
     )
+
     
     await context.bot.send_message(
         chat_id=chat_id,
