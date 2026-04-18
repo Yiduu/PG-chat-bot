@@ -870,6 +870,7 @@ def get_user_rank(user_id):
                (SELECT COUNT(*) FROM posts WHERE author_id = users.user_id AND approved = TRUE) + 
                (SELECT COUNT(*) FROM comments WHERE author_id = users.user_id) AS total
         FROM users
+        WHERE is_admin = FALSE
         ORDER BY total DESC
     ''')
     
@@ -935,6 +936,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
                (SELECT COUNT(*) FROM posts WHERE author_id = users.user_id AND approved = TRUE) + 
                (SELECT COUNT(*) FROM comments WHERE author_id = users.user_id) AS total
         FROM users
+        WHERE is_admin = FALSE
         ORDER BY total DESC
         LIMIT 10
     ''')
@@ -2155,13 +2157,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 level = (rating // 10) + 1
                 bio = user_data.get('bio', 'No bio set.')
                 
-                profile_text = (
-                    f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
-                    f"✨ *Aura Level:* {level} \({format_aura(rating)}\)\n"
-                    f"⭐️ *Points:* {rating}\n"
-                    f"👥 *Followers:* {len(followers)}\n\n"
-                    f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
-                )
+                is_target_admin = user_data.get('is_admin', False)
+                if is_target_admin:
+                    profile_text = (
+                        f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
+                        f"🛡 *Role:* Administrator\n"
+                        f"👥 *Followers:* {len(followers)}\n\n"
+                        f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
+                    )
+                else:
+                    profile_text = (
+                        f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
+                        f"✨ *Aura Level:* {level} \({format_aura(rating)}\)\n"
+                        f"⭐️ *Points:* {rating}\n"
+                        f"👥 *Followers:* {len(followers)}\n\n"
+                        f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
+                    )
 
                 
                 await update.message.reply_text(
@@ -2946,22 +2957,26 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         display_sex = get_display_sex(commenter)
         display_name = get_display_name(commenter)
         rating = calculate_user_rating(commenter_id)
+        is_admin = commenter.get('is_admin', False)
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}_{post_id}"
 
 
+
         # Format author text
+        aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not is_admin else ""
+        
         if str(commenter_id) == str(post_author_id):
             author_text = (
                 f"{display_sex} "
                 f"✅ _[vent author]({escape_markdown(profile_link, version=2)})_ "
-                f"⚡ _Aura_ {rating} {format_aura(rating)}"
-            )
+                f"{aura_text}"
+            ).strip()
         else:
             author_text = (
                 f"{display_sex} "
                 f"_[{escape_markdown(display_name, version=2)}]({escape_markdown(profile_link, version=2)})_ "
-                f"⚡ _Aura_ {rating} {format_aura(rating)}"
-            )
+                f"{aura_text}"
+            ).strip()
 
         # LINKING LOGIC: If it's a reply, try to link to the immediate parent's message
         reply_to_id = None
@@ -3000,6 +3015,9 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     rating_reply = calculate_user_rating(reply_user_id)
     
     reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply_user_id}_{post_id}"
+    is_admin = reply_user.get('is_admin', False)
+    aura_text = f"⚡ _Aura_ {rating_reply} {format_aura(rating_reply)}" if not is_admin else ""
+
 
     
     # Check if reply author is the vent author
@@ -3007,14 +3025,14 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
         reply_author_text = (
             f"{reply_display_sex} "
             f"✅ _[vent author]({reply_profile_link})_ "
-            f"⚡ _Aura_ {rating_reply} {format_aura(rating_reply)}"
-        )
+            f"{aura_text}"
+        ).strip()
     else:
         reply_author_text = (
             f"{reply_display_sex} "
             f"_[{escape_markdown(reply_display_name, version=2)}]({reply_profile_link})_ "
-            f"⚡ _Aura_ {rating_reply} {format_aura(rating_reply)}"
-        )
+            f"{aura_text}"
+        ).strip()
 
     # Send the reply
     return await send_comment_message(context, chat_id, reply, reply_author_text, reply_to_message_id)
@@ -3171,24 +3189,26 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     level = (rating // 10) + 1
     
     # PREMIUM Redesign
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
-        [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
-        [InlineKeyboardButton("📝 Set My Bio", callback_data='edit_bio')],
-        [InlineKeyboardButton("📚 My Content", callback_data='my_content_menu')],
-        [InlineKeyboardButton("📭 Inbox", callback_data='inbox')],
-        [InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
-        [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
-    ])
+    is_admin = user.get('is_admin', False)
     
-    profile_text = (
-        f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
-        f"✨ *Aura Level:* {level} \({format_aura(rating)}\)\n"
-        f"⭐️ *Points:* {rating}\n"
-        f"👥 *Followers:* {len(followers)}\n\n"
-        f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
-        f"_Use /menu to return_"
-    )
+    if is_admin:
+        profile_text = (
+            f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
+            f"🛡 *Role:* Administrator\n"
+            f"👥 *Followers:* {len(followers)}\n\n"
+            f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
+            f"_Use /menu to return_"
+        )
+    else:
+        profile_text = (
+            f"👤 *{escape_markdown(display_name, version=2)}* {display_sex}\n\n"
+            f"✨ *Aura Level:* {level} \({format_aura(rating)}\)\n"
+            f"⭐️ *Points:* {rating}\n"
+            f"👥 *Followers:* {len(followers)}\n\n"
+            f"📖 *About:*\n_{escape_markdown(bio, version=2)}_\n"
+            f"_Use /menu to return_"
+        )
+
 
     
     await context.bot.send_message(
