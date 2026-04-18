@@ -202,6 +202,16 @@ def init_db():
                     logger.info("Adding missing column: awaiting_bio to users table")
                     c.execute("ALTER TABLE users ADD COLUMN awaiting_bio BOOLEAN DEFAULT FALSE")
 
+                # Check for 'avatar_emoji' column in users
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='users' AND column_name='avatar_emoji'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: avatar_emoji to users table")
+                    c.execute("ALTER TABLE users ADD COLUMN avatar_emoji VARCHAR(10) DEFAULT NULL")
+
+
                 # ---------------- Database Schema Migration ----------------
                 # Check if thread_from_post_id column exists, if not add it
                 c.execute("""
@@ -860,9 +870,15 @@ def get_cancel_reply_keyboard():
         one_time_keyboard=True,  # Set to True so it disappears after use
     )
 def get_display_name(user_data):
-    if user_data and user_data.get('anonymous_name'):
-        return user_data['anonymous_name']
-    return "Anonymous"
+    if not user_data:
+        return "Anonymous"
+    
+    emoji = user_data.get('avatar_emoji') or ""
+    name = user_data.get('anonymous_name') or "Anonymous"
+    
+    if emoji:
+        return f"{emoji} {name}"
+    return name
 
 def get_display_sex(user_data):
     if user_data and user_data.get('sex'):
@@ -3198,7 +3214,9 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
         [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
         [InlineKeyboardButton("📝 Set My Bio", callback_data='edit_bio')],
+        [InlineKeyboardButton("🎭 Set Avatar Emoji", callback_data='select_avatar')],
         [InlineKeyboardButton("📚 My Content", callback_data='my_content_menu')],
+
         [InlineKeyboardButton("📭 Inbox", callback_data='inbox')],
         [InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
         [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
@@ -3230,6 +3248,39 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         chat_id=chat_id,
         text=profile_text,
         reply_markup=kb,
+        parse_mode=ParseMode.MARKDOWN_V2
+    )
+
+async def show_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show a grid of emojis for the user to select as an avatar"""
+    query = update.callback_query
+    await query.answer()
+
+    emojis = [
+        "🦁", "🦊", "🐉", "🐼", "🦄", 
+        "🌈", "✨", "🔥", "💎", "🛡",
+        "🦅", "🦉", "🦋", "🌸", "🌙",
+        "🍎", "🍀", "⛪️", "🎗", "🎖"
+    ]
+    
+    keyboard = []
+    # Create a 5x4 grid
+    for i in range(0, len(emojis), 5):
+        row = [InlineKeyboardButton(e, callback_data=f"set_avatar_{e}") for e in emojis[i:i+5]]
+        keyboard.append(row)
+        
+    keyboard.append([InlineKeyboardButton("❌ Remove Emoji", callback_data="clear_avatar")])
+    keyboard.append([InlineKeyboardButton("🔙 Back to Profile", callback_data="profile")])
+    
+    text = (
+        "🎭 *Select Avatar Emoji*\n\n"
+        "Choose an emoji to display next to your name:\n\n"
+        "_This will appear on your profile, comments, and the leaderboard._"
+    )
+    
+    await query.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN_V2
     )
 
@@ -4692,6 +4743,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith("viewpost_"):
             post_id = int(query.data.split('_')[1])
             await view_post(update, context, post_id)    
+        elif query.data == 'select_avatar':
+            await show_avatar_selection(update, context)
+            
+        elif query.data.startswith('set_avatar_'):
+            emoji = query.data.split('_', 2)[2]
+            db_execute("UPDATE users SET avatar_emoji = %s WHERE user_id = %s", (emoji, user_id))
+            await query.answer(f"✅ Avatar set to {emoji}!", show_alert=True)
+            await send_updated_profile(user_id, query.message.chat.id, context)
+            
+        elif query.data == 'clear_avatar':
+            db_execute("UPDATE users SET avatar_emoji = NULL WHERE user_id = %s", (user_id))
+            await query.answer("✅ Avatar removed!", show_alert=True)
+            await send_updated_profile(user_id, query.message.chat.id, context)
+            
         elif query.data == 'list_blocked':
             await query.answer("🚫 Loading blocked users...", show_alert=False)
             blocked = db_fetch_all(
