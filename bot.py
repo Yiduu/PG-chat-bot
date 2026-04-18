@@ -139,6 +139,17 @@ def init_db():
                 ''')
 
                 c.execute('''
+                CREATE TABLE IF NOT EXISTS chat_requests (
+                    id SERIAL PRIMARY KEY,
+                    sender_id TEXT,
+                    receiver_id TEXT,
+                    status TEXT DEFAULT 'pending',
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(sender_id, receiver_id)
+                )
+                ''')
+
+                c.execute('''
                 CREATE TABLE IF NOT EXISTS private_messages (
                     message_id SERIAL PRIMARY KEY,
                     sender_id TEXT REFERENCES users(user_id),
@@ -184,14 +195,14 @@ def init_db():
                     ''')
 
                 # Ensure existing database has new columns (PostgreSQL compatible)
-                c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
-                columns = [column[0] for column in c.fetchall()]
-                if 'bio' not in columns:
-                    c.execute("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT 'No bio set.'")
-                    logger.info("Added 'bio' column to users table")
-                if 'awaiting_bio' not in columns:
-                    c.execute("ALTER TABLE users ADD COLUMN awaiting_bio BOOLEAN DEFAULT FALSE")
-                    logger.info("Added 'awaiting_bio' column to users table")
+                # ADD COLUMN IF NOT EXISTS is the safest way for Postgres 10+
+                try:
+                    c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT 'No bio set.'")
+                    c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS awaiting_bio BOOLEAN DEFAULT FALSE")
+                    logger.info("Checked/Added bio columns to users table")
+                except Exception as e:
+                    logger.warning(f"Note during migration: {e}")
+
 
                     
                     for broadcast in scheduled:
@@ -462,6 +473,15 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
             private_message_target = NULL
         WHERE user_id = %s
     ''', (user_id,))
+    
+    # Reset context flags
+    if context:
+        context_keys = ['editing_comment', 'editing_post', 'thread_from_post_id', 
+                       'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type']
+        for key in context_keys:
+            if key in context.user_data:
+                del context.user_data[key]
+
     
     # If chat_id and context are provided, restore main menu
     if chat_id and context:
@@ -2117,10 +2137,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     if is_following:
                         btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
-                        btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'message_{user_data["user_id"]}')])
+                        btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'chatrequest_{user_data["user_id"]}')])
                     else:
                         btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
-                        btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'message_{user_data["user_id"]}')])
+                        btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'chatrequest_{user_data["user_id"]}')])
                 
                 display_name = get_display_name(user_data)
                 display_sex = get_display_sex(user_data)
@@ -3651,26 +3671,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Reset all waiting states and restore main menu
             await reset_user_waiting_states(
                 user_id, 
-                query.message.chat.id, 
+                query.message.chat_id, 
                 context
             )
             
-            # Clear any context data
-            if 'editing_comment' in context.user_data:
-                del context.user_data['editing_comment']
-            if 'editing_post' in context.user_data:
-                del context.user_data['editing_post']
-            if 'thread_from_post_id' in context.user_data:
-                del context.user_data['thread_from_post_id']
-            
-            # Send confirmation and restore main menu
+            # Send confirmation
             await query.answer("❌ Input cancelled")
             
-            await query.message.reply_text(
-                "❌ *Input cancelled*\n\nWhat would you like to do next?",
-                reply_markup=main_menu,
-                parse_mode=ParseMode.MARKDOWN
-            )
+            # Try to delete the input prompt message if it's an inline message
+            try:
+                await query.message.delete()
+            except: pass
             
             return
 
@@ -4106,41 +4117,120 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await show_previous_posts(update, context, 1)
 
         
-        elif query.data.startswith('reply_msg_'):
-            # Handle private message reply button
-            # The format is: reply_msg_<user_id>
+        elif query.data.startswith('chatrequest_'):
+            target_id = query.data.split('_')[1]
+            if target_id == user_id:
+                await query.answer("❌ You cannot chat with yourself.", show_alert=True)
+                return
+
+            # Check for existing request
+            existing = db_fetch_one(
+                "SELECT status FROM chat_requests WHERE sender_id = %s AND receiver_id = %s",
+                (user_id, target_id)
+            )
+            
+            if existing:
+                if existing['status'] == 'accepted':
+                    await query.answer("✅ Request already accepted!", show_alert=False)
+                    db_execute("UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s", (target_id, user_id))
+                    await query.message.reply_text("✉️ Type your message below:", reply_markup=cancel_menu)
+                else:
+                    await query.answer("⏳ Chat request is still pending...", show_alert=True)
+                return
+
+            # Create new request
             try:
-                # Extract everything after 'reply_msg_'
-                target_id = query.data[len('reply_msg_'):]
-                
-                if not target_id or not target_id.isdigit():
-                    logger.error(f"Invalid target_id in reply_msg callback: {query.data}")
-                    await query.answer("❌ Invalid user ID", show_alert=True)
-                    return
-                    
-                # Check if target user exists
-                target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
-                if not target_user:
-                    await query.answer("❌ User not found", show_alert=True)
-                    return
-                
-                # Set up the user to send a private message
                 db_execute(
-                    "UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s",
-                    (target_id, user_id)
+                    "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (%s, %s, 'pending')",
+                    (user_id, target_id)
                 )
+                await query.answer("✉️ Chat request sent!", show_alert=False)
                 
-                target_name = target_user['anonymous_name']
+                # Notify receiver
+                sender_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+                sender_name = get_display_name(sender_data)
                 
-                await query.message.reply_text(
-                    f"↩️ *Replying to {target_name}*\n\nPlease type your message:\n\nTap ❌ Cancel to return to menu.",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=cancel_menu
+                receiver_text = (
+                    f"🔔 *New Chat Request\\!*\n"
+                    f"_{escape_markdown(sender_name, version=2)}_ wants to chat with you\\."
                 )
+                receiver_kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ Accept", callback_data=f'acceptchat_{user_id}'),
+                        InlineKeyboardButton("❌ Ignore", callback_data=f'declinechat_{user_id}')
+                    ],
+                    [InlineKeyboardButton("👤 View Profile", url=f'https://t.me/{BOT_USERNAME}?start=profileid_{user_id}')]
+                ])
                 
+                await context.bot.send_message(
+                    chat_id=target_id,
+                    text=receiver_text,
+                    reply_markup=receiver_kb,
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
             except Exception as e:
-                logger.error(f"Error in reply_msg handler: {e}, data: {query.data}")
-                await query.answer("❌ Error processing reply", show_alert=True)        
+                logger.error(f"ChatRequest error: {e}")
+                await query.answer("❌ Failed to send request.", show_alert=True)
+
+        elif query.data.startswith('acceptchat_'):
+            sender_id = query.data.split('_')[1]
+            db_execute(
+                "UPDATE chat_requests SET status = 'accepted' WHERE sender_id = %s AND receiver_id = %s",
+                (sender_id, user_id)
+            )
+            # Mutual chat permission
+            db_execute(
+                "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (%s, %s, 'accepted') ON CONFLICT DO NOTHING",
+                (user_id, sender_id)
+            )
+            
+            await query.answer("✅ Request accepted!", show_alert=False)
+            await query.message.edit_text("✅ *You accepted the chat request!*", parse_mode=ParseMode.MARKDOWN_V2)
+            
+            receiver_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+            receiver_name = get_display_name(receiver_data)
+            try:
+                await context.bot.send_message(
+                    chat_id=sender_id,
+                    text=f"✅ *{escape_markdown(receiver_name, version=2)}* accepted your chat request\\! You can now send messages from their profile\\.",
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+            except: pass
+
+        elif query.data.startswith('declinechat_'):
+            sender_id = query.data.split('_')[1]
+            db_execute("DELETE FROM chat_requests WHERE sender_id = %s AND receiver_id = %s", (sender_id, user_id))
+            await query.answer("Request ignored.", show_alert=False)
+            await query.message.edit_text("🗑️ *Chat request ignored\\.*", parse_mode=ParseMode.MARKDOWN_V2)
+
+        elif query.data.startswith('message_'):
+            target_id = query.data.split('_')[1]
+            check = db_fetch_one("SELECT status FROM chat_requests WHERE sender_id = %s AND receiver_id = %s", (user_id, target_id))
+            
+            if not check or check['status'] != 'accepted':
+                await query.answer("❌ You must send a chat request first!", show_alert=True)
+                return
+
+            await query.answer("✉️ Opening Chat...", show_alert=False)
+            db_execute("UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s", (target_id, user_id))
+            await query.message.reply_text("✉️ *Please type your private message:*\n\nTap ❌ Cancel to return to menu.", parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_menu)
+        
+        elif query.data.startswith('reply_msg_'):
+            # Existing reply logic (requires accepted chat as well)
+            target_id = query.data[len('reply_msg_'):]
+            if not target_id or not target_id.isdigit():
+                await query.answer("❌ Invalid ID", show_alert=True)
+                return
+                
+            check = db_fetch_one("SELECT status FROM chat_requests WHERE sender_id = %s AND receiver_id = %s", (user_id, target_id))
+            if not check or check['status'] != 'accepted':
+                await query.answer("❌ No active chat permission.", show_alert=True)
+                return
+
+            db_execute("UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s", (target_id, user_id))
+            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
+            await query.message.reply_text(f"↩️ *Replying to {target_user['anonymous_name']}*\n\nPlease type your message:", parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_menu)
+
         elif query.data.startswith("reply_"):
             parts = query.data.split("_")
             if len(parts) == 3:
