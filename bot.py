@@ -2257,10 +2257,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     safe_bio = escape_markdown(bio, version=2)
                     
                     profile_text = (
-                        rf"👤 *{safe_name}* {safe_sex}\n\n"
-                        rf"🛡 *Role:* Administrator\n"
-                        rf"👥 *Followers:* {len(followers)}\n\n"
-                        rf"📖 *About:*\n_{safe_bio}_\n"
+                        f"👤 *{safe_name}* {safe_sex}\n\n"
+                        f"🛡 *Role:* Administrator\n"
+                        f"👥 *Followers:* {len(followers)}\n\n"
+                        f"📖 *About:*\n_{safe_bio}_\n"
                     )
                 else:
                     # Standardize escaping for V2
@@ -2272,11 +2272,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     safe_aura = escape_markdown(format_aura(rating), version=2)
 
                     profile_text = (
-                        rf"👤 *{safe_name}* {safe_sex}\n\n"
-                        rf"✨ *Aura Level:* {safe_level} \({safe_aura}\)\n"
-                        rf"⭐️ *Points:* {safe_rating}\n"
-                        rf"👥 *Followers:* {len(followers)}\n\n"
-                        rf"📖 *About:*\n_{safe_bio}_\n"
+                        f"👤 *{safe_name}* {safe_sex}\n\n"
+                        f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
+                        f"⭐️ *Points:* {safe_rating}\n"
+                        f"👥 *Followers:* {len(followers)}\n\n"
+                        f"📖 *About:*\n_{safe_bio}_\n"
                     )
 
 
@@ -3326,20 +3326,20 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     
     if is_admin:
         profile_text = (
-            rf"👤 *{safe_name}* {safe_sex}\n\n"
-            rf"🛡 *Role:* Administrator\n"
-            rf"👥 *Followers:* {follower_count}\n\n"
-            rf"📖 *About:*\n_{safe_bio}_\n"
-            rf"_Use /menu to return_"
+            f"👤 *{safe_name}* {safe_sex}\n\n"
+            f"🛡 *Role:* Administrator\n"
+            f"👥 *Followers:* {follower_count}\n\n"
+            f"📖 *About:*\n_{safe_bio}_\n"
+            f"_Use /menu to return_"
         )
     else:
         profile_text = (
-            rf"👤 *{safe_name}* {safe_sex}\n\n"
-            rf"✨ *Aura Level:* {safe_level} \({safe_aura}\)\n"
-            rf"⭐️ *Points:* {safe_rating}\n"
-            rf"👥 *Followers:* {follower_count}\n\n"
-            rf"📖 *About:*\n_{safe_bio}_\n"
-            rf"_Use /menu to return_"
+            f"👤 *{safe_name}* {safe_sex}\n\n"
+            f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
+            f"⭐️ *Points:* {safe_rating}\n"
+            f"👥 *Followers:* {follower_count}\n\n"
+            f"📖 *About:*\n_{safe_bio}_\n"
+            f"_Use /menu to return_"
         )
     
     await context.bot.send_message(
@@ -6514,7 +6514,7 @@ def mini_app_page():
                             </div>
                             <div class="author-info">
                                 <div style="display: flex; align-items: center; gap: 8px;">
-                                    <h4 style="color: var(--text); font-family: 'Outfit'; text-transform: none; letter-spacing: 0;">Anonymous</h4>
+                                    <h4 style="color: var(--text); font-family: 'Outfit'; text-transform: none; letter-spacing: 0;">${{post.author.name}}</h4>
                                     <span class="aura-sticker">${{post.author.aura || ''}}</span>
                                 </div>
                                 <div class="post-meta">
@@ -6557,7 +6557,7 @@ def mini_app_page():
                                     </div>
                                     <div class="author-info">
                                         <div style="display: flex; align-items: center; gap: 8px;">
-                                            <h4 style="color: var(--text); font-family: 'Outfit'; text-transform: none; letter-spacing: 0;">Anonymous</h4>
+                                            <h4 style="color: var(--text); font-family: 'Outfit'; text-transform: none; letter-spacing: 0;">${{post.author.name}}</h4>
                                             <span class="aura-sticker">${{post.author.aura || ''}}</span>
                                         </div>
                                         <div class="post-meta">
@@ -6606,7 +6606,7 @@ def mini_app_page():
                                     <div style="flex: 1;">
                                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px;">
                                             <div style="display: flex; align-items: center; gap: 6px;">
-                                                <span style="font-size: 0.85rem; font-weight: 600; font-family: 'Oswald'; color: var(--primary);">ANONYMOUS</span>
+                                                <span style="font-size: 0.85rem; font-weight: 600; font-family: 'Oswald'; color: var(--primary); text-transform: uppercase;">${{comment.author.name}}</span>
                                                 <span style="font-size: 0.8rem;">${{comment.author.aura}}</span>
                                             </div>
                                             <span style="font-size: 0.7rem; opacity: 0.5;">${{comment.time_ago}}</span>
@@ -6955,7 +6955,8 @@ def mini_app_get_posts():
                 p.media_type,
                 u.user_id as author_id,
                 u.sex as author_sex,
-                u.avatar_emoji as author_avatar
+                u.avatar_emoji as author_avatar,
+                u.anonymous_name as author_name
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             WHERE p.approved = TRUE
@@ -7033,7 +7034,7 @@ def mini_app_get_single_post(post_id):
         post = db_fetch_one('''
             SELECT 
                 p.post_id, p.content, p.category, p.timestamp, p.comment_count, p.media_type,
-                u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar
+                u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             WHERE p.post_id = %s AND p.approved = TRUE
@@ -7088,7 +7089,7 @@ def mini_app_get_post_comments(post_id):
         comments = db_fetch_all('''
             SELECT 
                 c.comment_id, c.content, c.timestamp as time_ago,
-                u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar
+                u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name
             FROM comments c
             JOIN users u ON c.author_id = u.user_id
             WHERE c.post_id = %s
@@ -7120,6 +7121,7 @@ def mini_app_get_post_comments(post_id):
                 'content': c['content'],
                 'time_ago': calc_time,
                 'author': {
+                    'name': c['author_name'] or 'Anonymous',
                     'sex': c['author_sex'] or '👤',
                     'avatar': c['author_avatar'] or "",
                     'aura': format_aura(rating)
