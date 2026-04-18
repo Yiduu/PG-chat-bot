@@ -2937,9 +2937,10 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             ])
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="",
+                text="🗨 *More replies inside this thread:*",
                 reply_markup=keyboard,
-                reply_to_message_id=msg_id
+                reply_to_message_id=msg_id,
+                parse_mode=ParseMode.MARKDOWN
             )
     
     # Pagination buttons for top-level comments
@@ -3003,13 +3004,19 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     
     # Pagination for replies
     replies_per_page = 5
-    offset = (page - 1) * replies_per_page
+    # Skip the first 3 replies already shown in the comment view
+    offset = 3 + (page - 1) * replies_per_page
     
     # Get replies for this page
-    replies = db_fetch_all(
-        "SELECT * FROM comments WHERE parent_comment_id = %s ORDER BY timestamp ASC LIMIT %s OFFSET %s",
-        (comment_id, replies_per_page, offset)
-    )
+    try:
+        replies = db_fetch_all(
+            "SELECT * FROM comments WHERE parent_comment_id = %s ORDER BY timestamp ASC LIMIT %s OFFSET %s",
+            (comment_id, replies_per_page, offset)
+        )
+    except Exception as e:
+        logger.error(f"Error fetching more replies for comment {comment_id}: {e}")
+        await query.answer("❌ Error loading replies", show_alert=True)
+        return
     
     # Count total replies
     total_replies_row = db_fetch_one(
@@ -3026,24 +3033,49 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         pass
     
     # Send the replies for this page
+    reply_to_id = None
+    if query.message and query.message.reply_to_message:
+        reply_to_id = query.message.reply_to_message.message_id
+
     for reply in replies:
-        await send_reply_message(context, chat_id, reply, post_author_id, query.message.reply_to_message.message_id)
+        try:
+            await send_reply_message(context, chat_id, reply, post_author_id, reply_to_id)
+        except Exception as e:
+            logger.error(f"Error sending reply {reply.get('comment_id')}: {e}")
     
     # If there are more replies, show another "Show more" button
     if page < total_pages:
-        remaining = total_replies - (page * replies_per_page)
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                f"📨 Show more replies ({remaining} more)", 
-                callback_data=f"show_more_replies_{comment_id}_{page + 1}"
-            )]
-        ])
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="",
-            reply_markup=keyboard,
-            reply_to_message_id=query.message.reply_to_message.message_id
-        )
+        remaining = total_replies - (3 + page * replies_per_page)
+        if remaining > 0:
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    f"📨 Show even more replies ({remaining} more)", 
+                    callback_data=f"show_more_replies_{comment_id}_{page + 1}"
+                )]
+            ])
+            
+            # Try to get the reply_to_message_id safely
+            reply_to_id = None
+            if query.message and query.message.reply_to_message:
+                reply_to_id = query.message.reply_to_message.message_id
+                
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="🗨 *Even more replies below:*",
+                    reply_markup=keyboard,
+                    reply_to_message_id=reply_to_id,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                logger.error(f"Error sending additional replies button: {e}")
+                # Fallback: send without reply_to_id
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="🗨 *Even more replies below:*",
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.MARKDOWN
+                )
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If called from a callback query, answer it first
     if update.callback_query:
