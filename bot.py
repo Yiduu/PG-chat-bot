@@ -4130,11 +4130,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
                         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
                         
+                        # Modernized Reaction Notification
+                        reaction_label = "liked 👍" if reaction_type == 'like' else "disliked 👎"
+                        reaction_icon = "✨" if reaction_type == 'like' else "⚠️"
+                        
                         notification_text = (
-                            f"❤️ {reactor_name} reacted to your comment:\n\n"
-                            f"🗨 {escape_markdown(comment['content'][:100], version=2)}\n\n"
-                            f"📝 Post: {escape_markdown(post_preview, version=2)}\n\n"
-                            f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+                            f"{reaction_icon} *New Interaction\!*\n\n"
+                            f"👤 {escape_markdown(reactor_name, version=2)} *{reaction_label}* your comment\:\n\n"
+                            f"🗨 _{escape_markdown(comment['content'][:150], version=2)}_\n\n"
+                            f"📝 *Post Context\:*\n{escape_markdown(post_preview, version=2)}\n\n"
+                            f"🔗 [View Discussion](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
                         )
                         
                         await context.bot.send_message(
