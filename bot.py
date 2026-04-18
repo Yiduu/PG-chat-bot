@@ -1009,7 +1009,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     
     # Create clean header
-    leaderboard_text = rf"*🏆 Christian Vent Leaderboard*\n\n"
+    leaderboard_text = f"*🏆 Christian Vent Leaderboard*\n\n"
     
     # Define medal emojis for top 3
     medal_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
@@ -1031,9 +1031,9 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         safe_rank = escape_markdown(rank_prefix, version=2)
 
         leaderboard_text += (
-            rf"{safe_rank} {safe_sex} "
-            rf"[{safe_name}]({profile_link})\n"
-            rf"   {safe_total} pts {safe_aura}\n\n"
+            f"{safe_rank} {safe_sex} "
+            f"[{safe_name}]({profile_link})\n"
+            f"   {safe_total} pts {safe_aura}\n\n"
         )
 
     
@@ -1051,11 +1051,11 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             safe_user_pts = escape_markdown(str(user_contributions), version=2)
             safe_user_rank = escape_markdown(str(user_rank), version=2)
             
-            leaderboard_text += rf"*Your position:* {safe_user_rank}\n"
-            leaderboard_text += rf"{safe_user_sex} {safe_user_name} • {safe_user_pts} pts {safe_user_aura}\n\n"
+            leaderboard_text += f"*Your position:* {safe_user_rank}\n"
+            leaderboard_text += f"{safe_user_sex} {safe_user_name} • {safe_user_pts} pts {safe_user_aura}\n\n"
     
     # Add subtle footer
-    leaderboard_text += rf"_Click names to view profiles • Updated daily_"
+    leaderboard_text += f"_Click names to view profiles • Updated daily_"
 
     
     # Create clean buttons
@@ -1196,9 +1196,9 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
                 thread_text = f"🔄 *Threading from previous post:*\n{escape_markdown(thread_preview, version=2)}\n\n"
     
     preview_text = (
-        rf"{thread_text}📝 *Post Preview* [{escape_markdown(category, 2)}]\n\n"
-        rf"{escape_markdown(post_content, version=2)}\n\n"
-        rf"Please confirm your post\:"
+        f"{thread_text}📝 *Post Preview* [{escape_markdown(category, 2)}]\n\n"
+        f"{escape_markdown(post_content, version=2)}\n\n"
+        f"Please confirm your post\\:"
     )
 
     
@@ -1292,10 +1292,10 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
         safe_comment_preview = escape_markdown(comment['content'][:100], version=2)
 
         notification_text = (
-            rf"💬 {safe_replier_name} replied to your comment\:\n\n"
-            rf"🗨 {safe_comment_preview}\n\n"
-            rf"📝 Post\: {safe_post_preview}\n\n"
-            rf"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+            f"💬 {safe_replier_name} replied to your comment\\:\n\n"
+            f"🗨 {safe_comment_preview}\n\n"
+            f"📝 Post\\: {safe_post_preview}\n\n"
+            f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
         )
 
         
@@ -1361,10 +1361,10 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         safe_preview_content = escape_markdown(preview_content, version=2)
 
         notification_text = (
-            rf"📩 *New Private Message*\n\n"
-            rf"👤 From: {safe_sender_name}\n\n"
-            rf"💬 {safe_preview_content}\n\n"
-            rf"💭 _Use /inbox to view all messages_"
+            f"📩 *New Private Message*\n\n"
+            f"👤 From: {safe_sender_name}\n\n"
+            f"💬 {safe_preview_content}\n\n"
+            f"💭 _Use /inbox to view all messages_"
         )
 
         
@@ -3373,7 +3373,7 @@ async def show_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TY
     text = (
         "🎭 *Select Avatar Emoji*\n\n"
         "Choose an emoji to display next to your name:\n\n"
-        rf"_This will appear on your profile, comments, and the leaderboard\._"
+        f"_This will appear on your profile, comments, and the leaderboard\\._"
     )
 
     
@@ -3741,7 +3741,7 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     else:
         safe_page = escape_markdown(str(page), version=2)
         safe_total_pages = escape_markdown(str(total_pages), version=2)
-        text = rf"💬 *My Comments* \(Page {safe_page}/{safe_total_pages}\)\n\n"
+        text = f"💬 *My Comments* \\(Page {safe_page}/{safe_total_pages}\\)\n\n"
         
         for idx, comment in enumerate(comments):
             comment_num = (page - 1) * per_page + idx + 1
@@ -3751,7 +3751,7 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
             comment_preview = comment['content'][:80] + '...' if len(comment['content']) > 80 else comment['content']
             safe_comment_preview = escape_markdown(comment_preview, version=2)
             
-            text += rf"**{safe_num}.** {safe_comment_preview}\n\n"
+            text += f"**{safe_num}.** {safe_comment_preview}\n\n"
 
         
         # Build keyboard
@@ -4183,11 +4183,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reaction_icon = "✨" if reaction_type == 'like' else "⚠️"
                         
                         notification_text = (
-                            rf"{reaction_icon} *New Interaction\!*\n\n"
-                            rf"👤 {escape_markdown(reactor_name, version=2)} *{reaction_label}* your comment\:\n\n"
-                            rf"🗨 _{escape_markdown(comment['content'][:150], version=2)}_\n\n"
-                            rf"📝 *Post Context\:*\n{escape_markdown(post_preview, version=2)}\n\n"
-                            rf"🔗 [View Discussion](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+                            f"{reaction_icon} *New Interaction\\!*\n\n"
+                            f"👤 {escape_markdown(reactor_name, version=2)} *{reaction_label}* your comment\\:\n\n"
+                            f"🗨 _{escape_markdown(comment['content'][:150], version=2)}_\n\n"
+                            f"📝 *Post Context\\:*\n{escape_markdown(post_preview, version=2)}\n\n"
+                            f"🔗 [View Discussion](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
                         )
 
                         
