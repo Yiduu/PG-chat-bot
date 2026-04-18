@@ -5670,7 +5670,7 @@ def mini_app_page():
             font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
             background: linear-gradient(135deg, #090909 0%, #151515 100%);
             color: var(--text);
-            font-size: 16px;
+            font-size: 14px;
             min-height: 100vh;
             padding: 0;
             position: relative;
@@ -5867,7 +5867,34 @@ def mini_app_page():
 
 
         /* Premium Form Elements */
-        .category-select, .vent-textarea {{
+        .category-select {{
+            width: 100%;
+            background: rgba(var(--primary-rgb), 0.05) url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23d4af37' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e") no-repeat right 18px center;
+            background-size: 16px;
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+            color: var(--text);
+            border-radius: 30px;
+            padding: 16px 45px 16px 20px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2), inset 0 2px 5px rgba(255,255,255,0.02);
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            cursor: pointer;
+        }}
+        
+        .category-select:focus {{
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.3), inset 0 2px 5px rgba(255,255,255,0.05);
+            background-color: rgba(var(--primary-rgb), 0.1);
+        }}
+
+        .vent-textarea {{
             width: 100%;
             background: rgba(15, 15, 15, 0.6);
             border: 1px solid rgba(var(--primary-rgb), 0.15);
@@ -5875,27 +5902,24 @@ def mini_app_page():
             border-radius: 20px;
             padding: 18px 20px;
             font-family: 'Outfit', sans-serif;
-            font-size: 1.05rem;
+            font-size: 0.95rem;
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
             margin-bottom: 20px;
             box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
             -webkit-appearance: none;
             -moz-appearance: none;
             appearance: none;
-        }}
-        
-        .category-select:focus, .vent-textarea:focus {{
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.15), inset 0 2px 10px rgba(0,0,0,0.2);
-            background: rgba(25, 25, 25, 0.8);
-        }}
-        
-        .vent-textarea {{
             min-height: 200px;
             resize: vertical;
             line-height: 1.7;
             letter-spacing: 0.3px;
+        }}
+        
+        .vent-textarea:focus {{
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.15), inset 0 2px 10px rgba(0,0,0,0.2);
+            background: rgba(25, 25, 25, 0.8);
         }}
 
         /* Premium Buttons */
@@ -6049,6 +6073,41 @@ def mini_app_page():
         .rank-1 {{ color: #FFD700; font-size: 1.5rem; }}
         .rank-2 {{ color: #C0C0C0; }}
         .rank-3 {{ color: #CD7F32; }}
+
+        /* App Footer */
+        .app-footer {{
+            text-align: center;
+            padding: 40px 20px 20px;
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.4);
+            border-top: 1px dashed rgba(255,255,255,0.05);
+        }}
+        
+        .app-footer p {{
+            margin-bottom: 15px;
+            line-height: 1.6;
+        }}
+        
+        .telegram-link {{
+            display: inline-block;
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 500;
+            padding: 6px 14px;
+            margin: 0 5px;
+            background: rgba(var(--primary-rgb), 0.05);
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+            border-radius: 20px;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }}
+        
+        .telegram-link:hover {{
+            background: rgba(var(--primary-rgb), 0.15);
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(var(--primary-rgb), 0.2);
+            color: #FFD700;
+        }}
 
         /* Skeleton Loading Animation */
         .skeleton {{
