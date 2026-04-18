@@ -1054,6 +1054,9 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                    callback_data='toggle_privacy')
             ],
             [
+                InlineKeyboardButton("🚫 Blocked Users", callback_data='list_blocked')
+            ],
+            [
                 InlineKeyboardButton("📱 Main Menu", callback_data='menu'),
                 InlineKeyboardButton("👤 Profile", callback_data='profile')
             ]
@@ -2123,12 +2126,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
                         (current_user_id, user_data['user_id'])
                     )
+                    # Check if blocked to show toggle
+                    is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id']))
+                    
                     if is_following:
                         btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
                         btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'chatrequest_{user_data["user_id"]}')])
                     else:
                         btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
                         btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'chatrequest_{user_data["user_id"]}')])
+                    
+                    if is_blocked:
+                        btn.append([InlineKeyboardButton("🔓 Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
+                    else:
+                        btn.append([InlineKeyboardButton("⛔ Block User", callback_data=f'block_user_{user_data["user_id"]}')])
                 
                 display_name = get_display_name(user_data)
                 display_sex = get_display_sex(user_data)
@@ -2456,15 +2467,19 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
     
+    # Check if blocked for toggle
+    is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (user_id, message['sender_id']))
+    block_btn = InlineKeyboardButton("🔓 Unblock", callback_data=f"unblock_user_{message['sender_id']}") if is_blocked else InlineKeyboardButton("⛔ Block", callback_data=f"block_user_{message['sender_id']}")
+
     # Create clean action buttons (like WhatsApp/Telegram)
     keyboard = [
         [
             InlineKeyboardButton("💬 Reply", callback_data=f"reply_msg_{message['sender_id']}"),
-            InlineKeyboardButton("👤 View Profile", callback_data=f"profileid_{message['sender_id']}")
+            InlineKeyboardButton("👤 View Profile", url=f"https://t.me/{context.bot.username}?start=profileid_{message['sender_id']}")
         ],
         [
             InlineKeyboardButton("🗑 Delete", callback_data=f"delete_message_{message_id}_{from_page}"),
-            InlineKeyboardButton("⛔ Block", callback_data=f"block_user_{message['sender_id']}")
+            block_btn
         ],
         [
             InlineKeyboardButton("◀️ Back to Inbox", callback_data=f"inbox_page_{from_page}"),
@@ -4638,6 +4653,61 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith("viewpost_"):
             post_id = int(query.data.split('_')[1])
             await view_post(update, context, post_id)    
+        elif query.data == 'list_blocked':
+            await query.answer("🚫 Loading blocked users...", show_alert=False)
+            blocked = db_fetch_all(
+                """SELECT u.user_id, u.anonymous_name, u.sex 
+                FROM blocks b JOIN users u ON b.blocked_id = u.user_id 
+                WHERE b.blocker_id = %s""",
+                (user_id,)
+            )
+            
+            if not blocked:
+                await query.message.edit_text(
+                    "🚫 *Your Block List is Empty*",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Back to Settings", callback_data='settings')]]),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+                
+            text = "🚫 *Your Blocked Users*\n\n"
+            kb = []
+            for b_user in blocked:
+                name = get_display_name(b_user)
+                text += f"• {escape_markdown(name, version=2)}\n"
+                kb.append([InlineKeyboardButton(f"🔓 Unblock {name}", callback_data=f"unblock_user_{b_user['user_id']}")])
+            
+            kb.append([InlineKeyboardButton("◀️ Back to Settings", callback_data='settings')])
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN_V2)
+
+        elif query.data.startswith('unblock_user_'):
+            target_id = query.data.split('_', 2)[2]
+            db_execute("DELETE FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (user_id, target_id))
+            await query.answer("✅ User unblocked!", show_alert=False)
+            
+            # Refresh view (either profiles or list)
+            if "Blocked Users" in query.message.text:
+                # If we are in the list, refresh the list
+                blocked = db_fetch_all(
+                    "SELECT u.user_id, u.anonymous_name, u.sex FROM blocks b JOIN users u ON b.blocked_id = u.user_id WHERE b.blocker_id = %s",
+                    (user_id,)
+                )
+                if not blocked:
+                    await query.message.edit_text("🚫 List empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Back", callback_data='settings')]]))
+                else:
+                    text = "🚫 *Your Blocked Users (Updated)*\n\n"
+                    kb = []
+                    for b_user in blocked:
+                        name = get_display_name(b_user)
+                        text += f"• {escape_markdown(name, version=2)}\n"
+                        kb.append([InlineKeyboardButton(f"🔓 Unblock {name}", callback_data=f"unblock_user_{b_user['user_id']}")])
+                    kb.append([InlineKeyboardButton("◀️ Back", callback_data='settings')])
+                    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN_V2)
+            else:
+                # If we are in a message or profile, show success and button refresh
+                await query.message.reply_text("✅ User has been unblocked.")
+                # We can't easily refresh the profile here without sender data, so a simple message is enough or let user re-open.
+
         elif query.data.startswith('block_user_'):
             target_id = query.data.split('_', 2)[2]
             
