@@ -5668,13 +5668,15 @@ def mini_app_page():
         
         body {{
             font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%);
+            background: linear-gradient(135deg, #090909 0%, #151515 100%);
             color: var(--text);
+            font-size: 16px;
             min-height: 100vh;
             padding: 0;
             position: relative;
             overflow-x: hidden;
-            padding-bottom: 80px; /* Space for bottom nav */
+            padding-bottom: 100px; /* Space for bottom nav */
+            -webkit-font-smoothing: antialiased;
         }}
         
         h1, h2, h3, h4, h5, h6 {{
@@ -5710,9 +5712,10 @@ def mini_app_page():
         }}
         
         .app-container {{
-            max-width: 600px;
+            max-width: 650px;
+            width: 100%;
             margin: 0 auto;
-            padding: 20px;
+            padding: clamp(15px, 4vw, 30px);
             position: relative;
             z-index: 1;
         }}
@@ -5752,10 +5755,11 @@ def mini_app_page():
         
         .app-title {{
             color: var(--primary);
-            font-size: 2.5rem;
+            font-size: clamp(2.2rem, 6vw, 3rem);
             margin: 0;
             font-weight: 700;
-            text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            letter-spacing: -0.5px;
+            text-shadow: 0 4px 15px rgba(var(--primary-rgb), 0.3), 0 2px 5px rgba(0,0,0,0.5);
         }}
         
         .app-subtitle {{
@@ -5769,15 +5773,16 @@ def mini_app_page():
         
         /* Glassmorphism Cards */
         .glass-card {{
-            background: var(--glass-bg);
-            backdrop-filter: blur(15px);
-            -webkit-backdrop-filter: blur(15px);
-            border: 1px solid var(--glass-border);
-            border-radius: 20px;
-            padding: 25px;
-            margin-bottom: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            transition: transform 0.3s ease, border-color 0.3s ease;
+            background: linear-gradient(145deg, rgba(26, 26, 26, 0.7), rgba(15, 15, 15, 0.8));
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-top: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 24px;
+            padding: clamp(20px, 5vw, 35px);
+            margin-bottom: 25px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+            transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.4s ease;
         }}
         
         .glass-card:hover {{ border-color: rgba(var(--primary-rgb), 0.4); }}
@@ -5799,69 +5804,150 @@ def mini_app_page():
         /* Bottom Navigation Bar */
         .bottom-nav {{
             position: fixed;
-            bottom: 20px;
+            bottom: 25px;
             left: 50%;
             transform: translateX(-50%);
-            width: 90%;
+            width: 92%;
             max-width: 500px;
-            background: rgba(20, 20, 20, 0.9);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 30px;
-            height: 70px;
+            background: rgba(15, 15, 15, 0.85);
+            backdrop-filter: blur(25px);
+            -webkit-backdrop-filter: blur(25px);
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+            border-radius: 40px;
+            height: 75px;
             display: flex;
             justify-content: space-around;
             align-items: center;
             z-index: 1000;
-            box-shadow: 0 15px 40px rgba(0,0,0,0.5);
-            padding: 0 10px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.1);
+            padding: 0 15px;
         }}
         
         .nav-item {{
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 5px;
+            gap: 6px;
             color: var(--text);
-            opacity: 0.5;
+            opacity: 0.4;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
             flex: 1;
-            padding: 10px 0;
-            border-radius: 15px;
+            padding: 12px 0;
+            border-radius: 20px;
+            position: relative;
+        }}
+        
+        .nav-item:hover {{
+            opacity: 0.8;
+            transform: translateY(-2px);
         }}
         
         .nav-item.active {{
             opacity: 1;
             color: var(--primary);
-            background: rgba(var(--primary-rgb), 0.1);
+            transform: translateY(-4px);
         }}
         
-        .nav-icon {{ font-size: 1.4rem; }}
-        .nav-label {{ font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }}
+        .nav-item.active::after {{
+            content: '';
+            position: absolute;
+            bottom: -5px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 6px;
+            height: 6px;
+            background: var(--primary);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--primary);
+        }}
+        
+        .nav-icon {{ font-size: 1.6rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }}
+        .nav-label {{ font-size: 0.75rem; font-family: 'Oswald', sans-serif; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }}
+
 
         /* Premium Form Elements */
         .category-select, .vent-textarea {{
             width: 100%;
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(15, 15, 15, 0.6);
+            border: 1px solid rgba(var(--primary-rgb), 0.15);
             color: var(--text);
-            border-radius: 15px;
-            padding: 15px;
-            font-family: inherit;
-            font-size: 1rem;
-            transition: all 0.3s ease;
+            border-radius: 20px;
+            padding: 18px 20px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.05rem;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            margin-bottom: 20px;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+        }}
+        
+        .category-select:focus, .vent-textarea:focus {{
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.15), inset 0 2px 10px rgba(0,0,0,0.2);
+            background: rgba(25, 25, 25, 0.8);
+        }}
+        
+        .vent-textarea {{
+            min-height: 200px;
+            resize: vertical;
+            line-height: 1.7;
+            letter-spacing: 0.3px;
+        }}
+
+        /* Premium Buttons */
+        .submit-btn {{
+            width: 100%;
+            background: linear-gradient(135deg, var(--primary) 0%, #d4af37 100%);
+            color: #000;
+            border: none;
+            padding: 20px 24px;
+            border-radius: 22px;
+            font-family: 'Oswald', sans-serif;
+            font-weight: 700;
+            font-size: 1.25rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 10px 25px rgba(var(--primary-rgb), 0.3);
+            margin-top: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }}
+
+        .submit-btn:hover {{
+            transform: translateY(-3px);
+            box-shadow: 0 15px 35px rgba(var(--primary-rgb), 0.5);
+            background: linear-gradient(135deg, #FFD700 0%, var(--primary) 100%);
+        }}
+        
+        .submit-btn:active {{
+            transform: translateY(1px);
+            box-shadow: 0 5px 15px rgba(var(--primary-rgb), 0.4);
         }}
         
         /* Feed & Card Styles */
         .post-card {{
-            background: var(--glass-bg);
-            border: 1px solid var(--glass-border);
-            border-radius: 20px;
-            padding: 20px;
-            margin-bottom: 20px;
-            transition: all 0.3s;
+            background: linear-gradient(145deg, rgba(30, 30, 30, 0.4) 0%, rgba(15, 15, 15, 0.6) 100%);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(var(--primary-rgb), 0.1);
+            border-radius: 25px;
+            padding: 24px;
+            margin-bottom: 25px;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4);
+        }}
+        
+        .post-card:hover {{
+            transform: translateY(-4px);
+            border-color: rgba(var(--primary-rgb), 0.3);
+            box-shadow: 0 25px 45px rgba(0,0,0,0.5), 0 0 20px rgba(var(--primary-rgb), 0.1);
         }}
         
         .post-author {{
