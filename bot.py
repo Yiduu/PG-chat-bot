@@ -3922,7 +3922,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dislikes = dislikes_row['cnt'] if dislikes_row else 0
 
                 comment = db_fetch_one(
-                    "SELECT post_id, parent_comment_id, author_id, type FROM comments WHERE comment_id = %s",
+                    "SELECT post_id, parent_comment_id, author_id, type, content FROM comments WHERE comment_id = %s",
                     (comment_id,)
                 )
                 if not comment:
