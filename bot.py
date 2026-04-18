@@ -6245,6 +6245,38 @@ def mini_app_page():
                 </div>
             </div>
 
+            <!-- Post Detail (Read & Comment) Tab -->
+            <div id="post-detail-tab" class="tab-pane">
+                <div class="section-header" style="padding: 0 10px; justify-content: flex-start;">
+                    <button class="refresh-btn" onclick="app.switchTab('posts')" style="background: rgba(var(--primary-rgb), 0.1); border-color: rgba(var(--primary-rgb), 0.2); padding: 8px 16px; font-size: 0.95rem;">← Back to Feed</button>
+                </div>
+                
+                <div id="detailPostContainer">
+                    <div class="loading">Aligning spirit...</div>
+                </div>
+
+                <div class="comments-section" style="margin-top: 25px;">
+                    <h3 style="color: var(--primary); padding-left: 10px; margin-bottom: 15px; font-family: 'Oswald'; text-transform: uppercase;">Spiritual Responses</h3>
+                    
+                    <div id="detailCommentsContainer" style="display: flex; flex-direction: column; gap: 15px;">
+                        <!-- Comments injected here by JS -->
+                    </div>
+
+                    <!-- Native Comment Submission Form -->
+                    <div class="glass-card" style="margin-top: 20px; padding: 15px; background: rgba(10,10,10,0.8);">
+                        <textarea 
+                            id="detailCommentInput" 
+                            class="vent-textarea" 
+                            style="min-height: 90px; margin-bottom: 10px; padding: 14px; font-size: 0.9rem; border-radius: 15px;" 
+                            placeholder="Offer your prayers or advice anonymously..."
+                        ></textarea>
+                        <button id="postCommentBtn" class="submit-btn" style="padding: 14px; font-size: 1rem; border-radius: 16px; margin-top: 0;">
+                            Send Reply
+                        </button>
+                    </div>
+                </div>
+            </div>
+
         </div>
 
         <!-- Footer -->
@@ -6268,6 +6300,7 @@ def mini_app_page():
                 this.user = null;
                 this.token = null;
                 this.userId = null;
+                this.currentPostId = null;
                 this.botUsername = "{bot_username}";
                 this.apiBaseUrl = window.location.origin;
                 this.isAdmin = false;
@@ -6494,16 +6527,150 @@ def mini_app_page():
                         <div class="post-content" style="font-weight: 300; line-height: 1.8;">${{this.escapeHtml(post.content)}}</div>
                         <div class="post-footer" style="border-top-color: rgba(255,255,255,0.05);">
                             <div class="comment-count" style="font-weight: 500; color: var(--primary);">🕊️ ${{post.comments}} Responses</div>
-                            <button onclick="window.open('https://t.me/${{this.botUsername}}?start=comments_${{post.id}}', '_blank')" 
-                                    style="background: transparent; color: var(--primary); border: 1px solid rgba(var(--primary-rgb), 0.3); padding: 8px 15px; border-radius: 12px; font-size: 0.8rem; cursor: pointer; font-family: 'Oswald';">
-                                VIEW IN BOT
+                            <button onclick="app.openPostDetail(${{post.id}})" 
+                                    style="background: transparent; color: var(--primary); border: 1px solid rgba(var(--primary-rgb), 0.3); padding: 8px 15px; border-radius: 12px; font-size: 0.8rem; cursor: pointer; font-family: 'Oswald'; transition: all 0.3s;">
+                                READ FULL VENT
                             </button>
                         </div>
                     </div>
                 `).join('');
             }}
 
+            async openPostDetail(postId) {{
+                this.currentPostId = postId;
+                this.switchTab('post-detail');
+                
+                const container = document.getElementById('detailPostContainer');
+                container.innerHTML = '<div class="loading">Aligning spirit...</div>';
+                
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/post/${{postId}}`);
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        const post = data.data;
+                        container.innerHTML = `
+                            <div class="post-card" style="margin-top: 15px;">
+                                <div class="post-header">
+                                    <div class="author-icon">
+                                        ${{post.author.avatar || (post.author.sex === 'Female' ? '👩' : '👨')}}
+                                    </div>
+                                    <div class="author-info">
+                                        <div style="display: flex; align-items: center; gap: 8px;">
+                                            <h4 style="color: var(--text); font-family: 'Outfit'; text-transform: none; letter-spacing: 0;">Anonymous</h4>
+                                            <span class="aura-sticker">${{post.author.aura || ''}}</span>
+                                        </div>
+                                        <div class="post-meta">
+                                            <span class="identity-badge" style="font-size: 0.7rem; padding: 2px 8px;">${{post.category}}</span>
+                                            <span>•</span>
+                                            <span>${{post.time_ago}}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="post-content" style="font-weight: 300; line-height: 1.8; font-size: 1.05rem;">
+                                    ${{this.escapeHtml(post.content)}}
+                                </div>
+                            </div>
+                        `;
+                        
+                        this.loadPostComments(postId);
+                    }} else {{
+                        container.innerHTML = '<div class="message error-message">Failed to link spirit.</div>';
+                    }}
+                }} catch (error) {{
+                    container.innerHTML = '<div class="message error-message">Network error. Check connection.</div>';
+                }}
+            }}
             
+            async loadPostComments(postId) {{
+                const container = document.getElementById('detailCommentsContainer');
+                container.innerHTML = '<div class="loading">Sensing energy...</div>';
+                
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/post/${{postId}}/comments`);
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        const comments = data.data;
+                        if (comments.length === 0) {{
+                            container.innerHTML = '<p style="text-align: center; opacity: 0.5; font-size: 0.9rem; padding: 20px;">No responses yet. Offer your prayer.</p>';
+                            return;
+                        }}
+                        
+                        container.innerHTML = comments.map(comment => `
+                            <div class="glass-card" style="padding: 15px; margin-bottom: 0; background: rgba(20,20,20,0.5); border-radius: 15px;">
+                                <div style="display: flex; gap: 12px;">
+                                    <div class="author-icon" style="width: 35px; height: 35px; font-size: 1.1rem; flex-shrink: 0;">
+                                        ${{comment.author.avatar || (comment.author.sex === 'Female' ? '👩' : '👨')}}
+                                    </div>
+                                    <div style="flex: 1;">
+                                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px;">
+                                            <div style="display: flex; align-items: center; gap: 6px;">
+                                                <span style="font-size: 0.85rem; font-weight: 600; font-family: 'Oswald'; color: var(--primary);">ANONYMOUS</span>
+                                                <span style="font-size: 0.8rem;">${{comment.author.aura}}</span>
+                                            </div>
+                                            <span style="font-size: 0.7rem; opacity: 0.5;">${{comment.time_ago}}</span>
+                                        </div>
+                                        <div style="font-size: 0.95rem; font-weight: 300; line-height: 1.5;">
+                                            ${{this.escapeHtml(comment.content)}}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('');
+                    }} else {{
+                        container.innerHTML = '<div class="message error-message">Failed to load responses.</div>';
+                    }}
+                }} catch(e) {{
+                    container.innerHTML = '<div class="message error-message">Network error.</div>';
+                }}
+            }}
+            
+            async submitComment() {{
+                if (!this.currentPostId) return;
+                
+                const inputBtn = document.getElementById('postCommentBtn');
+                const inputArea = document.getElementById('detailCommentInput');
+                if (!inputArea || !inputBtn) return;
+                
+                const content = inputArea.value.trim();
+                if (!content) {{
+                    this.showMessage('Please write a response first.', 'error');
+                    return;
+                }}
+                
+                const originalText = inputBtn.textContent;
+                inputBtn.textContent = 'Sending...';
+                inputBtn.disabled = true;
+                
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/post/${{this.currentPostId}}/comment`, {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{
+                            user_id: this.userId,
+                            content: content
+                        }})
+                    }});
+                    
+                    const data = await response.json();
+                    if (data.success) {{
+                        inputArea.value = '';
+                        this.showMessage('Response posted!', 'success');
+                        this.loadPostComments(this.currentPostId);
+                        
+                        // Optionally refresh posts feed silently
+                        this.loadPosts();
+                    }} else {{
+                        this.showMessage(data.error || 'Failed to post.', 'error');
+                    }}
+                }} catch(e) {{
+                    this.showMessage('Network error.', 'error');
+                }} finally {{
+                    inputBtn.textContent = originalText;
+                    inputBtn.disabled = false;
+                }}
+            }}
             async loadLeaderboard() {{
                 const container = document.getElementById('leaderboardContainer');
                 if (!container) return;
@@ -6857,6 +7024,138 @@ def mini_app_get_posts():
         
     except Exception as e:
         logger.error(f"Error in mini-app get posts: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/post/<int:post_id>', methods=['GET'])
+def mini_app_get_single_post(post_id):
+    """API endpoint for fetching a single full vent natively in the Mini App"""
+    try:
+        post = db_fetch_one('''
+            SELECT 
+                p.post_id, p.content, p.category, p.timestamp, p.comment_count, p.media_type,
+                u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar
+            FROM posts p
+            JOIN users u ON p.author_id = u.user_id
+            WHERE p.post_id = %s AND p.approved = TRUE
+        ''', (post_id,))
+        
+        if not post:
+            return jsonify({'success': False, 'error': 'Post not found or pending approval'}), 404
+            
+        # Format time
+        if isinstance(post['timestamp'], str):
+            post_time = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S')
+        else:
+            post_time = post['timestamp']
+            
+        now = datetime.now()
+        time_diff = now - post_time
+        
+        if time_diff.days > 0:
+            time_ago = f"{time_diff.days}d ago"
+        elif time_diff.seconds > 3600:
+            time_ago = f"{time_diff.seconds // 3600}h ago"
+        elif time_diff.seconds > 60:
+            time_ago = f"{time_diff.seconds // 60}m ago"
+        else:
+            time_ago = "Just now"
+            
+        rating = calculate_user_rating(post['author_id'])
+        
+        formatted_post = {
+            'id': post['post_id'],
+            'content': post['content'],
+            'category': post['category'],
+            'time_ago': time_ago,
+            'comments': post['comment_count'] or 0,
+            'author': {
+                'name': 'Anonymous',
+                'sex': post['author_sex'] or '👤',
+                'avatar': post['author_avatar'] or "",
+                'aura': format_aura(rating)
+            }
+        }
+        return jsonify({'success': True, 'data': formatted_post})
+
+    except Exception as e:
+        logger.error(f"Error compiling single post {post_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/post/<int:post_id>/comments', methods=['GET'])
+def mini_app_get_post_comments(post_id):
+    """API endpoint for fetching a post's comments"""
+    try:
+        comments = db_fetch_all('''
+            SELECT 
+                c.comment_id, c.content, c.timestamp as time_ago,
+                u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar
+            FROM comments c
+            JOIN users u ON c.author_id = u.user_id
+            WHERE c.post_id = %s
+            ORDER BY c.timestamp ASC
+        ''', (post_id,))
+        
+        formatted_comments = []
+        now = datetime.now()
+        for c in comments:
+            if isinstance(c['time_ago'], str):
+                c_time = datetime.strptime(c['time_ago'], '%Y-%m-%d %H:%M:%S')
+            else:
+                c_time = c['time_ago']
+            
+            tdiff = now - c_time
+            if tdiff.days > 0:
+                calc_time = f"{tdiff.days}d ago"
+            elif tdiff.seconds > 3600:
+                calc_time = f"{tdiff.seconds // 3600}h ago"
+            elif tdiff.seconds > 60:
+                calc_time = f"{tdiff.seconds // 60}m ago"
+            else:
+                calc_time = "Just now"
+                
+            rating = calculate_user_rating(c['author_id'])
+            
+            formatted_comments.append({
+                'id': c['comment_id'],
+                'content': c['content'],
+                'time_ago': calc_time,
+                'author': {
+                    'sex': c['author_sex'] or '👤',
+                    'avatar': c['author_avatar'] or "",
+                    'aura': format_aura(rating)
+                }
+            })
+            
+        return jsonify({'success': True, 'data': formatted_comments})
+    except Exception as e:
+        logger.error(f"Error fetching comments for {post_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/post/<int:post_id>/comment', methods=['POST'])
+def mini_app_submit_comment(post_id):
+    """API endpoint for appending a comment natively"""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        content = data.get('content', '').strip()
+        
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+        if not content:
+            return jsonify({'success': False, 'error': 'Empty response'}), 400
+            
+        db_execute(
+            "INSERT INTO comments (post_id, author_id, content) VALUES (%s, %s, %s)",
+            (post_id, user_id, content)
+        )
+        db_execute(
+            "UPDATE posts SET comment_count = COALESCE(comment_count, 0) + 1 WHERE post_id = %s",
+            (post_id,)
+        )
+        
+        return jsonify({'success': True, 'message': 'Reply posted successfully!'})
+    except Exception as e:
+        logger.error(f"Failed to post native comment: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @flask_app.route('/api/mini-app/leaderboard', methods=['GET'])
