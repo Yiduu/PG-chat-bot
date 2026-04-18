@@ -5595,7 +5595,7 @@ def mini_app_page():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{app_name} - Mini App</title>
-    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root {{
@@ -5605,31 +5605,50 @@ def mini_app_page():
             --card-bg: {card_bg};
             --border: {border};
             --text: {text_color};
+            --glass-bg: rgba(26, 26, 26, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --accent-gold: #FFD700;
         }}
 
         * {{
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
         }}
         
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: var(--secondary);
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%);
             color: var(--text);
             min-height: 100vh;
             padding: 0;
             position: relative;
             overflow-x: hidden;
+            padding-bottom: 80px; /* Space for bottom nav */
         }}
         
         h1, h2, h3, h4, h5, h6 {{
             font-family: 'Oswald', sans-serif;
             font-weight: 600;
             color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }}
         
-        /* Canvas for particles - behind everything */
+        /* Soulful Gradient Background */
+        body::before {{
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at 50% 50%, rgba(var(--primary-rgb), 0.08) 0%, transparent 70%);
+            z-index: -2;
+            pointer-events: none;
+        }}
+        
         #particleCanvas {{
             position: fixed;
             top: 0;
@@ -5638,214 +5657,181 @@ def mini_app_page():
             height: 100%;
             z-index: -1;
             pointer-events: none;
-            display: block;
+            opacity: 0.5;
         }}
         
         .app-container {{
-            max-width: 800px;
+            max-width: 600px;
             margin: 0 auto;
             padding: 20px;
-            min-height: 100vh;
             position: relative;
             z-index: 1;
         }}
         
-        /* Header */
+        /* Header Modernization */
         .app-header {{
             text-align: center;
-            padding: 20px 0;
-            margin-bottom: 20px;
-            border-bottom: 1px solid var(--border);
+            padding: 30px 0;
+            margin-bottom: 10px;
+            border-bottom: 1px solid var(--glass-border);
         }}
         
-        .app-header .brand {{
+        .brand {{
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 10px;
+            gap: 15px;
         }}
         
-        .app-header .logo {{
-            width: 80px;
-            height: 80px;
+        .logo {{
+            width: 100px;
+            height: 100px;
             object-fit: contain;
             border-radius: 50%;
             border: 2px solid var(--primary);
-            background: var(--card-bg);
-            padding: 5px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            padding: 8px;
+            box-shadow: 0 0 30px rgba(var(--primary-rgb), 0.2);
+            animation: float 4s ease-in-out infinite;
+        }}
+        
+        @keyframes float {{
+            0%, 100% {{ transform: translateY(0); }}
+            50% {{ transform: translateY(-10px); }}
         }}
         
         .app-title {{
             color: var(--primary);
-            font-size: 2.2rem;
+            font-size: 2.5rem;
             margin: 0;
             font-weight: 700;
-            letter-spacing: 1px;
-            font-family: 'Oswald', sans-serif;
-            text-transform: uppercase;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.5);
         }}
         
         .app-subtitle {{
-            opacity: 0.8;
-            margin-top: 8px;
-            font-size: 0.95rem;
-        }}
-        
-        /* Tabs */
-        .tab-navigation {{
-            display: flex;
-            background: var(--card-bg);
-            border-radius: 10px;
-            margin-bottom: 25px;
-            overflow: hidden;
-            border: 1px solid var(--border);
-        }}
-        
-        .tab-btn {{
-            flex: 1;
-            padding: 15px;
-            background: none;
-            border: none;
-            color: var(--text);
-            cursor: pointer;
-            transition: all 0.3s;
-            opacity: 0.7;
+            opacity: 0.6;
+            margin-top: 5px;
             font-size: 0.9rem;
-            font-weight: 500;
+            font-weight: 300;
+            letter-spacing: 2px;
+            text-transform: uppercase;
         }}
         
-        .tab-btn:hover {{
-            opacity: 1;
-            background: rgba(var(--primary-rgb), 0.1);
+        /* Glassmorphism Cards */
+        .glass-card {{
+            background: var(--glass-bg);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            transition: transform 0.3s ease, border-color 0.3s ease;
         }}
         
-        .tab-btn.active {{
-            opacity: 1;
-            color: var(--primary);
-            background: rgba(var(--primary-rgb), 0.1);
-        }}
+        .glass-card:hover {{ border-color: rgba(var(--primary-rgb), 0.4); }}
         
         /* Tab Content */
-        .tab-content {{
-            margin-top: 10px;
-        }}
-        
         .tab-pane {{
             display: none;
-            animation: fadeIn 0.3s ease;
+            animation: fadeInUp 0.5s cubic-bezier(0.4, 0, 0.2, 1);
         }}
         
-        .tab-pane.active {{
-            display: block;
-        }}
+        .tab-pane.active {{ display: block; }}
         
-        @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(10px); }}
+        @keyframes fadeInUp {{
+            from {{ opacity: 0; transform: translateY(20px); }}
             to {{ opacity: 1; transform: translateY(0); }}
         }}
-        
-        /* Vent Form */
-        .vent-form-container {{
-            background: var(--card-bg);
-            padding: 25px;
-            border-radius: 12px;
-            border: 1px solid var(--border);
-            margin-bottom: 25px;
-        }}
-        
-        .form-title {{
-            color: var(--primary);
-            margin-bottom: 10px;
-            font-weight: 600;
-            font-family: 'Oswald', sans-serif;
-            font-size: 1.4rem;
-            text-transform: uppercase;
-        }}
-        
-        .form-description {{
-            opacity: 0.8;
-            margin-bottom: 20px;
-            line-height: 1.6;
-        }}
-        
-        .category-select {{
-            width: 100%;
-            padding: 12px 15px;
-            background: var(--secondary);
-            border: 1px solid var(--border);
-            color: var(--text);
-            border-radius: 8px;
-            font-size: 1rem;
-            margin-bottom: 20px;
-            cursor: pointer;
-        }}
-        
-        .category-select:focus {{
-            outline: none;
-            border-color: var(--primary);
-        }}
-        
-        .vent-textarea {{
-            width: 100%;
-            min-height: 150px;
-            padding: 15px;
-            background: var(--secondary);
-            border: 1px solid var(--border);
-            color: var(--text);
-            border-radius: 8px;
-            font-size: 1rem;
-            font-family: inherit;
-            line-height: 1.6;
-            resize: vertical;
-            margin-bottom: 10px;
-        }}
-        
-        .vent-textarea:focus {{
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.2);
-        }}
-        
-        .textarea-footer {{
+
+        /* Bottom Navigation Bar */
+        .bottom-nav {{
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 500px;
+            background: rgba(20, 20, 20, 0.9);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 30px;
+            height: 70px;
             display: flex;
-            justify-content: space-between;
+            justify-content: space-around;
             align-items: center;
-            margin-bottom: 20px;
-            font-size: 0.9rem;
-            opacity: 0.8;
-        }}
+            z-index: 1000;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.5);
+            padding: 0 10px;
+        }
         
-        .privacy-note {{
-            color: var(--primary);
-            font-size: 0.85rem;
-        }}
-        
-        .submit-btn {{
-            width: 100%;
-            padding: 15px;
-            background: var(--primary);
-            color: var(--secondary);
-            border: none;
-            border-radius: 8px;
-            font-size: 1.1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }}
-        
-        .submit-btn:hover {{
-            background: color-mix(in srgb, var(--primary) 90%, white);
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(var(--primary-rgb), 0.3);
-        }}
-        
-        .submit-btn:disabled {{
+        .nav-item {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+            color: var(--text);
             opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }}
+            cursor: pointer;
+            transition: all 0.3s ease;
+            flex: 1;
+            padding: 10px 0;
+            border-radius: 15px;
+        }
+        
+        .nav-item.active {{
+            opacity: 1;
+            color: var(--primary);
+            background: rgba(var(--primary-rgb), 0.1);
+        }
+        
+        .nav-icon {{ font-size: 1.4rem; }}
+        .nav-label {{ font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }}
+
+        /* Premium Form Elements */
+        .category-select, .vent-textarea {{
+            width: 100%;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--text);
+            border-radius: 15px;
+            padding: 15px;
+            font-family: inherit;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        /* Feed & Card Styles */
+        .post-card {{
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: all 0.3s;
+        }
+        
+        .post-author {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+        
+        .author-icon {{
+            width: 45px;
+            height: 45px;
+            background: rgba(var(--primary-rgb), 0.1);
+            border-radius: 50%;
+            display: flex;
+            font-size: 1.4rem;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+        }
         
         .form-note {{
             text-align: center;
@@ -6185,22 +6171,38 @@ def mini_app_page():
             <div id="userInfo" class="user-info" style="margin-top: 15px; display: none;"></div>
         </header>
 
-        <!-- Navigation Tabs -->
-        <nav class="tab-navigation">
-            <button class="tab-btn active" data-tab="vent">✍️ Vent</button>
-            <button class="tab-btn" data-tab="posts">📖 Feed</button>
-            <button class="tab-btn" data-tab="leaderboard">🏆 Leaderboard</button>
-            <button class="tab-btn" data-tab="profile">👤 Profile</button>
-            <button class="tab-btn" data-tab="admin" id="adminTab" style="display: none;">🛠 Admin</button>
+        <!-- Navigation (New Bottom Bar) -->
+        <nav class="bottom-nav">
+            <div class="nav-item active" data-tab="vent">
+                <span class="nav-icon">✍️</span>
+                <span class="nav-label">Vent</span>
+            </div>
+            <div class="nav-item" data-tab="posts">
+                <span class="nav-icon">🌍</span>
+                <span class="nav-label">Feed</span>
+            </div>
+            <div class="nav-item" data-tab="leaderboard">
+                <span class="nav-icon">🏆</span>
+                <span class="nav-label">Top</span>
+            </div>
+            <div class="nav-item" data-tab="profile">
+                <span class="nav-icon">👤</span>
+                <span class="nav-label">Me</span>
+            </div>
+            <div class="nav-item" data-tab="admin" id="adminTab" style="display: none;">
+                <span class="nav-icon">🛠</span>
+                <span class="nav-label">Admin</span>
+            </div>
         </nav>
+
 
         <!-- Tab Content -->
         <div class="tab-content">
             <!-- Vent Tab -->
             <div id="vent-tab" class="tab-pane active">
-                <div class="vent-form-container">
-                    <h2 class="form-title">Share Your Burden</h2>
-                    <p class="form-description">You are anonymous here. Share what's on your heart without fear.</p>
+                <div class="glass-card">
+                    <h2 class="form-title">Spiritual Venting</h2>
+                    <p class="form-description">Share your burdens anonymously. Your identity is protected by your soulful aura.</p>
 
                     <select class="category-select" id="categorySelect">
                         <option value="PrayForMe">🙏 Pray For Me</option>
@@ -6215,6 +6217,7 @@ def mini_app_page():
                         <option value="Other" selected>📝 Other</option>
                     </select>
 
+
                     <textarea 
                         class="vent-textarea" 
                         id="ventText" 
@@ -6224,45 +6227,52 @@ def mini_app_page():
 
                     <div class="textarea-footer">
                         <span id="charCount">0/5000 characters</span>
-                        <span class="privacy-note">Your identity is protected</span>
+                        <span class="privacy-note">✨ Anonymous & Secure</span>
                     </div>
 
                     <button class="submit-btn" id="submitVent">
-                        Post Anonymously
+                        Publish Heart Vent
                     </button>
 
-                    <p class="form-note">Posts are reviewed before appearing in the feed</p>
+                    <p class="form-note">Soulful posts are reviewed for community safety</p>
                 </div>
             </div>
+
 
             <!-- Posts Tab -->
             <div id="posts-tab" class="tab-pane">
-                <div class="section-header">
-                    <h2 class="section-title">Recent Vents</h2>
-                    <button class="refresh-btn" id="refreshPosts">Refresh</button>
+                <div class="section-header" style="padding: 0 10px;">
+                    <h2 class="section-title">Global Feed</h2>
+                    <button class="refresh-btn" id="refreshPosts" style="background: rgba(var(--primary-rgb), 0.1); border-color: rgba(var(--primary-rgb), 0.2);">↻ Refresh</button>
                 </div>
                 <div class="posts-container" id="postsContainer">
-                    <div class="loading">Loading community posts...</div>
+                    <!-- Cards will be injected as glass-cards via JS -->
+                    <div class="loading">Aligning spiritual feed...</div>
                 </div>
             </div>
+
 
             <!-- Leaderboard Tab -->
             <div id="leaderboard-tab" class="tab-pane">
-                <div class="section-header">
-                    <h2 class="section-title">Top Contributors</h2>
-                    <button class="refresh-btn" id="refreshLeaderboard">Refresh</button>
+                <div class="section-header" style="padding: 0 10px;">
+                    <h2 class="section-title">Prestige Ranking</h2>
+                    <button class="refresh-btn" id="refreshLeaderboard" style="background: rgba(var(--primary-rgb), 0.1); border-color: rgba(var(--primary-rgb), 0.2);">↻ Refresh</button>
                 </div>
-                <div class="leaderboard-container" id="leaderboardContainer">
-                    <div class="loading">Loading leaderboard...</div>
+                <div class="glass-card" style="padding: 0; overflow: hidden;">
+                    <div class="leaderboard-container" id="leaderboardContainer">
+                        <div class="loading">Fetching elite contributors...</div>
+                    </div>
                 </div>
             </div>
 
+
             <!-- Profile Tab -->
             <div id="profile-tab" class="tab-pane">
-                <div class="profile-container" id="profileContainer">
-                    <div class="loading">Loading your profile...</div>
+                <div id="profileContainer">
+                    <div class="loading">Ascending to your profile...</div>
                 </div>
             </div>
+
         </div>
 
         <!-- Footer -->
@@ -6413,106 +6423,114 @@ def mini_app_page():
                 }}
             }}
             
-            setupEventListeners() {{
-                document.querySelectorAll('.tab-btn').forEach(btn => {{
-                    btn.addEventListener('click', (e) => {{
-                        const tab = e.target.dataset.tab;
+            setupEventListeners() {
+                // Listen to Bottom Nav items
+                document.querySelectorAll('.nav-item').forEach(item => {
+                    item.addEventListener('click', (e) => {
+                        const tab = e.currentTarget.dataset.tab;
                         this.switchTab(tab);
-                    }});
-                }});
+                    });
+                });
                 
                 const ventText = document.getElementById('ventText');
                 const charCount = document.getElementById('charCount');
-                if (ventText && charCount) {{
-                    ventText.addEventListener('input', () => {{
-                        charCount.textContent = `${{ventText.value.length}}/5000 characters`;
-                    }});
-                }}
+                if (ventText && charCount) {
+                    ventText.addEventListener('input', () => {
+                        charCount.textContent = `${ventText.value.length}/5000 characters`;
+                    });
+                }
                 
                 const submitBtn = document.getElementById('submitVent');
-                if (submitBtn) {{
+                if (submitBtn) {
                     submitBtn.addEventListener('click', () => this.submitVent());
-                }}
+                }
                 
                 document.getElementById('refreshPosts')?.addEventListener('click', () => this.loadPosts());
                 document.getElementById('refreshLeaderboard')?.addEventListener('click', () => this.loadLeaderboard());
-            }}
+            }
             
-            switchTab(tabName) {{
-                document.querySelectorAll('.tab-btn').forEach(btn => {{
-                    btn.classList.toggle('active', btn.dataset.tab === tabName);
-                }});
-                document.querySelectorAll('.tab-pane').forEach(pane => {{
-                    pane.classList.toggle('active', pane.id === `${{tabName}}-tab`);
-                }});
+            switchTab(tabName) {
+                document.querySelectorAll('.nav-item').forEach(item => {
+                    item.classList.toggle('active', item.dataset.tab === tabName);
+                });
+                document.querySelectorAll('.tab-pane').forEach(pane => {
+                    pane.classList.toggle('active', pane.id === `${tabName}-tab`);
+                });
                 
-                if (tabName === 'profile' && this.userId) {{
+                if (tabName === 'profile' && this.userId) {
                     this.loadProfile(this.userId);
-                }}
-            }}
+                }
+            }
+
             
-            async loadPosts() {{
+            async loadPosts() {
                 const container = document.getElementById('postsContainer');
                 if (!container) return;
-                container.innerHTML = '<div class="loading">Loading community posts...</div>';
+                container.innerHTML = `
+                    <div class="glass-card skeleton" style="height: 150px; margin-top: 20px;"></div>
+                    <div class="glass-card skeleton" style="height: 150px;"></div>
+                `;
                 
-                try {{
-                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/get-posts?page=1&per_page=10`);
+                try {
+                    const response = await fetch(`${this.apiBaseUrl}/api/mini-app/get-posts?page=1&per_page=15`);
                     const data = await response.json();
                     
-                    if (data.success) {{
+                    if (data.success) {
                         this.renderPosts(data.data);
-                    }} else {{
-                        container.innerHTML = `<div class="error-message">Failed to load posts: ${{data.error || 'Unknown error'}}</div>`;
-                    }}
-                }} catch (error) {{
-                    console.error('Error loading posts:', error);
-                    container.innerHTML = `<div class="error-message">Network error. Please check your connection.</div>`;
-                }}
-            }}
+                    } else {
+                        container.innerHTML = `<div class="message error-message">Failed to load spiritual feed.</div>`;
+                    }
+                } catch (error) {
+                    container.innerHTML = `<div class="message error-message">Network error. Check connection.</div>`;
+                }
+            }
+
             
-            renderPosts(posts) {{
+            renderPosts(posts) {
                 const container = document.getElementById('postsContainer');
                 if (!container) return;
                 
-                if (!posts || posts.length === 0) {{
+                if (!posts || posts.length === 0) {
                     container.innerHTML = `
-                        <div class="empty-state">
-                            <h3 style="color: var(--primary);">No posts yet</h3>
-                            <p style="opacity: 0.8; margin-bottom: 20px;">Be the first to share what's on your heart</p>
-                            <button onclick="app.switchTab('vent')" 
-                                    style="background: var(--primary); color: var(--secondary); border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer;">
-                                Share Your First Vent
-                            </button>
+                        <div class="glass-card" style="text-align: center;">
+                            <h3 style="color: var(--primary);">Silence of Soul</h3>
+                            <p style="opacity: 0.6; margin: 15px 0;">Be the first to break the sacred silence.</p>
+                            <button onclick="app.switchTab('vent')" class="submit-btn" style="padding: 10px 20px; font-size: 0.9rem;">Start Venting</button>
                         </div>
                     `;
                     return;
-                }}
+                }
                 
                 container.innerHTML = posts.map(post => `
                     <div class="post-card">
                         <div class="post-header">
-                            <div class="author-avatar">${{post.author.sex || '👤'}}</div>
+                            <div class="author-icon">
+                                ${post.author.avatar || (post.author.sex === 'Female' ? '👩' : '👨')}
+                            </div>
                             <div class="author-info">
-                                <h4>${{post.author.name}}</h4>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <h4 style="color: var(--text); font-family: 'Outfit'; text-transform: none; letter-spacing: 0;">Anonymous</h4>
+                                    <span class="aura-sticker">${post.author.aura || ''}</span>
+                                </div>
                                 <div class="post-meta">
-                                    <span class="post-category">${{post.category}}</span>
+                                    <span class="identity-badge" style="font-size: 0.7rem; padding: 2px 8px;">${post.category}</span>
                                     <span>•</span>
-                                    <span>${{post.time_ago}}</span>
+                                    <span>${post.time_ago}</span>
                                 </div>
                             </div>
                         </div>
-                        <div class="post-content">${{this.escapeHtml(post.content)}}</div>
-                        <div class="post-footer">
-                            <div class="comment-count">💬 ${{post.comments}} comment${{post.comments !== 1 ? 's' : ''}}</div>
-                            <button onclick="window.open('https://t.me/${{this.botUsername}}?start=comments_${{post.id}}', '_blank')" 
-                                    style="background: transparent; color: var(--primary); border: 1px solid var(--primary); padding: 5px 15px; border-radius: 5px; font-size: 0.9rem; cursor: pointer;">
-                                View in Bot
+                        <div class="post-content" style="font-weight: 300; line-height: 1.8;">${this.escapeHtml(post.content)}</div>
+                        <div class="post-footer" style="border-top-color: rgba(255,255,255,0.05);">
+                            <div class="comment-count" style="font-weight: 500; color: var(--primary);">🕊️ ${post.comments} Responses</div>
+                            <button onclick="window.open('https://t.me/${this.botUsername}?start=comments_${post.id}', '_blank')" 
+                                    style="background: transparent; color: var(--primary); border: 1px solid rgba(var(--primary-rgb), 0.3); padding: 8px 15px; border-radius: 12px; font-size: 0.8rem; cursor: pointer; font-family: 'Oswald';">
+                                VIEW IN BOT
                             </button>
                         </div>
                     </div>
                 `).join('');
-            }}
+            }
+
             
             async loadLeaderboard() {{
                 const container = document.getElementById('leaderboardContainer');
@@ -6534,24 +6552,34 @@ def mini_app_page():
                 }}
             }}
             
-            renderLeaderboard(users) {{
+            renderLeaderboard(users) {
                 const container = document.getElementById('leaderboardContainer');
                 if (!container) return;
                 
                 container.innerHTML = users.map((user, index) => `
-                    <div class="leaderboard-item">
-                        <div class="leaderboard-rank rank-${{index + 1}}">${{index + 1}}</div>
-                        <div class="leaderboard-user">
-                            <div class="user-avatar-small">${{user.sex || '👤'}}</div>
-                            <div class="user-info-small">
-                                <h4>${{user.name}}</h4>
-                                <p>${{user.aura}} Contributor</p>
+                    <div class="lb-item">
+                        <div class="lb-rank ${index < 3 ? 'rank-' + (index + 1) : ''}">
+                            ${index === 0 ? '👑' : index + 1}
+                        </div>
+                        <div style="flex: 1; display: flex; align-items: center; gap: 12px;">
+                            <div class="author-icon" style="width: 35px; height: 35px; font-size: 1.1rem;">
+                                ${user.avatar || (user.sex === 'Female' ? '👩' : '👨')}
+                            </div>
+                            <div>
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <span style="font-weight: 600; font-size: 0.95rem;">${user.name}</span>
+                                    <span style="font-size: 0.9rem;">${user.aura}</span>
+                                </div>
                             </div>
                         </div>
-                        <div class="leaderboard-points">${{user.points}} pts</div>
+                        <div style="text-align: right;">
+                            <div style="color: var(--primary); font-family: 'Oswald'; font-weight: 700;">${user.points}</div>
+                            <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Points</div>
+                        </div>
                     </div>
                 `).join('');
-            }}
+            }
+
             
             async loadProfile(userId) {{
                 const container = document.getElementById('profileContainer');
@@ -6562,24 +6590,37 @@ def mini_app_page():
                     const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/profile/${{userId}}`);
                     const data = await response.json();
                     
-                    if (data.success) {{
+                    if (data.success) {
                         const profile = data.data;
                         container.innerHTML = `
-                            <div class="profile-header">
-                                <div class="profile-avatar">${{profile.sex || '👤'}}</div>
-                                <h2>${{profile.name}}</h2>
-                                <div class="profile-rating">${{profile.aura}} ${{profile.rating}} points</div>
-                            </div>
-                            <div style="background: rgba(var(--primary-rgb), 0.1); padding: 20px; border-radius: 8px; margin: 20px 0;">
-                                <h4 style="color: var(--primary); margin-bottom: 10px;">Your Statistics</h4>
-                                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center;">
-                                    <div><div style="font-size: 2rem; font-weight: 600; color: var(--primary);">${{profile.stats.posts}}</div><div style="font-size: 0.9rem; opacity: 0.8;">Vents</div></div>
-                                    <div><div style="font-size: 2rem; font-weight: 600; color: var(--primary);">${{profile.stats.comments}}</div><div style="font-size: 0.9rem; opacity: 0.8;">Comments</div></div>
-                                    <div><div style="font-size: 2rem; font-weight: 600; color: var(--primary);">${{profile.stats.followers}}</div><div style="font-size: 0.9rem; opacity: 0.8;">Followers</div></div>
+                            <div class="glass-card" style="text-align: center; padding-top: 40px;">
+                                <div class="logo" style="width: 120px; height: 120px; font-size: 3rem; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; animation: none; border-width: 3px;">
+                                    ${profile.avatar || (profile.sex === 'Female' ? '👩' : '👨')}
+                                </div>
+                                <h2 style="font-size: 2rem; color: var(--text);">${profile.name}</h2>
+                                <div class="identity-badge" style="margin: 15px 0;">
+                                    <span>${profile.aura}</span>
+                                    <span style="font-family: 'Oswald'; font-weight: 700; color: var(--primary);">${profile.rating} PTS</span>
+                                </div>
+                                
+                                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px;">
+                                    <div>
+                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${profile.stats.posts}</div>
+                                        <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Vents</div>
+                                    </div>
+                                    <div>
+                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${profile.stats.comments}</div>
+                                        <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Replies</div>
+                                    </div>
+                                    <div>
+                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${profile.stats.followers}</div>
+                                        <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Aura</div>
+                                    </div>
                                 </div>
                             </div>
                         `;
-                    }} else {{
+                    }
+ else {{
                         container.innerHTML = '<div class="error-message">Failed to load profile</div>';
                     }}
                 }} catch (error) {{
@@ -6773,12 +6814,15 @@ def mini_app_get_posts():
                 p.timestamp,
                 p.comment_count,
                 p.media_type,
-                u.sex as author_sex
+                u.user_id as author_id,
+                u.sex as author_sex,
+                u.avatar_emoji as author_avatar
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             WHERE p.approved = TRUE
             ORDER BY p.timestamp DESC
             LIMIT %s OFFSET %s
+
         ''', (per_page, offset))
         
         # Format posts - ANONYMOUS NAME BUT SHOW SEX
@@ -6807,6 +6851,10 @@ def mini_app_get_posts():
             if len(content_preview) > 300:
                 content_preview = content_preview[:297] + '...'
             
+            # Calculate aura for display
+            rating = calculate_user_rating(post['author_id'])
+            aura_sticker = format_aura(rating)
+            
             formatted_posts.append({
                 'id': post['post_id'],
                 'content': content_preview,
@@ -6815,11 +6863,14 @@ def mini_app_get_posts():
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
                 'author': {
-                    'name': 'Anonymous',  # ANONYMOUS NAME
-                    'sex': post['author_sex'] or '👤'  # SHOW REAL SEX
+                    'name': 'Anonymous',
+                    'sex': post['author_sex'] or '👤',
+                    'avatar': post['author_avatar'] or "",
+                    'aura': aura_sticker
                 },
                 'has_media': post['media_type'] != 'text'
             })
+
         
         # Get total count
         total_posts = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE approved = TRUE")
@@ -6840,18 +6891,30 @@ def mini_app_get_posts():
 def mini_app_leaderboard():
     """API endpoint for leaderboard data"""
     try:
-        # Get top 10 users
+        # Get top 10 users with weighted aura
         top_users = db_fetch_all('''
             SELECT 
                 u.user_id,
                 u.anonymous_name,
                 u.sex,
-                (SELECT COUNT(*) FROM posts WHERE author_id = u.user_id AND approved = TRUE) + 
-                (SELECT COUNT(*) FROM comments WHERE author_id = u.user_id) AS total
+                u.avatar_emoji,
+                (
+                    (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
+                    (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
+                    COALESCE((
+                        SELECT SUM(CASE WHEN r.type = 'like' THEN 1 WHEN r.type = 'dislike' THEN -2 ELSE 0 END)
+                        FROM reactions r
+                        JOIN comments c2 ON r.comment_id = c2.comment_id
+                        WHERE c2.author_id = u.user_id
+                    ), 0) -
+                    (SELECT COUNT(*) FROM blocks b WHERE b.blocked_id = u.user_id) * 10
+                ) as total
             FROM users u
+            WHERE u.is_admin = FALSE
             ORDER BY total DESC
             LIMIT 10
         ''')
+
         
         # Format users
         formatted_users = []
@@ -6860,9 +6923,11 @@ def mini_app_leaderboard():
                 'rank': idx,
                 'name': user['anonymous_name'],
                 'sex': user['sex'],
+                'avatar': user['avatar_emoji'] or "",
                 'points': user['total'],
                 'aura': format_aura(user['total'])
             })
+
         
         return jsonify({
             'success': True,
@@ -6899,14 +6964,18 @@ def mini_app_profile(user_id):
             (user_id,)
         )
         
+        rating = calculate_user_rating(user_id)
+        
         return jsonify({
             'success': True,
             'data': {
                 'id': user['user_id'],
                 'name': user['anonymous_name'],
                 'sex': user['sex'],
+                'avatar': user['avatar_emoji'] or "",
                 'rating': rating,
                 'aura': format_aura(rating),
+
                 'stats': {
                     'followers': followers['count'] if followers else 0,
                     'posts': posts['count'] if posts else 0,
