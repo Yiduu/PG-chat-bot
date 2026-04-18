@@ -2839,18 +2839,18 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     post_author_id = post['author_id']
 
-    per_page = 5  # Top-level comments per page
+    per_page = 10  # All comments (parents + replies) per page
     offset = (page - 1) * per_page
 
-    # Show oldest first, newest last
+    # NEW: Fetch ALL comments for this post in chronological order, regardless of parent_comment_id
     comments = db_fetch_all(
-        "SELECT * FROM comments WHERE post_id = %s AND parent_comment_id = 0 ORDER BY timestamp ASC LIMIT %s OFFSET %s",
+        "SELECT * FROM comments WHERE post_id = %s ORDER BY timestamp ASC LIMIT %s OFFSET %s",
         (post_id, per_page, offset)
     )
 
-    # Count only top-level comments for pagination
+    # Count all comments for pagination
     total_comments_row = db_fetch_one(
-        "SELECT COUNT(*) as cnt FROM comments WHERE post_id = %s AND parent_comment_id = 0",
+        "SELECT COUNT(*) as cnt FROM comments WHERE post_id = %s",
         (post_id,)
     )
     total_comments = total_comments_row['cnt'] if total_comments_row else 0
@@ -2874,9 +2874,6 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     context._user_id = user_id
     context._post_author_id = post_author_id
 
-    if reply_pages is None:
-        reply_pages = {}
-
     # Delete loading message if it exists
     if loading_msg:
         try:
@@ -2884,16 +2881,22 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         except:
             pass
 
-    # Show each top-level comment with LIMITED replies
+    # Track message IDs for reply chaining in the stream
+    msg_ids = {}
+
+    # Show comments in a single stream
     for comment in comments:
+        comment_id = comment['comment_id']
+        parent_id = comment.get('parent_comment_id', 0)
         commenter_id = comment['author_id']
         commenter = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (commenter_id,))
+        
         display_sex = get_display_sex(commenter)
         display_name = get_display_name(commenter)
         rating = calculate_user_rating(commenter_id)
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}"
 
-        # Check if commenter is the vent author
+        # Format author text
         if str(commenter_id) == str(post_author_id):
             author_text = (
                 f"{display_sex} "
@@ -2907,66 +2910,18 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
                 f"⚡ _Aura_ {rating} {format_aura(rating)}"
             )
 
-        # Send the top-level comment
-        msg_id = await send_comment_message(context, chat_id, comment, author_text, None)
-
-        # Show LIMITED replies for this comment (first 3 replies)
-        replies_per_comment = 3
-        # Fetch all descendants (replies to replies) using Recursive CTE
-        replies = db_fetch_all("""
-            WITH RECURSIVE comment_tree AS (
-                SELECT * FROM comments WHERE parent_comment_id = %s
-                UNION ALL
-                SELECT c.* FROM comments c
-                JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
-            )
-            SELECT * FROM comment_tree ORDER BY timestamp ASC LIMIT %s
-        """, (comment['comment_id'], replies_per_comment))
+        # LINKING LOGIC: If it's a reply, try to link to the immediate parent's message
+        reply_to_id = None
+        if parent_id != 0:
+            reply_to_id = msg_ids.get(parent_id)
+            # If parent isn't in current batch, the app will show it as a standalone message 
+            # or we could link to a fixed parent if we had one.
         
-        # Count total descendants for this comment thread
-        total_replies_row = db_fetch_one("""
-            WITH RECURSIVE comment_tree AS (
-                SELECT comment_id FROM comments WHERE parent_comment_id = %s
-                UNION ALL
-                SELECT c.comment_id FROM comments c
-                JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
-            )
-            SELECT COUNT(*) as cnt FROM comment_tree
-        """, (comment['comment_id'],))
-        total_replies = total_replies_row['cnt'] if total_replies_row else 0
+        # Send the comment
+        new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id)
         
-        # Tracking message IDs for nested replies (indentation)
-        msg_ids = {comment['comment_id']: msg_id}
-        
-        for reply in replies:
-            try:
-                # Use the actual parent's message ID if we have it, otherwise fallback to top-level
-                parent_id = reply.get('parent_comment_id')
-                reply_to_id = msg_ids.get(parent_id, msg_id)
-                
-                reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, reply_to_id)
-                
-                # Store this message ID for any children of this reply
-                if reply_msg_id:
-                    msg_ids[reply['comment_id']] = reply_msg_id
-            except Exception as e:
-                logger.error(f"Error sending reply {reply.get('comment_id')}: {e}")
-
-        # Add "Show more replies" button if there are more replies
-        if total_replies > replies_per_comment:
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    f"📨 Show more replies ({total_replies - replies_per_comment} more)", 
-                    callback_data=f"show_more_replies_{comment['comment_id']}_1"
-                )]
-            ])
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="🗨 *More replies inside this thread:*",
-                reply_markup=keyboard,
-                reply_to_message_id=msg_id,
-                parse_mode=ParseMode.MARKDOWN
-            )
+        if new_msg_id:
+            msg_ids[comment_id] = new_msg_id
     
     # Pagination buttons for top-level comments
     pagination_buttons = []
