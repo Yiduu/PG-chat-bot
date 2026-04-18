@@ -2111,12 +2111,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
                 return
-        
-                # Handle 3-part arg: profileid_{user_id}_{post_id}
-                post_id = None
-                parts = arg.split("_")
-                if len(parts) >= 3:
-                    post_id = parts[2]
+        elif arg.startswith("profileid_"):
+            parts = arg.split("_")
+            if len(parts) >= 2:
+                target_user_id = parts[1]
+                post_id = parts[2] if len(parts) >= 3 else None
+                
+                user_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (target_user_id,))
+                if user_data:
+                    followers = db_fetch_all("SELECT * FROM followers WHERE followed_id = %s", (user_data['user_id'],))
+                    rating = calculate_user_rating(user_data['user_id'])
+                    current_user_id = user_id
+                    btn = []
+                    
+                    if user_data['user_id'] != current_user_id:
+                        is_following = db_fetch_one(
+                            "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
+                            (current_user_id, user_data['user_id'])
+                        )
+                        # Check if blocked to show toggle
+                        is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id']))
+                        
+                        if is_following:
+                            btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
+                            btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'chatrequest_{user_data["user_id"]}')])
+                        else:
+                            btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
+                            btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'chatrequest_{user_data["user_id"]}')])
+                        
+                        if is_blocked:
+                            btn.append([InlineKeyboardButton("🔓 Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
+                        else:
+                            btn.append([InlineKeyboardButton("⛔ Block User", callback_data=f'block_user_{user_data["user_id"]}')])
                 
                 # Contextual Anonymity Check
                 display_name = get_display_name(user_data)
