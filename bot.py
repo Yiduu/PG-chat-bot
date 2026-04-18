@@ -2705,10 +2705,8 @@ async def show_comments_menu(update, context, post_id, page=1):
 
     comment_count = count_all_comments(post_id)
     keyboard = [
-        [
-            InlineKeyboardButton(f"👁 View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_{page}"),
-            InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")
-        ]
+        [InlineKeyboardButton(f"👁 View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_{page}")],
+        [InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")]
     ]
 
     post_text = post['content']
@@ -3477,10 +3475,8 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
     
     # Create action buttons for this post
     keyboard = [
-        [
-            InlineKeyboardButton("💬 View Comments", callback_data=f"viewcomments_{post_id}_1"),
-            InlineKeyboardButton("🧵 Continue Thread", callback_data=f"continue_post_{post_id}")
-        ],
+        [InlineKeyboardButton("💬 View Comments", callback_data=f"viewcomments_{post_id}_1")],
+        [InlineKeyboardButton("🧵 Continue Thread", callback_data=f"continue_post_{post_id}")],
         [
             InlineKeyboardButton("🗑 Delete Post", callback_data=f"delete_post_{post_id}_{from_page}"),
             InlineKeyboardButton("🔙 Back to List", callback_data=f"my_posts_{from_page}")
