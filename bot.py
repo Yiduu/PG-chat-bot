@@ -84,7 +84,9 @@ def init_db():
                     privacy_public BOOLEAN DEFAULT TRUE,
                     is_admin BOOLEAN DEFAULT FALSE,
                     waiting_for_private_message BOOLEAN DEFAULT FALSE,
-                    private_message_target TEXT
+                    private_message_target TEXT,
+                    bio TEXT DEFAULT 'No bio set.',
+                    awaiting_bio BOOLEAN DEFAULT FALSE
                 )
                 ''')
 
@@ -180,6 +182,17 @@ def init_db():
                         WHERE status = 'scheduled' 
                         AND scheduled_time <= CURRENT_TIMESTAMP
                     ''')
+
+                # Ensure existing database has new columns
+                c.execute("PRAGMA table_info(users)")
+                columns = [column[1] for column in c.fetchall()]
+                if 'bio' not in columns:
+                    c.execute("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT 'No bio set.'")
+                    logger.info("Added 'bio' column to users table")
+                if 'awaiting_bio' not in columns:
+                    c.execute("ALTER TABLE users ADD COLUMN awaiting_bio BOOLEAN DEFAULT FALSE")
+                    logger.info("Added 'awaiting_bio' column to users table")
+
                     
                     for broadcast in scheduled:
                         # Send the broadcast
@@ -442,6 +455,7 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
             waiting_for_comment = FALSE, 
             awaiting_name = FALSE,
             waiting_for_private_message = FALSE,
+            awaiting_bio = FALSE,
             selected_category = NULL,
             comment_post_id = NULL,
             comment_idx = NULL,
@@ -1342,7 +1356,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start the broadcast process"""
     query = update.callback_query
-    await query.answer()
+    # Redundant answer removed to fix mobile toast bugs
     
     user_id = str(query.from_user.id)
     
@@ -1390,7 +1404,7 @@ async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_broadcast_type(update: Update, context: ContextTypes.DEFAULT_TYPE, broadcast_type: str):
     """Handle broadcast type selection"""
     query = update.callback_query
-    await query.answer()
+    # Redundant answer removed to fix mobile toast bugs
     
     user_id = str(query.from_user.id)
     
@@ -2103,23 +2117,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     if is_following:
                         btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
-                        btn.append([InlineKeyboardButton("✉️ Send Message", callback_data=f'message_{user_data["user_id"]}')])
+                        btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'message_{user_data["user_id"]}')])
                     else:
                         btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
+                        btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'message_{user_data["user_id"]}')])
                 
                 display_name = get_display_name(user_data)
                 display_sex = get_display_sex(user_data)
                 
+                level = (rating // 10) + 1
+                bio = user_data.get('bio', 'No bio set.')
+                
+                profile_text = (
+                    f"👤 *{escape_markdown(display_name, version=2)}*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🌀 *Aura:* {format_aura(rating)} {level}\n"
+                    f"⭐️ *Points:* {rating}\n"
+                    f"👥 *Followers:* {len(followers)}\n\n"
+                    f"📖 *Bio:*\n_{escape_markdown(bio, version=2)}_\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                )
+                
                 await update.message.reply_text(
-                    f"👤 *{display_name}* 🎖 \n"
-                    f"📌 Sex: {display_sex}\n\n"
-                    f"👥 Followers: {len(followers)}\n"
-                    f"🌀 *Aura:* {format_aura(rating)} (Level {rating // 10 + 1})\n"
-                    f"⭐️ Contributions: {rating}\n"
-                    f"〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
-                    f"_Use /menu to return_",
+                    profile_text,
                     reply_markup=InlineKeyboardMarkup(btn) if btn else None,
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=ParseMode.MARKDOWN_V2
                 )
                 return
         
@@ -2837,13 +2859,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=main_menu)
         return
 
-    # Show loading toast if triggered by a button
-    query = update.callback_query
-    if query:
-        try:
-            await query.answer("🔄 Loading comments...", show_alert=False)
-        except Exception as e:
-            logger.error(f"Error answering comment callback: {e}")
+    # No query.answer here - handled by button_handler to avoid double-responding
 
     post_author_id = post['author_id']
 
@@ -3121,28 +3137,37 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         (user_id,)
     )
     
-    # UPDATED: Changed to "My Content" menu
+    bio = user.get('bio', 'No bio set.')
+    level = (rating // 10) + 1
+    
+    # PREMIUM Redesign
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ Set My Name", callback_data='edit_name')],
         [InlineKeyboardButton("⚧️ Set My Sex", callback_data='edit_sex')],
-        [InlineKeyboardButton("📚 My Content", callback_data='my_content_menu')],  # Changed to menu
+        [InlineKeyboardButton("📝 Set My Bio", callback_data='edit_bio')],
+        [InlineKeyboardButton("📚 My Content", callback_data='my_content_menu')],
         [InlineKeyboardButton("📭 Inbox", callback_data='inbox')],
         [InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
         [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
     ])
-    await context.bot.send_message(
-    chat_id=chat_id,
-    text=(
-        f"👤 *{display_name}* \n"
-        f"📌 Sex: {display_sex}\n"
-        f"🌀 *Aura:* {format_aura(rating)} (Level {rating // 10 + 1})\n"
-        f"🎯 Contributions: {rating} points\n"
-        f"👥 Followers: {len(followers)}\n"
-        f"〰️〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
+    
+    profile_text = (
+        f"👤 *{escape_markdown(display_name, version=2)}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🌀 *Aura:* {format_aura(rating)} {level}\n"
+        f"⭐️ *Points:* {rating}\n"
+        f"👥 *Followers:* {len(followers)}\n\n"
+        f"📖 *Bio:*\n_{escape_markdown(bio, version=2)}_\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
         f"_Use /menu to return_"
-    ),
-    reply_markup=kb,
-    parse_mode=ParseMode.MARKDOWN)
+    )
+    
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=profile_text,
+        reply_markup=kb,
+        parse_mode=ParseMode.MARKDOWN_V2
+    )
 
 # UPDATED: Function to show user's previous posts with NEW CLEAN UI
 # UPDATED: Function to show user's previous posts with CHRONOLOGICAL ORDER and NEW STRUCTURE
@@ -3714,6 +3739,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await query.message.reply_text(
                 "✏️ Please type your new anonymous name:\n\nTap ❌ Cancel to return to menu.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=cancel_menu
+            )
+
+        elif query.data == 'edit_bio':
+            await query.answer("📝 Opening Bio Editor...", show_alert=False)
+            db_execute(
+                "UPDATE users SET awaiting_bio = TRUE WHERE user_id = %s",
+                (user_id,)
+            )
+            await query.message.reply_text(
+                "📝 *Please type your new bio:*\n\nKeep it short and interesting (max 150 chars).\n\nTap ❌ Cancel to return to menu.",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=cancel_menu
             )
@@ -4619,7 +4656,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.lower() in ["❌ cancel", "cancel", "/cancel"]:
         # Check if user is in input state
         if user and (user['waiting_for_post'] or user['waiting_for_comment'] or 
-                     user['awaiting_name'] or user['waiting_for_private_message']):
+                     user['awaiting_name'] or user['waiting_for_private_message'] or user['awaiting_bio']):
             # Reset all waiting states
             await reset_user_waiting_states(
                 user_id, 
@@ -4988,6 +5025,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return 
 
     elif text == "👤 Profile":
+        await send_updated_profile(user_id, update.message.chat.id, context)
+        return
+        
+    if user and user['awaiting_bio']:
+        if not text:
+            await update.message.reply_text("❌ Bio must be text. Please try again.")
+            return
+            
+        if len(text) > 200:
+             await update.message.reply_text("❌ Bio is too long (max 200 chars). Please shorten it.")
+             return
+             
+        db_execute("UPDATE users SET bio = %s, awaiting_bio = FALSE WHERE user_id = %s", (text, user_id))
+        await update.message.reply_text("✅ Bio updated successfully!")
         await send_updated_profile(user_id, update.message.chat.id, context)
         return 
 
