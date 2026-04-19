@@ -662,6 +662,7 @@ def login_page():
             margin-bottom: 10px;
         }}
     </style>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
     <div class="login-container">
@@ -687,6 +688,32 @@ def login_page():
             After opening the bot, use the /webapp command to get authenticated access to the mini app.
         </p>
     </div>
+
+    <script>
+        // Auto-login via Telegram WebApp initData
+        const tg = window.Telegram?.WebApp;
+        if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {{
+            tg.ready();
+            const userId = tg.initDataUnsafe.user.id;
+            
+            // Show a temporary loading state
+            document.body.innerHTML = `
+                <div style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--secondary); color: var(--text); flex-direction: column;">
+                    <h2 style="color: var(--primary); font-family: 'Oswald', sans-serif; margin-bottom: 10px;">AUTHENTICATING...</h2>
+                    <p style="opacity: 0.8;">Securing your connection</p>
+                </div>
+            `;
+            
+            fetch('/api/generate-token/' + userId)
+                .then(r => r.json())
+                .then(data => {{
+                    if (data.success && data.token) {{
+                        window.location.replace('/?token=' + data.token);
+                    }}
+                }})
+                .catch(e => console.error("Auto-login failed:", e));
+        }}
+    </script>
 </body>
 </html>'''
     return html
