@@ -5651,7 +5651,7 @@ def mini_app_page():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{app_name} - Mini App</title>
-    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root {{
@@ -5674,24 +5674,26 @@ def mini_app_page():
         }}
         
         body {{
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: linear-gradient(135deg, #090909 0%, #151515 100%);
             color: var(--text);
-            font-size: 14px;
+            font-size: 13.5px;
+            line-height: 1.5;
             min-height: 100vh;
             padding: 0;
             position: relative;
             overflow-x: hidden;
-            padding-bottom: 100px; /* Space for bottom nav */
+            padding-bottom: 100px;
             -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }}
         
         h1, h2, h3, h4, h5, h6 {{
-            font-family: 'Oswald', sans-serif;
-            font-weight: 600;
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
             color: var(--primary);
-            text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: -0.3px;
+            text-transform: none;
         }}
         
         /* Soulful Gradient Background */
@@ -5762,19 +5764,19 @@ def mini_app_page():
         
         .app-title {{
             color: var(--primary);
-            font-size: clamp(2.2rem, 6vw, 3rem);
+            font-size: clamp(1.8rem, 5vw, 2.4rem);
             margin: 0;
-            font-weight: 700;
-            letter-spacing: -0.5px;
+            font-weight: 800;
+            letter-spacing: -1px;
             text-shadow: 0 4px 15px rgba(var(--primary-rgb), 0.3), 0 2px 5px rgba(0,0,0,0.5);
         }}
         
         .app-subtitle {{
-            opacity: 0.6;
-            margin-top: 5px;
-            font-size: 0.9rem;
-            font-weight: 300;
-            letter-spacing: 2px;
+            opacity: 0.45;
+            margin-top: 6px;
+            font-size: 0.78rem;
+            font-weight: 500;
+            letter-spacing: 2.5px;
             text-transform: uppercase;
         }}
         
@@ -5869,8 +5871,8 @@ def mini_app_page():
             box-shadow: 0 0 10px var(--primary);
         }}
         
-        .nav-icon {{ font-size: 1.6rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }}
-        .nav-label {{ font-size: 0.75rem; font-family: 'Oswald', sans-serif; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }}
+        .nav-icon {{ font-size: 1.5rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }}
+        .nav-label {{ font-size: 0.68rem; font-family: 'Inter', sans-serif; font-weight: 600; text-transform: none; letter-spacing: 0.3px; opacity: 0.9; }}
 
 
         /* Premium Form Elements */
@@ -5881,12 +5883,12 @@ def mini_app_page():
             border: 1px solid rgba(var(--primary-rgb), 0.2);
             color: var(--text);
             border-radius: 30px;
-            padding: 16px 45px 16px 20px;
-            font-family: 'Outfit', sans-serif;
-            font-size: 0.95rem;
+            padding: 14px 45px 14px 20px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.88rem;
             font-weight: 500;
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            margin-bottom: 20px;
+            margin-bottom: 16px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.2), inset 0 2px 5px rgba(255,255,255,0.02);
             -webkit-appearance: none;
             -moz-appearance: none;
@@ -5907,19 +5909,20 @@ def mini_app_page():
             border: 1px solid rgba(var(--primary-rgb), 0.15);
             color: var(--text);
             border-radius: 20px;
-            padding: 18px 20px;
-            font-family: 'Outfit', sans-serif;
-            font-size: 0.95rem;
+            padding: 16px 18px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 400;
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            margin-bottom: 20px;
+            margin-bottom: 16px;
             box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
             -webkit-appearance: none;
             -moz-appearance: none;
             appearance: none;
-            min-height: 200px;
+            min-height: 180px;
             resize: vertical;
-            line-height: 1.7;
-            letter-spacing: 0.3px;
+            line-height: 1.65;
+            letter-spacing: 0.1px;
         }}
         
         .vent-textarea:focus {{
@@ -5929,33 +5932,31 @@ def mini_app_page():
             background: rgba(25, 25, 25, 0.8);
         }}
 
-        /* Premium Buttons */
         .submit-btn {{
             width: 100%;
             background: linear-gradient(135deg, var(--primary) 0%, #d4af37 100%);
             color: #000;
             border: none;
-            padding: 20px 24px;
-            border-radius: 22px;
-            font-family: 'Oswald', sans-serif;
+            padding: 17px 24px;
+            border-radius: 50px;
+            font-family: 'Inter', sans-serif;
             font-weight: 700;
-            font-size: 1.25rem;
-            text-transform: uppercase;
-            letter-spacing: 2px;
+            font-size: 0.95rem;
+            text-transform: none;
+            letter-spacing: 0.3px;
             cursor: pointer;
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             box-shadow: 0 10px 25px rgba(var(--primary-rgb), 0.3);
-            margin-top: 15px;
+            margin-top: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 10px;
+            gap: 8px;
         }}
 
         .submit-btn:hover {{
-            transform: translateY(-3px);
+            transform: translateY(-2px);
             box-shadow: 0 15px 35px rgba(var(--primary-rgb), 0.5);
-            background: linear-gradient(135deg, #FFD700 0%, var(--primary) 100%);
         }}
         
         .submit-btn:active {{
@@ -6017,21 +6018,24 @@ def mini_app_page():
         }}
 
         .section-title {{
-            font-size: 1.2rem;
+            font-size: 0.8rem;
+            font-weight: 700;
             color: var(--primary);
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 1.8px;
         }}
 
         .refresh-btn {{
-            background: rgba(var(--primary-rgb), 0.1);
-            border: 1px solid rgba(var(--primary-rgb), 0.2);
+            background: rgba(var(--primary-rgb), 0.08);
+            border: 1px solid rgba(var(--primary-rgb), 0.18);
             color: var(--primary);
-            padding: 6px 12px;
-            border-radius: 12px;
-            font-size: 0.8rem;
+            padding: 6px 14px;
+            border-radius: 50px;
+            font-size: 0.72rem;
+            font-weight: 600;
             cursor: pointer;
-            font-family: 'Oswald', sans-serif;
+            font-family: 'Inter', sans-serif;
+            letter-spacing: 0.5px;
             transition: all 0.3s ease;
         }}
 
@@ -6043,12 +6047,15 @@ def mini_app_page():
         .identity-badge {{
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            background: rgba(var(--primary-rgb), 0.1);
-            padding: 8px 16px;
+            gap: 5px;
+            background: rgba(var(--primary-rgb), 0.08);
+            padding: 4px 10px;
             border-radius: 20px;
-            font-size: 0.85rem;
-            color: var(--text);
+            font-size: 0.68rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.45);
             border: 1px solid rgba(var(--primary-rgb), 0.1);
         }}
 
@@ -6071,9 +6078,9 @@ def mini_app_page():
 
         .lb-rank {{
             width: 30px;
-            font-family: 'Oswald';
-            font-size: 1.2rem;
-            font-weight: 700;
+            font-family: 'Inter';
+            font-size: 1rem;
+            font-weight: 800;
             color: var(--primary);
         }}
 
@@ -6384,11 +6391,23 @@ def mini_app_page():
             async init() {{
                 this.setupEventListeners();
                 
+                // ── Auth Path 1: Telegram native (menu button / WebApp opener) ──
+                const tg = window.Telegram?.WebApp;
+                if (tg && tg.initDataUnsafe?.user?.id) {{
+                    this.userId = String(tg.initDataUnsafe.user.id);
+                    tg.expand();
+                    await this.loadUserData();
+                    await this.loadPosts();
+                    await this.loadLeaderboard();
+                    return;
+                }}
+                
+                // ── Auth Path 2: JWT token in URL (?token=...) ──
                 const urlParams = new URLSearchParams(window.location.search);
                 this.token = urlParams.get('token');
                 
                 if (!this.token) {{
-                    this.showMessage('❌ Authentication required. Please use the /webapp command in the Telegram bot.', 'error');
+                    this.showMessage('Please open this app via the Telegram bot using /webapp', 'error');
                     setTimeout(() => {{
                         window.location.href = '/login';
                     }}, 3000);
@@ -6400,7 +6419,7 @@ def mini_app_page():
                     const data = await response.json();
                     
                     if (!data.success) {{
-                        this.showMessage('❌ Session expired. Please get a new link from the Telegram bot.', 'error');
+                        this.showMessage('❌ Session expired. Use /webapp in the bot to get a fresh link.', 'error');
                         setTimeout(() => {{
                             window.location.href = '/login';
                         }}, 3000);
@@ -6411,8 +6430,8 @@ def mini_app_page():
                     await this.loadUserData();
                     
                 }} catch (error) {{
-                    console.error('Error verifying token:', error);
-                    this.showMessage('❌ Authentication error. Please try again.', 'error');
+                    console.error('Auth error:', error);
+                    this.showMessage('❌ Authentication error. Try /webapp again.', 'error');
                     setTimeout(() => {{
                         window.location.href = '/login';
                     }}, 3000);
