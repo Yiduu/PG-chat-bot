@@ -5529,12 +5529,27 @@ async def set_bot_commands(app):
         commands.append(BotCommand("admin", "Admin panel (admin only)"))
     
     await app.bot.set_my_commands(commands)
+    
+    # Set the bot-level menu button to open the Web App directly
+    # (This places a "🌐" icon next to the text input bar for ALL users)
+    render_url = os.getenv('RENDER_URL', 'https://your-render-url.onrender.com')
+    try:
+        from telegram import MenuButtonWebApp
+        await app.bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="Open App",
+                web_app=WebAppInfo(url=render_url + "/login")
+            )
+        )
+        logger.info("✅ Bot menu button set to Web App")
+    except Exception as e:
+        logger.warning(f"Could not set menu button: {e}")
 
 async def mini_app_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send the mini app link with authentication token"""
+    """Send the mini app link with authentication token — opens natively inside Telegram"""
     user_id = str(update.effective_user.id)
     
-    # Generate a secure JWT token
+    # Generate a secure JWT token valid 30 days
     token = jwt.encode(
         {
             'user_id': user_id,
@@ -5544,36 +5559,28 @@ async def mini_app_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         algorithm='HS256'
     )
     
-    # Create the mini app URL with token
     render_url = os.getenv('RENDER_URL', 'https://your-render-url.onrender.com')
     mini_app_url = f"{render_url}/?token={token}"
     
-    # Create WebApp button
-    web_app_info = WebAppInfo(url=mini_app_url)
-    
-    # Create keyboard
+    # Primary: native WebApp button (opens inside Telegram without leaving the app)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌐 Open Web App", web_app=web_app_info)],
+        [InlineKeyboardButton("🌐 Open Christian Vent App", web_app=WebAppInfo(url=mini_app_url))],
         [InlineKeyboardButton("📱 Open in Browser", url=mini_app_url)],
-        [InlineKeyboardButton("🔄 Refresh Token", callback_data='refresh_mini_app')],
-        [InlineKeyboardButton("🤖 Back to Bot", callback_data='menu')]
     ])
     
     await update.message.reply_text(
         "🌐 *Christian Vent Web App*\n\n"
-        "Click the button below to open our web interface.\n\n"
-        "📋 *Features:*\n"
-        "• Share anonymous vents\n"
-        "• View community posts\n"
-        "• See the leaderboard\n"
+        "Tap *Open Christian Vent App* to launch the app right here inside Telegram — no browser needed!\n\n"
+        "📋 *You can:*\n"
+        "• Share anonymous vents & prayers\n"
+        "• Read & respond to the community\n"
+        "• Check the leaderboard\n"
         "• Manage your profile\n\n"
-        "🔒 *Secure Access:*\n"
-        "Your token is valid for 30 days.\n\n"
-        "_Note: Always use this link from the bot to stay authenticated._",
+        "_Your access is valid for 30 days._",
         reply_markup=keyboard,
         parse_mode=ParseMode.MARKDOWN
     )
-    
+
 def main():
     # Initialize database before starting the bot
     try:
