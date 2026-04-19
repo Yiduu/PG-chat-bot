@@ -7040,6 +7040,9 @@ def mini_app_submit_vent():
             # Log it (optional)
             logger.info(f"📝 Mini App Post submitted: ID {post_id} by {user_id}")
             
+            # Notify admin immediately to prevent missed vents
+            notify_admin_of_new_post_sync(post_id)
+            
             return jsonify({
                 'success': True,
                 'message': '✅ Your vent has been submitted for admin approval!',
@@ -7068,14 +7071,47 @@ def notify_admin_of_new_post_sync(post_id):
         
         post_preview = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
         
-        # Create a simple text notification (in real app, you'd send via bot)
         logger.info(f"🆕 Mini App Post awaiting approval from {author_name}: {post_preview}")
         
-        # You could also send to a webhook or store in a queue for bot to process
-        # For now, just log it
-        
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        payload = {
+            "chat_id": ADMIN_ID,
+            "text": f"🆕 New post awaiting approval from {author_name}:\n\n{post_preview}",
+            "reply_markup": {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Approve", "callback_data": f"approve_post_{post_id}"},
+                        {"text": "❌ Reject", "callback_data": f"reject_post_{post_id}"}
+                    ]
+                ]
+            }
+        }
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
         logger.error(f"Error in sync admin notification: {e}")
+
+def update_channel_post_comment_count_sync(post_id):
+    """Sync version of update_channel_post_comment_count for the mini app"""
+    try:
+        post = db_fetch_one("SELECT channel_message_id FROM posts WHERE post_id = %s", (post_id,))
+        if not post or not post['channel_message_id']:
+            return
+            
+        total_comments = count_all_comments(post_id)
+        
+        url = f"https://api.telegram.org/bot{TOKEN}/editMessageReplyMarkup"
+        payload = {
+            "chat_id": CHANNEL_ID,
+            "message_id": post['channel_message_id'],
+            "reply_markup": {
+                "inline_keyboard": [
+                    [{"text": f"💬 Add/view Comments ({total_comments})", "url": f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}"}]
+                ]
+            }
+        }
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        logger.error(f"Error in sync channel comment update: {e}")
 
 @flask_app.route('/api/mini-app/get-posts', methods=['GET'])
 def mini_app_get_posts():
@@ -7295,6 +7331,9 @@ def mini_app_submit_comment(post_id):
             "UPDATE posts SET comment_count = COALESCE(comment_count, 0) + 1 WHERE post_id = %s",
             (post_id,)
         )
+        
+        # Update Channel Message Inline Keyboard immediately
+        update_channel_post_comment_count_sync(post_id)
         
         return jsonify({'success': True, 'message': 'Reply posted successfully!'})
     except Exception as e:
