@@ -566,7 +566,10 @@ def login_page():
 <head>
     <title>Christian Vent - Login</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root {{
             --primary: {primary};
@@ -576,9 +579,12 @@ def login_page():
             --border: {border};
             --text: {text_color};
         }}
+        * {{
+            box-sizing: border-box;
+        }}
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--secondary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, var(--secondary) 0%, rgba(var(--primary-rgb), 0.1) 100%);
             color: var(--text);
             margin: 0;
             padding: 20px;
@@ -588,103 +594,176 @@ def login_page():
             align-items: center;
         }}
         .login-container {{
-            background: var(--card-bg);
-            padding: 40px;
-            border-radius: 12px;
-            border: 1px solid var(--border);
-            max-width: 500px;
+            background: rgba(var(--card-bg), 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 2.5rem;
+            border-radius: 20px;
+            border: 1px solid rgba(var(--primary-rgb), 0.15);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+            max-width: 440px;
             width: 100%;
             text-align: center;
+            animation: fadeIn 0.6s ease-out;
+        }}
+        @keyframes fadeIn {{
+            from {{ opacity: 0; transform: translateY(12px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        .brand {{
+            margin-bottom: 24px;
         }}
         .logo {{
-            width: 90px;
+            width: 72px;
             height: auto;
-            margin-bottom: 15px;
+            border-radius: 18px;
+            margin-bottom: 16px;
+            box-shadow: 0 6px 16px rgba(var(--primary-rgb), 0.25);
         }}
         .title {{
             color: var(--primary);
-            font-size: 2.8rem;
+            font-size: 1.4rem;
             font-weight: 700;
-            letter-spacing: 3px;
-            font-family: 'Oswald', sans-serif;
+            letter-spacing: 1.5px;
             text-transform: uppercase;
+            margin: 0 0 8px 0;
+        }}
+        .subtitle {{
+            opacity: 0.75;
+            font-size: 0.95rem;
+            line-height: 1.5;
             margin: 0;
-        }}
-        h1 {{
-            color: var(--primary);
-            margin-bottom: 10px;
-        }}
-        p {{
-            opacity: 0.8;
-            line-height: 1.6;
-            margin-bottom: 30px;
         }}
         .telegram-btn {{
             background: #0088cc;
+            background: linear-gradient(135deg, #0088cc, #0077b3);
             color: white;
             border: none;
-            padding: 15px 30px;
-            border-radius: 8px;
-            font-size: 1.1rem;
+            padding: 14px 28px;
+            border-radius: 12px;
+            font-size: 1rem;
             font-weight: 600;
             cursor: pointer;
             width: 100%;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
             text-decoration: none;
             display: inline-block;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0, 136, 204, 0.25);
         }}
         .telegram-btn:hover {{
-            background: #0077b3;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0, 136, 204, 0.4);
+            background: linear-gradient(135deg, #0099e6, #0088cc);
         }}
         .bot-link {{
             color: var(--primary);
             text-decoration: none;
             font-weight: 600;
+            transition: opacity 0.2s;
         }}
         .bot-link:hover {{
+            opacity: 0.8;
             text-decoration: underline;
         }}
         .features {{
             text-align: left;
-            margin-top: 30px;
-            background: rgba(var(--primary-rgb), 0.1);
+            margin-top: 32px;
+            background: rgba(var(--primary-rgb), 0.04);
             padding: 20px;
-            border-radius: 8px;
+            border-radius: 14px;
+            border: 1px solid rgba(var(--primary-rgb), 0.08);
         }}
         .features h3 {{
             color: var(--primary);
-            margin-top: 0;
+            margin: 0 0 12px 0;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 700;
         }}
         .features ul {{
             padding-left: 20px;
+            margin: 0;
+            font-size: 0.9rem;
+            opacity: 0.85;
+            line-height: 1.7;
         }}
         .features li {{
-            margin-bottom: 10px;
+            margin-bottom: 8px;
+        }}
+        .features li:last-child {{
+            margin-bottom: 0;
+        }}
+        .footer-text {{
+            margin-top: 24px;
+            font-size: 0.8rem;
+            opacity: 0.5;
+            line-height: 1.5;
+        }}
+        
+        /* Auth Screen Styles */
+        .auth-container {{
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            background: linear-gradient(135deg, var(--secondary) 0%, rgba(var(--primary-rgb), 0.1) 100%); 
+            color: var(--text); 
+            flex-direction: column;
+            font-family: 'Inter', sans-serif;
+            animation: fadeIn 0.4s ease-out;
+        }}
+        .auth-spinner {{
+            width: 44px;
+            height: 44px;
+            border: 3px solid rgba(var(--primary-rgb), 0.15);
+            border-radius: 50%;
+            border-top-color: var(--primary);
+            animation: spin 1s ease-in-out infinite;
+            margin-bottom: 24px;
+        }}
+        .auth-title {{
+            color: var(--primary); 
+            font-size: 1.1rem; 
+            font-weight: 600; 
+            letter-spacing: 1.5px;
+            margin: 0 0 8px 0;
+            text-transform: uppercase;
+        }}
+        .auth-subtitle {{
+            opacity: 0.6;
+            font-size: 0.9rem;
+            margin: 0;
+            font-weight: 500;
+        }}
+        @keyframes spin {{
+            to {{ transform: rotate(360deg); }}
         }}
     </style>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
     <div class="login-container">
         <div class="brand">
             <img src="/static/images/vent%20logo.jpg" class="logo" alt="Christian Vent Logo">
-            <h1 class="title">CHRISTIAN VENT</h1>
+            <h1 class="title">Christian Vent</h1>
+            <p class="subtitle">Share your thoughts anonymously</p>
         </div>
-        <p>Share your thoughts anonymously with the Christian community</p>
-        <p>To use the mini app, you need to authenticate with the Telegram bot:</p>
+        
+        <p style="font-size: 0.9rem; opacity: 0.8; margin-bottom: 16px;">Please authenticate with the Telegram bot:</p>
         <a href="https://t.me/{bot_username}" class="telegram-btn" target="_blank">Open Telegram Bot</a>
-        <p>Or use this link: <a href="https://t.me/{bot_username}" class="bot-link" target="_blank">@{bot_username}</a></p>
+        <p style="font-size: 0.9rem; margin-top: 0;">Or use: <a href="https://t.me/{bot_username}" class="bot-link" target="_blank">@{bot_username}</a></p>
+        
         <div class="features">
-            <h3>Features:</h3>
+            <h3>Features</h3>
             <ul>
                 <li>Share anonymous vents and prayers</li>
-                <li>Join Christian community discussions</li>
-                <li>View and comment on posts</li>
-                <li>Check leaderboard of top contributors</li>
-                <li>Manage your profile and settings</li>
+                <li>Join community discussions</li>
+                <li>View the leaderboard</li>
+                <li>Manage profile settings</li>
             </ul>
         </div>
-        <p style="margin-top: 30px; font-size: 0.9rem; opacity: 0.7;">
+        <p class="footer-text">
             After opening the bot, use the /webapp command to get authenticated access to the mini app.
         </p>
     </div>
@@ -696,11 +775,12 @@ def login_page():
             tg.ready();
             const userId = tg.initDataUnsafe.user.id;
             
-            // Show a temporary loading state
+            // Show a premium temporary loading state
             document.body.innerHTML = `
-                <div style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--secondary); color: var(--text); flex-direction: column;">
-                    <h2 style="color: var(--primary); font-family: 'Oswald', sans-serif; margin-bottom: 10px;">AUTHENTICATING...</h2>
-                    <p style="opacity: 0.8;">Securing your connection</p>
+                <div class="auth-container">
+                    <div class="auth-spinner"></div>
+                    <h2 class="auth-title">Authenticating</h2>
+                    <p class="auth-subtitle">Securing your connection...</p>
                 </div>
             `;
             
