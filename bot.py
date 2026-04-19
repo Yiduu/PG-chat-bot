@@ -561,7 +561,7 @@ def login_page():
     text_color = TEXT_COLOR
     primary_rgb = PRIMARY_RGB
 
-    html = f'''<!DOCTYPE html>
+    html = '''<!DOCTYPE html>
 <html>
 <head>
     <title>Christian Vent - Login</title>
@@ -571,18 +571,18 @@ def login_page():
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        :root {{
-            --primary: {primary};
-            --primary-rgb: {primary_rgb};
-            --secondary: {secondary};
-            --card-bg: {card_bg};
-            --border: {border};
-            --text: {text_color};
-        }}
-        * {{
+        :root {
+            --primary: __PRIMARY__;
+            --primary-rgb: __PRIMARY_RGB__;
+            --secondary: __SECONDARY__;
+            --card-bg: __CARD_BG__;
+            --border: __BORDER__;
+            --text: __TEXT_COLOR__;
+        }
+        * {
             box-sizing: border-box;
-        }}
-        body {{
+        }
+        body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             background: linear-gradient(135deg, var(--secondary) 0%, rgba(var(--primary-rgb), 0.1) 100%);
             color: var(--text);
@@ -592,8 +592,8 @@ def login_page():
             display: flex;
             justify-content: center;
             align-items: center;
-        }}
-        .login-container {{
+        }
+        .login-container {
             background: rgba(var(--card-bg), 0.7);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
@@ -605,36 +605,36 @@ def login_page():
             width: 100%;
             text-align: center;
             animation: fadeIn 0.6s ease-out;
-        }}
-        @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(12px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
-        .brand {{
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .brand {
             margin-bottom: 24px;
-        }}
-        .logo {{
+        }
+        .logo {
             width: 72px;
             height: auto;
             border-radius: 18px;
             margin-bottom: 16px;
             box-shadow: 0 6px 16px rgba(var(--primary-rgb), 0.25);
-        }}
-        .title {{
+        }
+        .title {
             color: var(--primary);
             font-size: 1.4rem;
             font-weight: 700;
             letter-spacing: 1.5px;
             text-transform: uppercase;
             margin: 0 0 8px 0;
-        }}
-        .subtitle {{
+        }
+        .subtitle {
             opacity: 0.75;
             font-size: 0.95rem;
             line-height: 1.5;
             margin: 0;
-        }}
-        .telegram-btn {{
+        }
+        .telegram-btn {
             background: #0088cc;
             background: linear-gradient(135deg, #0088cc, #0077b3);
             color: white;
@@ -650,60 +650,60 @@ def login_page():
             display: inline-block;
             transition: all 0.3s ease;
             box-shadow: 0 4px 12px rgba(0, 136, 204, 0.25);
-        }}
-        .telegram-btn:hover {{
+        }
+        .telegram-btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 6px 16px rgba(0, 136, 204, 0.4);
             background: linear-gradient(135deg, #0099e6, #0088cc);
-        }}
-        .bot-link {{
+        }
+        .bot-link {
             color: var(--primary);
             text-decoration: none;
             font-weight: 600;
             transition: opacity 0.2s;
-        }}
-        .bot-link:hover {{
+        }
+        .bot-link:hover {
             opacity: 0.8;
             text-decoration: underline;
-        }}
-        .features {{
+        }
+        .features {
             text-align: left;
             margin-top: 32px;
             background: rgba(var(--primary-rgb), 0.04);
             padding: 20px;
             border-radius: 14px;
             border: 1px solid rgba(var(--primary-rgb), 0.08);
-        }}
-        .features h3 {{
+        }
+        .features h3 {
             color: var(--primary);
             margin: 0 0 12px 0;
             font-size: 0.9rem;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             font-weight: 700;
-        }}
-        .features ul {{
+        }
+        .features ul {
             padding-left: 20px;
             margin: 0;
             font-size: 0.9rem;
             opacity: 0.85;
             line-height: 1.7;
-        }}
-        .features li {{
+        }
+        .features li {
             margin-bottom: 8px;
-        }}
-        .features li:last-child {{
+        }
+        .features li:last-child {
             margin-bottom: 0;
-        }}
-        .footer-text {{
+        }
+        .footer-text {
             margin-top: 24px;
             font-size: 0.8rem;
             opacity: 0.5;
             line-height: 1.5;
-        }}
+        }
         
         /* Auth Screen Styles */
-        .auth-container {{
+        .auth-container {
             display: flex; 
             justify-content: center; 
             align-items: center; 
@@ -713,8 +713,8 @@ def login_page():
             flex-direction: column;
             font-family: 'Inter', sans-serif;
             animation: fadeIn 0.4s ease-out;
-        }}
-        .auth-spinner {{
+        }
+        .auth-spinner {
             width: 44px;
             height: 44px;
             border: 3px solid rgba(var(--primary-rgb), 0.15);
@@ -722,24 +722,24 @@ def login_page():
             border-top-color: var(--primary);
             animation: spin 1s ease-in-out infinite;
             margin-bottom: 24px;
-        }}
-        .auth-title {{
+        }
+        .auth-title {
             color: var(--primary); 
             font-size: 1.1rem; 
             font-weight: 600; 
             letter-spacing: 1.5px;
             margin: 0 0 8px 0;
             text-transform: uppercase;
-        }}
-        .auth-subtitle {{
+        }
+        .auth-subtitle {
             opacity: 0.6;
             font-size: 0.9rem;
             margin: 0;
             font-weight: 500;
-        }}
-        @keyframes spin {{
-            to {{ transform: rotate(360deg); }}
-        }}
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -751,8 +751,8 @@ def login_page():
         </div>
         
         <p style="font-size: 0.9rem; opacity: 0.8; margin-bottom: 16px;">Please authenticate with the Telegram bot:</p>
-        <a href="https://t.me/{bot_username}" class="telegram-btn" target="_blank">Open Telegram Bot</a>
-        <p style="font-size: 0.9rem; margin-top: 0;">Or use: <a href="https://t.me/{bot_username}" class="bot-link" target="_blank">@{bot_username}</a></p>
+        <a href="https://t.me/__BOT_USERNAME__" class="telegram-btn" target="_blank">Open Telegram Bot</a>
+        <p style="font-size: 0.9rem; margin-top: 0;">Or use: <a href="https://t.me/__BOT_USERNAME__" class="bot-link" target="_blank">@__BOT_USERNAME__</a></p>
         
         <div class="features">
             <h3>Features</h3>
@@ -771,7 +771,7 @@ def login_page():
     <script>
         // Auto-login via Telegram WebApp initData
         const tg = window.Telegram?.WebApp;
-        if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {{
+        if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
             tg.ready();
             const userId = tg.initDataUnsafe.user.id;
             
@@ -786,16 +786,24 @@ def login_page():
             
             fetch('/api/generate-token/' + userId)
                 .then(r => r.json())
-                .then(data => {{
-                    if (data.success && data.token) {{
+                .then(data => {
+                    if (data.success && data.token) {
                         window.location.replace('/?token=' + data.token);
-                    }}
-                }})
+                    }
+                })
                 .catch(e => console.error("Auto-login failed:", e));
-        }}
+        }
     </script>
 </body>
 </html>'''
+
+    html = html.replace('__PRIMARY__', primary)
+    html = html.replace('__PRIMARY_RGB__', primary_rgb)
+    html = html.replace('__SECONDARY__', secondary)
+    html = html.replace('__CARD_BG__', card_bg)
+    html = html.replace('__BORDER__', border)
+    html = html.replace('__TEXT_COLOR__', text_color)
+    html = html.replace('__BOT_USERNAME__', bot_username)
     return html
 # Generate token for mini app (called by bot)
 @flask_app.route('/api/generate-token/<user_id>')
@@ -6391,7 +6399,7 @@ def mini_app_page():
                             style="min-height: 90px; margin-bottom: 10px; padding: 14px; font-size: 0.9rem; border-radius: 15px;" 
                             placeholder="Offer your prayers or advice anonymously..."
                         ></textarea>
-                        <button id="postCommentBtn" class="submit-btn" style="padding: 14px; font-size: 1rem; border-radius: 16px; margin-top: 0;">
+                        <button id="postCommentBtn" class="submit-btn" onclick="app.submitComment()" style="padding: 14px; font-size: 1rem; border-radius: 16px; margin-top: 0;">
                             Send Reply
                         </button>
                     </div>
