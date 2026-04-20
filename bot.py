@@ -50,8 +50,6 @@ SECONDARY_COLOR = os.getenv('SECONDARY_COLOR')
 CARD_BG_COLOR = os.getenv('CARD_BG_COLOR')
 BORDER_COLOR = os.getenv('BORDER_COLOR')
 TEXT_COLOR = os.getenv('TEXT_COLOR')
-RENDER_URL = os.getenv('RENDER_URL', 'https://your-render-url.onrender.com')
-
 def hex_to_rgb(hex_color):
     """Convert #RRGGBB to "R, G, B" string for CSS rgba() usage."""
     hex_color = hex_color.lstrip('#')
@@ -490,8 +488,9 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="What would you like to do next?",
-                reply_markup=main_menu
+                reply_markup=get_main_menu(user_id)
             )
+
         except Exception as e:
             logger.error(f"Error restoring main menu: {e}")
 # Categories
@@ -896,19 +895,63 @@ def static_files(filename):
     except Exception as e:
         return f"Error loading file: {e}", 404
 
-# Create main menu keyboard with improved buttons
+# Helper to get dynamic main menu with token
+def get_main_menu(user_id: str):
+    """Generate the main menu keyboard with a dynamic user token for the Web App"""
+    try:
+        # Generate a secure JWT token (valid for 30 days)
+        token = jwt.encode(
+            {
+                'user_id': str(user_id),
+                'exp': datetime.now(timezone.utc) + timedelta(days=30)
+            },
+            TOKEN,
+            algorithm='HS256'
+        )
+        
+        render_url = os.getenv('RENDER_URL', 'https://your-render-url.onrender.com')
+        mini_app_url = f"{render_url}/?token={token}"
+        
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton("🌐 Open App", web_app=WebAppInfo(url=mini_app_url))],
+                [KeyboardButton("✍️ Share")],
+                [KeyboardButton("👤 Profile"), KeyboardButton("📚 Posts")],
+                [KeyboardButton("🏆 Top"), KeyboardButton("⚙️ Settings")]
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=False,
+            is_persistent=True,
+            input_field_placeholder="Choose option"
+        )
+    except Exception as e:
+        logger.error(f"Error generating dynamic menu: {e}")
+        # Fallback to menu without Web App button if something fails
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton("✍️ Share")],
+                [KeyboardButton("👤 Profile"), KeyboardButton("📚 Posts")],
+                [KeyboardButton("🏆 Top"), KeyboardButton("⚙️ Settings")]
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=False,
+            is_persistent=True,
+            input_field_placeholder="Choose option"
+        )
+
+# Fallback for static contexts if needed (can be removed later)
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton("✍️ Share")],
         [KeyboardButton("👤 Profile"), KeyboardButton("📚 Posts")],
-        [KeyboardButton("🏆 Top"), KeyboardButton("⚙️ Settings")],
-        [KeyboardButton("🌐 Open App", web_app=WebAppInfo(url=RENDER_URL + "/login"))]
+        [KeyboardButton("🏆 Top"), KeyboardButton("⚙️ Settings")]
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
     is_persistent=True,
     input_field_placeholder="Choose option"
 )
+
 # Cancel-only menu for input states
 cancel_menu = ReplyKeyboardMarkup(
     keyboard=[
@@ -2414,15 +2457,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✝️ *እንኳን ወደ Christian vent በሰላም መጡ* \n\n"
         "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n",
-        reply_markup=main_menu,
+        reply_markup=get_main_menu(user_id),
         parse_mode=ParseMode.MARKDOWN
     )
     
     # Also send the reply keyboard (buttons above typing area)
     await update.message.reply_text(
         "You can also use the buttons below to navigate:",
-        reply_markup=main_menu
+        reply_markup=get_main_menu(user_id)
     )
+
 async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
     """Show user's inbox with clean, modern UI"""
     user_id = str(update.effective_user.id)
@@ -3378,9 +3422,10 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
         await update.callback_query.message.reply_text(
             "📱 *Main Menu*\nUse the buttons below:",
-            reply_markup=main_menu,
+            reply_markup=get_main_menu(str(update.effective_user.id)),
             parse_mode=ParseMode.MARKDOWN
         )
+
         # Optional: delete the old inline message to avoid clutter
         try:
             await update.callback_query.message.delete()
@@ -3389,9 +3434,10 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(
             "📱 *Main Menu*\nUse the buttons below:",
-            reply_markup=main_menu,
+            reply_markup=get_main_menu(str(update.effective_user.id)),
             parse_mode=ParseMode.MARKDOWN
         )
+
 
 async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
@@ -5648,16 +5694,17 @@ async def set_bot_commands(app):
     
     await app.bot.set_my_commands(commands)
     
-    # Set the bot-level menu button to default commands menu
-    # (This replaces the "Open App" button with the standard "Menu" icon)
+    # Set the bot-level menu button to default behavior
+    # This ensures the bottom-left button triggers the keyboard/commands instead of opening the app directly
     try:
-        from telegram import MenuButtonCommands
+        from telegram import MenuButtonDefault
         await app.bot.set_chat_menu_button(
-            menu_button=MenuButtonCommands()
+            menu_button=MenuButtonDefault()
         )
-        logger.info("✅ Bot menu button set to Commands Menu")
+        logger.info("✅ Bot menu button set to Default (Trigger Keyboard)")
     except Exception as e:
         logger.warning(f"Could not set menu button: {e}")
+
 
 async def mini_app_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send the mini app link with authentication token — opens natively inside Telegram"""
