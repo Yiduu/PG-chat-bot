@@ -914,10 +914,10 @@ def get_main_menu(user_id: str):
         
         return ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton("🌐 Open App", web_app=WebAppInfo(url=mini_app_url))],
                 [KeyboardButton("✍️ Share")],
                 [KeyboardButton("👤 Profile"), KeyboardButton("📚 Posts")],
-                [KeyboardButton("🏆 Top"), KeyboardButton("⚙️ Settings")]
+                [KeyboardButton("🏆 Top"), KeyboardButton("⚙️ Settings")],
+                [KeyboardButton("🌐 Open App", web_app=WebAppInfo(url=mini_app_url))]
             ],
             resize_keyboard=True,
             one_time_keyboard=False,
@@ -951,6 +951,7 @@ main_menu = ReplyKeyboardMarkup(
     is_persistent=True,
     input_field_placeholder="Choose option"
 )
+
 
 # Cancel-only menu for input states
 cancel_menu = ReplyKeyboardMarkup(
