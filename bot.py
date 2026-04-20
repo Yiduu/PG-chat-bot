@@ -50,6 +50,8 @@ SECONDARY_COLOR = os.getenv('SECONDARY_COLOR')
 CARD_BG_COLOR = os.getenv('CARD_BG_COLOR')
 BORDER_COLOR = os.getenv('BORDER_COLOR')
 TEXT_COLOR = os.getenv('TEXT_COLOR')
+RENDER_URL = os.getenv('RENDER_URL', 'https://your-render-url.onrender.com')
+
 def hex_to_rgb(hex_color):
     """Convert #RRGGBB to "R, G, B" string for CSS rgba() usage."""
     hex_color = hex_color.lstrip('#')
@@ -899,7 +901,8 @@ main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton("✍️ Share")],
         [KeyboardButton("👤 Profile"), KeyboardButton("📚 Posts")],
-        [KeyboardButton("🏆 Top"), KeyboardButton("⚙️ Settings")]
+        [KeyboardButton("🏆 Top"), KeyboardButton("⚙️ Settings")],
+        [KeyboardButton("🌐 Open App", web_app=WebAppInfo(url=RENDER_URL + "/login"))]
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
@@ -5645,18 +5648,14 @@ async def set_bot_commands(app):
     
     await app.bot.set_my_commands(commands)
     
-    # Set the bot-level menu button to open the Web App directly
-    # (This places a "🌐" icon next to the text input bar for ALL users)
-    render_url = os.getenv('RENDER_URL', 'https://your-render-url.onrender.com')
+    # Set the bot-level menu button to default commands menu
+    # (This replaces the "Open App" button with the standard "Menu" icon)
     try:
-        from telegram import MenuButtonWebApp
+        from telegram import MenuButtonCommands
         await app.bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(
-                text="Open App",
-                web_app=WebAppInfo(url=render_url + "/login")
-            )
+            menu_button=MenuButtonCommands()
         )
-        logger.info("✅ Bot menu button set to Web App")
+        logger.info("✅ Bot menu button set to Commands Menu")
     except Exception as e:
         logger.warning(f"Could not set menu button: {e}")
 
