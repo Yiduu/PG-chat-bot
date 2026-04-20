@@ -181,7 +181,18 @@ def init_db():
                     target_group TEXT DEFAULT 'all',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-                ''')                  
+                ''')
+
+                c.execute('''
+                CREATE TABLE IF NOT EXISTS post_reactions (
+                    reaction_id SERIAL PRIMARY KEY,
+                    post_id INTEGER REFERENCES posts(post_id),
+                    user_id TEXT,
+                    type TEXT DEFAULT 'prayer',
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(post_id, user_id)
+                )
+                ''')
                 # ---------------- Database Schema Migration (Postgres Robust) ----------------
                 
                 # Check for 'bio' column in users
@@ -516,6 +527,40 @@ def build_category_buttons():
                 row.append(InlineKeyboardButton(name, callback_data=f'category_{code}'))
         buttons.append(row)
     return InlineKeyboardMarkup(buttons) 
+
+# Curated daily verses for "Soul Food"
+DAILY_VERSES = [
+    {"text": "The Lord is my shepherd; I shall not want.", "ref": "Psalm 23:1"},
+    {"text": "For I know the plans I have for you, plans to prosper you and not to harm you.", "ref": "Jeremiah 29:11"},
+    {"text": "I can do all things through Christ who strengthens me.", "ref": "Philippians 4:13"},
+    {"text": "Trust in the Lord with all your heart and lean not on your own understanding.", "ref": "Proverbs 3:5"},
+    {"text": "But those who hope in the Lord will renew their strength.", "ref": "Isaiah 40:31"},
+    {"text": "Be strong and courageous. Do not be afraid; do not be discouraged.", "ref": "Joshua 1:9"},
+    {"text": "The name of the Lord is a fortified tower; the righteous run to it and are safe.", "ref": "Proverbs 18:10"},
+    {"text": "Give thanks to the Lord, for he is good; his love endures forever.", "ref": "Psalm 118:1"},
+    {"text": "Cast all your anxiety on him because he cares for you.", "ref": "1 Peter 5:7"},
+    {"text": "Do not be anxious about anything, but in every situation, by prayer and petition.", "ref": "Philippians 4:6"},
+    {"text": "The Lord your God is with you, the Mighty Warrior who saves.", "ref": "Zephaniah 3:17"},
+    {"text": "Grace and peace be yours in abundance.", "ref": "1 Peter 1:2"},
+    {"text": "God is our refuge and strength, an ever-present help in trouble.", "ref": "Psalm 46:1"},
+    {"text": "Your word is a lamp for my feet, a light on my path.", "ref": "Psalm 119:105"},
+    {"text": "For God so loved the world that he gave his one and only Son.", "ref": "John 3:16"},
+    {"text": "The joy of the Lord is your strength.", "ref": "Nehemiah 8:10"},
+    {"text": "Commit to the Lord whatever you do, and he will establish your plans.", "ref": "Proverbs 16:3"},
+    {"text": "Therefore do not worry about tomorrow, for tomorrow will worry about itself.", "ref": "Matthew 6:34"},
+    {"text": "Let all that you do be done in love.", "ref": "1 Corinthians 16:14"},
+    {"text": "As for me and my house, we will serve the Lord.", "ref": "Joshua 24:15"},
+    {"text": "Peace I leave with you; my peace I give you.", "ref": "John 14:27"},
+    {"text": "Draw near to God and He will draw near to you.", "ref": "James 4:8"},
+    {"text": "Blessed are the peacemakers, for they will be called children of God.", "ref": "Matthew 5:9"},
+    {"text": "Wait for the Lord; be strong and take heart and wait for the Lord.", "ref": "Psalm 27:14"},
+    {"text": "Let the word of Christ dwell in you richly.", "ref": "Colossians 3:16"},
+    {"text": "The fruit of the Spirit is love, joy, peace, patience, kindness...", "ref": "Galatians 5:22"},
+    {"text": "Let your heart take courage, all you who hope in the Lord.", "ref": "Psalm 31:24"},
+    {"text": "Come to me, all you who are weary and burdened, and I will give you rest.", "ref": "Matthew 11:28"},
+    {"text": "Rejoice always, pray continually, give thanks in all circumstances.", "ref": "1 Thessalonians 5:16-18"},
+    {"text": "Everything is possible for one who believes.", "ref": "Mark 9:23"}
+]
 
 
 # Initialize Flask app for Render health checks
@@ -958,7 +1003,16 @@ def calculate_user_rating(user_id):
     block_res = db_fetch_one("SELECT COUNT(*) as count FROM blocks WHERE blocked_id = %s", (user_id,))
     block_points = (block_res['count'] if block_res else 0) * -10
     
-    return post_points + comm_points + rx_points + block_points
+    # 5. Post Reaction Points (+2 per prayer received)
+    post_rx_res = db_fetch_one("""
+        SELECT COUNT(*) as count 
+        FROM post_reactions pr
+        JOIN posts p ON pr.post_id = p.post_id
+        WHERE p.author_id = %s
+    """, (user_id,))
+    post_rx_points = (post_rx_res['count'] if post_rx_res else 0) * 2
+    
+    return post_points + comm_points + rx_points + block_points + post_rx_points
 
 
 @lru_cache(maxsize=128)
@@ -6253,8 +6307,114 @@ def mini_app_page():
         }}
 
 
-        
-    </style>
+        /* Soul Food Card */
+        .soul-food-card {
+            background: linear-gradient(145deg, rgba(var(--primary-rgb), 0.15) 0%, rgba(10, 10, 10, 0.8) 100%);
+            border: 1px solid rgba(var(--primary-rgb), 0.25);
+            border-radius: 24px;
+            padding: 25px;
+            margin-bottom: 25px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        .soul-food-card::before {
+            content: '“';
+            position: absolute;
+            top: -10px;
+            left: 20px;
+            font-size: 5rem;
+            color: var(--primary);
+            opacity: 0.1;
+            font-family: serif;
+        }
+
+        .verse-text {
+            font-size: 1.1rem;
+            font-style: italic;
+            color: var(--text);
+            margin-bottom: 12px;
+            line-height: 1.6;
+            font-weight: 300;
+        }
+
+        .verse-ref {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--primary);
+            font-weight: 700;
+        }
+
+        /* Community Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .stat-card {
+            background: rgba(20, 20, 20, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 20px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-family: 'Inter', sans-serif;
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: var(--primary);
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.5;
+            font-weight: 600;
+        }
+
+        /* Quick Reaction Button */
+        .reaction-bar {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .pray-btn {
+            background: rgba(var(--primary-rgb), 0.1);
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+            color: var(--text);
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.3s ease;
+        }
+
+        .pray-btn:hover {
+            background: rgba(var(--primary-rgb), 0.2);
+            transform: scale(1.05);
+        }
+
+        .pray-btn.active {
+            background: var(--primary);
+            color: #000;
+            border-color: var(--primary);
+        }
 
 </head>
 <body>
@@ -6301,6 +6461,12 @@ def mini_app_page():
         <div class="tab-content">
             <!-- Vent Tab -->
             <div id="vent-tab" class="tab-pane active">
+                <!-- Soul Food Card [NEW] -->
+                <div class="soul-food-card" id="soulFoodCard">
+                    <p class="verse-text">Loading spiritual food...</p>
+                    <p class="verse-ref"></p>
+                </div>
+
                 <div class="glass-card">
                     <h2 class="form-title">Share Your Thoughts</h2>
                     <p class="form-description">Share your struggles anonymously. Your identity is always hidden.</p>
@@ -6342,6 +6508,18 @@ def mini_app_page():
 
             <!-- Posts Tab -->
             <div id="posts-tab" class="tab-pane">
+                <!-- Community Stats [NEW] -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="stat-value" id="recentPrayers">...</span>
+                        <span class="stat-label">Prayers Today</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-value" id="totalImpact">...</span>
+                        <span class="stat-label">Total Impact</span>
+                    </div>
+                </div>
+
                 <div class="section-header" style="padding: 0 10px;">
                     <h2 class="section-title">Global Feed</h2>
                     <button class="refresh-btn" id="refreshPosts" style="background: rgba(var(--primary-rgb), 0.1); border-color: rgba(var(--primary-rgb), 0.2);">↻ Refresh</button>
@@ -6591,8 +6769,58 @@ def mini_app_page():
                     submitBtn.addEventListener('click', () => this.submitVent());
                 }}
                 
-                document.getElementById('refreshPosts')?.addEventListener('click', () => this.loadPosts());
+                document.getElementById('refreshPosts')?.addEventListener('click', () => {{
+                    this.loadPosts();
+                    this.loadStats();
+                }});
                 document.getElementById('refreshLeaderboard')?.addEventListener('click', () => this.loadLeaderboard());
+
+                // Initial loads for brand features
+                this.loadDailyVerse();
+                this.loadStats();
+            }}
+
+            async loadDailyVerse() {{
+                const card = document.getElementById('soulFoodCard');
+                if (!card) return;
+                try {{
+                    const r = await fetch(`${{this.apiBaseUrl}}/api/mini-app/daily-verse`);
+                    const data = await r.json();
+                    if (data.success) {{
+                        card.querySelector('.verse-text').textContent = data.data.text;
+                        card.querySelector('.verse-ref').textContent = data.data.ref;
+                    }}
+                }} catch (e) {{ console.error(e); }}
+            }}
+
+            async loadStats() {{
+                try {{
+                    const r = await fetch(`${{this.apiBaseUrl}}/api/mini-app/stats`);
+                    const data = await r.json();
+                    if (data.success) {{
+                        document.getElementById('recentPrayers').textContent = data.data.recent_prayers;
+                        document.getElementById('totalImpact').textContent = data.data.total_impact;
+                    }}
+                }} catch (e) {{ console.error(e); }}
+            }}
+
+            async reactToPost(postId, btn) {{
+                if (btn.classList.contains('active')) return;
+                
+                try {{
+                    const r = await fetch(`${{this.apiBaseUrl}}/api/mini-app/post/${{postId}}/react`, {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ user_id: this.userId }})
+                    }});
+                    const data = await r.json();
+                    if (data.success) {{
+                        btn.classList.add('active');
+                        btn.innerHTML = `🙏 Prayed (${{data.count || 1}})`;
+                        this.loadStats(); // Update global count
+                        this.showMessage('Your prayer has been recorded.', 'success');
+                    }}
+                }} catch (e) {{ console.error(e); }}
             }}
             
             switchTab(tabName) {{
@@ -6666,11 +6894,22 @@ def mini_app_page():
                             </div>
                         </div>
                         <div class="post-content" style="font-weight: 300; line-height: 1.8;">${{this.escapeHtml(post.content)}}</div>
-                        <div class="post-footer" style="border-top-color: rgba(255,255,255,0.05);">
-                            <div class="comment-count" style="font-weight: 500; color: var(--primary);">🕊️ ${{post.comments}} Responses</div>
+                        
+                        <!-- Brand Interaction [NEW] -->
+                        <div class="reaction-bar">
+                            <button class="pray-btn" onclick="app.reactToPost(${{post.id}}, this)">
+                                🙏 Say a Prayer (${{post.prayers || 0}})
+                            </button>
+                            <div style="flex: 1;"></div>
+                            <div class="comment-count" style="font-size: 0.8rem; opacity: 0.6; display: flex; align-items: center; gap: 4px;">
+                                💬 ${{post.comments}}
+                            </div>
+                        </div>
+
+                        <div class="post-footer" style="border-top: none; padding-top: 10px;">
                             <button onclick="app.openPostDetail(${{post.id}})" 
-                                    style="background: transparent; color: var(--primary); border: 1px solid rgba(var(--primary-rgb), 0.3); padding: 8px 15px; border-radius: 12px; font-size: 0.8rem; cursor: pointer; font-family: 'Oswald'; transition: all 0.3s;">
-                                READ FULL VENT
+                                    style="width: 100%; background: rgba(var(--primary-rgb), 0.05); color: var(--primary); border: 1px solid rgba(var(--primary-rgb), 0.15); padding: 10px; border-radius: 12px; font-size: 0.85rem; cursor: pointer; font-family: 'Inter'; font-weight: 600; transition: all 0.3s;">
+                                View Full Conversation
                             </button>
                         </div>
                     </div>
@@ -6864,7 +7103,7 @@ def mini_app_page():
             async loadProfile(userId) {{
                 const container = document.getElementById('profileContainer');
                 if (!container) return;
-                container.innerHTML = '<div class="loading">Loading profile...</div>';
+                container.innerHTML = '<div class="loading">Aligning spirit...</div>';
                 
                 try {{
                     const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/profile/${{userId}}`);
@@ -6872,30 +7111,43 @@ def mini_app_page():
                     
                     if (data.success) {{
                         const profile = data.data;
+                        
+                        // Calculate Spiritual Rank
+                        let rank = "Seed of Faith";
+                        if (profile.rating > 5000) rank = "Pillar of Faith";
+                        else if (profile.rating > 2000) rank = "Disciple of Truth";
+                        else if (profile.rating > 500) rank = "Prayer Warrior";
+                        else if (profile.rating > 100) rank = "Faithful Servant";
+
                         container.innerHTML = `
-                            <div class="glass-card" style="text-align: center; padding-top: 40px;">
-                                <div class="logo" style="width: 120px; height: 120px; font-size: 3rem; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; animation: none; border-width: 3px;">
+                            <div class="glass-card" style="text-align: center; padding-top: 45px; position: relative; overflow: hidden;">
+                                <div style="position: absolute; top: 0; left: 0; width: 100%; height: 80px; background: linear-gradient(to bottom, rgba(var(--primary-rgb), 0.1), transparent);"></div>
+                                
+                                <div class="logo" style="width: 130px; height: 130px; font-size: 3.5rem; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; animation: none; border-width: 3px; position: relative; z-index: 2;">
                                     ${{profile.avatar || (profile.sex === 'Female' ? '👩' : '👨')}}
                                 </div>
-                                <h2 style="font-size: 2rem; color: var(--text);">${{profile.name}}</h2>
-                                <div class="identity-badge" style="margin: 15px 0;">
-                                    <span>${{profile.aura}}</span>
-                                    <span style="font-family: 'Oswald'; font-weight: 700; color: var(--primary);">${{profile.rating}} PTS</span>
+                                
+                                <h2 style="font-size: 2.2rem; color: var(--text); margin-bottom: 5px;">${{profile.name}}</h2>
+                                <p style="color: var(--primary); font-weight: 700; letter-spacing: 2px; text-transform: uppercase; font-size: 0.8rem; margin-bottom: 20px;">${{rank}}</p>
+                                
+                                <div class="identity-badge" style="margin-bottom: 25px; padding: 8px 20px; border-radius: 30px; background: rgba(var(--primary-rgb), 0.1);">
+                                    <span style="font-size: 1.2rem;">${{profile.aura}}</span>
+                                    <span style="font-family: 'Inter'; font-weight: 800; color: var(--primary); margin-left: 8px;">${{profile.rating}} SPIRIT POINTS</span>
                                 </div>
                                 
-                                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px;">
-                                    <div>
-                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${{profile.stats.posts}}</div>
-                                        <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Vents</div>
+                                <div class="stats-grid" style="margin-top: 10px;">
+                                    <div class="stat-card" style="background: rgba(255,255,255,0.03);">
+                                        <span class="stat-value">${{profile.stats.posts}}</span>
+                                        <span class="stat-label">Vents Shared</span>
                                     </div>
-                                    <div>
-                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${{profile.stats.comments}}</div>
-                                        <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Replies</div>
+                                    <div class="stat-card" style="background: rgba(255,255,255,0.03);">
+                                        <span class="stat-value">${{profile.stats.comments}}</span>
+                                        <span class="stat-label">Prayers Offered</span>
                                     </div>
-                                    <div>
-                                        <div style="font-family: 'Oswald'; font-size: 1.5rem; color: var(--primary);">${{profile.stats.followers}}</div>
-                                        <div style="font-size: 0.7rem; opacity: 0.5; text-transform: uppercase;">Aura</div>
-                                    </div>
+                                </div>
+
+                                <div style="margin-top: 20px; padding: 15px; border-radius: 15px; background: rgba(var(--primary-rgb), 0.05); border: 1px dashed rgba(var(--primary-rgb), 0.2);">
+                                    <p style="font-size: 0.85rem; opacity: 0.7; font-style: italic;">"Your words have the power to heal and support others in our community."</p>
                                 </div>
                             </div>
                         `;
@@ -7133,7 +7385,8 @@ def mini_app_get_posts():
                 u.user_id as author_id,
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
-                u.anonymous_name as author_name
+                u.anonymous_name as author_name,
+                (SELECT COUNT(*) FROM post_reactions pr WHERE pr.post_id = p.post_id) as prayer_count
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             WHERE p.approved = TRUE
@@ -7354,6 +7607,7 @@ def mini_app_leaderboard():
                 (
                     (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
                     (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
+                    (SELECT COUNT(*) FROM post_reactions pr JOIN posts p2 ON pr.post_id = p2.post_id WHERE p2.author_id = u.user_id) * 2 +
                     COALESCE((
                         SELECT SUM(CASE WHEN r.type = 'like' THEN 1 WHEN r.type = 'dislike' THEN -2 ELSE 0 END)
                         FROM reactions r
@@ -7521,6 +7775,85 @@ def mini_app_admin_reject_post():
     except Exception as e:
         logger.error(f"Error in mini-app reject post: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/daily-verse', methods=['GET'])
+def get_daily_verse():
+    """Get the curated verse for today"""
+    day_of_month = datetime.now().day
+    verse_idx = (day_of_month - 1) % len(DAILY_VERSES)
+    return jsonify({
+        'success': True,
+        'data': DAILY_VERSES[verse_idx]
+    })
+
+@flask_app.route('/api/mini-app/stats', methods=['GET'])
+def get_community_stats():
+    """Get community spiritual impact stats"""
+    try:
+        # Count all prayers (reactions + comments) in last 24h
+        time_threshold = datetime.now() - timedelta(hours=24)
+        
+        c_res = db_fetch_one("SELECT COUNT(*) as count FROM comments WHERE timestamp > %s", (time_threshold,))
+        r_res = db_fetch_one("SELECT COUNT(*) as count FROM post_reactions WHERE timestamp > %s", (time_threshold,))
+        
+        recent_prayers = (c_res['count'] if c_res else 0) + (r_res['count'] if r_res else 0)
+        
+        # Total impact (all-time)
+        tc_res = db_fetch_one("SELECT COUNT(*) as count FROM comments")
+        tr_res = db_fetch_one("SELECT COUNT(*) as count FROM post_reactions")
+        total_impact = (tc_res['count'] if tc_res else 0) + (tr_res['count'] if tr_res else 0)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'recent_prayers': recent_prayers,
+                'total_impact': total_impact,
+                'community_aura': format_aura(total_impact // 10)
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error in community stats: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/post/<int:post_id>/react', methods=['POST'])
+def react_to_post(post_id):
+    """Add a prayer reaction to a post"""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return jsonify({'success': False, 'error': 'User ID required'}), 400
+            
+        # Add reaction (one person can only react once)
+        success = db_execute(
+            "INSERT INTO post_reactions (post_id, user_id) VALUES (%s, %s) ON CONFLICT (post_id, user_id) DO NOTHING",
+            (post_id, user_id)
+        )
+        
+        if success:
+            # Count total reactions for this post
+            res = db_fetch_one("SELECT COUNT(*) as count FROM post_reactions WHERE post_id = %s", (post_id,))
+            return jsonify({
+                'success': True, 
+                'count': res['count'] if res else 0,
+                'message': 'Prayer offered!'
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to react'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in post reaction: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/post-reactions/<int:post_id>', methods=['GET'])
+def get_post_reactions(post_id):
+    """Get reaction count for a post"""
+    res = db_fetch_one("SELECT COUNT(*) as count FROM post_reactions WHERE post_id = %s", (post_id,))
+    return jsonify({
+        'success': True,
+        'count': res['count'] if res else 0
+    })
 if __name__ == "__main__": 
     # Initialize database first
     try:
