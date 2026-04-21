@@ -2191,14 +2191,14 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         # CRITICAL FIX: Update the admin's original message to remove Approve/Reject buttons
         # =============================================
         try:
-            # Edit the original admin notification message to show it's approved
+            # Edit the original admin notification message to show it's approved (using HTML)
             await query.edit_message_text(
-                f"✅ **Post Approved and Published!**\n\n"
-                f"**Vent Number:** {vent_display}\n"
-                f"**Category:** {post['category']}\n"
-                f"**Published to channel:** ✅\n\n"
-                f"**Content Preview:**\n{post['content'][:150]}...",
-                parse_mode=ParseMode.MARKDOWN
+                f"✅ <b>Post Approved and Published!</b>\n\n"
+                f"<b>Vent Number:</b> {vent_display}\n"
+                f"<b>Category:</b> {post['category']}\n"
+                f"<b>Published to channel:</b> ✅\n\n"
+                f"<b>Content Preview:</b>\n{post['content'][:150]}...",
+                parse_mode=ParseMode.HTML
             )
             
             # Alternative: You can also delete the admin notification message entirely
@@ -2272,13 +2272,14 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
         # =============================================
         try:
             # Edit the original admin notification message
+            # Edit the original admin notification message (using HTML)
             await query.edit_message_text(
-                f"❌ **Post Rejected**\n\n"
-                f"**Post ID:** #{post_id}\n"
-                f"**Category:** {post['category']}\n"
-                f"**Action:** Deleted from database\n\n"
-                f"**Content Preview:**\n{post['content'][:100]}...",
-                parse_mode=ParseMode.MARKDOWN
+                f"❌ <b>Post Rejected</b>\n\n"
+                f"<b>Post ID:</b> #{post_id}\n"
+                f"<b>Category:</b> {post['category']}\n"
+                f"<b>Action:</b> Deleted from database\n\n"
+                f"<b>Content Preview:</b>\n{post['content'][:100]}...",
+                parse_mode=ParseMode.HTML
             )
             
         except BadRequest:
