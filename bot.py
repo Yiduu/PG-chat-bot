@@ -1,21 +1,13 @@
-# Add these imports at the top of bot.py (after the existing imports)
-import jwt 
+import jwt
 import requests
-from telegram import WebAppInfo
-from threading import Thread
-import subprocess
-import os 
+import os
 import logging
 import psycopg2
-import json
-from urllib.parse import quote
-from psycopg2 import sql, IntegrityError, ProgrammingError
 from psycopg2.extras import RealDictCursor
-from pathlib import Path
 from dotenv import load_dotenv
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, 
-    ReplyKeyboardMarkup, KeyboardButton
+    Update, InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -25,14 +17,10 @@ from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 import threading
-from flask import Flask, jsonify, request, redirect, render_template_string 
-from contextlib import closing
+from flask import Flask, jsonify, request, redirect, send_from_directory
 from datetime import datetime, timedelta, timezone
-import random
 import time
 import asyncio
-from typing import Optional
-import re
 from functools import lru_cache
 
 # Load environment variables first
@@ -285,25 +273,7 @@ def assign_vent_numbers_to_existing_posts():
             )
             
             if post_data and post_data['channel_message_id']:
-                try:
-                    # Update the channel post
-                    vent_number_str = f"Vent - {next_vent_number:03d}"
-                    hashtag = f"#{post_data['category']}"
-                    
-                    new_caption = (
-                        f"`{vent_number_str}`\n\n"
-                        f"{post_data['content']}\n\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"{hashtag}\n"
-                        f"[Telegram](https://t.me/christianvent)| [Bot](https://t.me/{BOT_USERNAME})"
-                    )
-                    
-                    # We can't edit the message here without the bot instance
-                    # This would need to be run in a context where we have access to the bot
-                    logger.info(f"Post {post['post_id']} should be updated to Vent - {next_vent_number:03d}")
-                    
-                except Exception as e:
-                    logger.error(f"Error updating post {post['post_id']}: {e}")
+                logger.info(f"Post {post['post_id']} should be updated to Vent - {next_vent_number:03d}")
             
             next_vent_number += 1
         
@@ -1171,7 +1141,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     
     # Create clean header
-    leaderboard_text = f"*🏆 Christian Vent Leaderboard*\n\n"
+    leaderboard_text = "*🏆 Christian Vent Leaderboard*\n\n"
     
     # Define medal emojis for top 3
     medal_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
@@ -1217,7 +1187,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             leaderboard_text += f"{safe_user_sex} {safe_user_name} • {safe_user_pts} pts {safe_user_aura}\n\n"
     
     # Add subtle footer
-    leaderboard_text += f"_Click names to view profiles • Updated daily_"
+    leaderboard_text += "_Click names to view profiles • Updated daily_"
 
     
     # Create clean buttons
@@ -1581,7 +1551,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton(f"📝 Pending Posts ({pending_count})", callback_data='admin_pending')],
         [InlineKeyboardButton(f"👥 Users: {users_count}", callback_data='admin_users')],
-        [InlineKeyboardButton(f"📊 Statistics", callback_data='admin_stats')],
+        [InlineKeyboardButton("📊 Statistics", callback_data='admin_stats')],
         [InlineKeyboardButton("📢 Send Broadcast", callback_data='admin_broadcast')],  # This is the broadcast button
         [InlineKeyboardButton("🔙 Back to Menu", callback_data='menu')]
     ]
@@ -1657,11 +1627,18 @@ async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "_All users will receive this message._"
     )
     
+    await query.message.reply_text(
+        text,
+        reply_markup=cancel_menu,
+        parse_mode=ParseMode.MARKDOWN
+    )
+    # Edit the original message to show options
     await query.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN
     )
+
 
 async def handle_broadcast_type(update: Update, context: ContextTypes.DEFAULT_TYPE, broadcast_type: str):
     """Handle broadcast type selection"""
@@ -1692,11 +1669,18 @@ async def handle_broadcast_type(update: Update, context: ContextTypes.DEFAULT_TY
     
     keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data='admin_panel')]]
     
+    await query.message.reply_text(
+        prompt,
+        reply_markup=cancel_menu,
+        parse_mode=ParseMode.MARKDOWN
+    )
+    # Edit the original message to show options
     await query.edit_message_text(
         prompt,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN
     )
+
 
 async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show broadcast confirmation with preview"""
@@ -1704,12 +1688,10 @@ async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        message = query.message
         user_id = str(query.from_user.id)
         is_callback = True
     else:
         # Handle case when called from handle_message
-        message = update.message
         user_id = str(update.effective_user.id)
         is_callback = False
     
@@ -2136,7 +2118,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         
         # Create the comments button
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"💬 Add/View Comments (0)", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
+            [InlineKeyboardButton("💬 Add/View Comments (0)", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
         ])
         
         # Check if this is a thread continuation
@@ -2571,7 +2553,7 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
     
     for idx, msg in enumerate(messages, start=1):
         # Calculate message number
-        msg_number = (page - 1) * per_page + idx
+        _ = (page - 1) * per_page + idx  # position index (unused display var)
         
         # Determine read status icon
         status_icon = "🔴" if not msg['is_read'] else "⚪"
@@ -2934,7 +2916,7 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
             timestamp = msg['timestamp'].strftime('%b %d, %H:%M')
         messages_text += f"👤 *{msg['sender_name']}* {msg['sender_sex']} ({timestamp}):\n"
         messages_text += f"{escape_markdown(msg['content'], version=2)}\n\n"
-        messages_text += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+        messages_text += "━━━━━━━━━━━━━━━━━━━━━\n\n"
     
     # Build keyboard with pagination and reply options
     keyboard_buttons = []
@@ -2980,7 +2962,9 @@ async def show_comments_menu(update, context, post_id, page=1):
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post:
         if hasattr(update, 'message') and update.message:
-            await update.message.reply_text("❌ Post not found.", reply_markup=main_menu)
+            viewer_id = str(update.effective_user.id) if update.effective_user else None
+            await update.message.reply_text("❌ Post not found.", reply_markup=get_main_menu(viewer_id) if viewer_id else None)
+
         return
 
     comment_count = count_all_comments(post_id)
@@ -3164,7 +3148,8 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
                 await loading_msg.delete()
             except:
                 pass
-        await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=main_menu)
+        await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=get_main_menu(str(update.effective_user.id)))
+
         return
 
     # No query.answer here - handled by button_handler to avoid double-responding
@@ -3188,6 +3173,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     total_comments = total_comments_row['cnt'] if total_comments_row else 0
     total_pages = (total_comments + per_page - 1) // per_page
 
+    user_id = str(update.effective_user.id)
     if not comments and page == 1:
         if loading_msg:
             try:
@@ -3198,11 +3184,13 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             chat_id=chat_id,
             text="\\_No comments yet.\\_",
             parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=main_menu
+            reply_markup=get_main_menu(user_id)
         )
+
         return
 
-    user_id = str(update.effective_user.id)
+    context._user_id = user_id
+
     context._user_id = user_id
     context._post_author_id = post_author_id
 
@@ -3538,7 +3526,7 @@ async def show_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TY
     text = (
         "🎭 *Select Avatar Emoji*\n\n"
         "Choose an emoji to display next to your name:\n\n"
-        f"_This will appear on your profile, comments, and the leaderboard\\._"
+        "_This will appear on your profile, comments, and the leaderboard\\._"
     )
 
     
@@ -4018,9 +4006,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("📱 Opening Menu...", show_alert=False)
             await query.message.reply_text(
                 "📱 Main Menu\nUse the buttons below:",
-                reply_markup=main_menu,
+                reply_markup=get_main_menu(user_id),
                 parse_mode=ParseMode.MARKDOWN
             )
+
             # Delete the old inline message to keep chat clean
             try:
                 await query.message.delete()
@@ -5184,11 +5173,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
     
-    # Handle cancel command from text
-    if text.lower() in ["❌ cancel", "cancel", "/cancel"]:
-        # Check if user is in input state
-        if user and (user.get('waiting_for_post') or user.get('waiting_for_comment') or 
-                     user.get('awaiting_name') or user.get('waiting_for_private_message') or user.get('awaiting_bio')):
+    # Handle cancel command or main menu buttons while in an input state
+    main_menu_buttons = ["✍️ Share", "👤 Profile", "📚 Posts", "🏆 Top", "⚙️ Settings", "🌐 Open App", "❌ Cancel", "/cancel"]
+    
+    if text in main_menu_buttons or text.lower() == "cancel":
+        # Check if user is in any input/waiting state
+        in_waiting_state = user and (
+            user.get('waiting_for_post') or 
+            user.get('waiting_for_comment') or 
+            user.get('awaiting_name') or 
+            user.get('waiting_for_private_message') or 
+            user.get('awaiting_bio') or
+            context.user_data.get('broadcasting') or
+            context.user_data.get('editing_comment') or
+            context.user_data.get('editing_post')
+        )
+        
+        if in_waiting_state:
             # Reset all waiting states
             await reset_user_waiting_states(
                 user_id, 
@@ -5203,22 +5204,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if key in context.user_data:
                     del context.user_data[key]
             
-            await update.message.reply_text(
-                "❌ Input cancelled.",
-                reply_markup=main_menu
-            )
-        else:
-            # User not in input state, just show main menu
+            if text in ["❌ Cancel", "/cancel"] or text.lower() == "cancel":
+                await update.message.reply_text(
+                    "❌ Input cancelled.",
+                    reply_markup=get_main_menu(user_id)
+                )
+                return
+            else:
+                # User clicked another menu button (like "Share") while in an input state
+                # Fall through to let the normal button handlers process it after state reset
+                pass
+        elif text in ["❌ Cancel", "/cancel"] or text.lower() == "cancel":
             await update.message.reply_text(
                 "You're not currently in an input state.",
-                reply_markup=main_menu
+                reply_markup=get_main_menu(user_id)
             )
-        return
+            return
+
     
     # Rest of your handle_message code...
 
     # NEW: Handle comment editing
-        # NEW: Handle comment editing
+
     if 'editing_comment' in context.user_data:
         comment_id = context.user_data['editing_comment']
         comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
@@ -5235,16 +5242,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await update.message.reply_text(
                 "✅ Comment updated successfully!",
-                reply_markup=main_menu
+                reply_markup=get_main_menu(user_id)
             )
             return
         else:
             del context.user_data['editing_comment']
             await update.message.reply_text(
                 "❌ Error updating comment. Please try again.",
-                reply_markup=main_menu
+                reply_markup=get_main_menu(user_id)
             )
             return
+
 
     # FIX: Handle pending post editing (NEW CODE STARTS HERE)
     if 'editing_post' in context.user_data and context.user_data['editing_post']:
@@ -5272,92 +5280,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del context.user_data['editing_post']
             await update.message.reply_text(
                 "❌ No pending post found. Please start over.",
-                reply_markup=main_menu
+                reply_markup=get_main_menu(user_id)
             )
+
+
             return
     # FIX: Handle pending post editing (NEW CODE ENDS HERE)
 
     # If user doesn't exist, create them
-        # Handle broadcast messages from admin
-        # Handle broadcast messages from admin
-    if user and user['is_admin'] and context.user_data.get('broadcasting'):
-        broadcast_step = context.user_data.get('broadcast_step')
-        broadcast_type = context.user_data.get('broadcast_type', 'text')
-        # Check for cancel button
-        if text == "❌ Cancel" or text.lower() == "cancel":
-            context.user_data.pop('broadcasting', None)
-            context.user_data.pop('broadcast_step', None)
-            context.user_data.pop('broadcast_type', None)
-            context.user_data.pop('broadcast_data', None)
-            await update.message.reply_text("📢 Broadcast cancelled.", reply_markup=main_menu)
-            return
-        
-        if broadcast_step == 'waiting_for_content':
-            # Store broadcast data
-            broadcast_data = {
-                'type': broadcast_type,
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            if update.message.text and broadcast_type == 'text':
-                broadcast_data['content'] = update.message.text
-                context.user_data['broadcast_data'] = broadcast_data
-                # Now call confirm_broadcast with the regular message update
-                await confirm_broadcast(update, context)
-                return
-                
-            elif update.message.photo and broadcast_type == 'photo':
-                photo = update.message.photo[-1]
-                broadcast_data['media_id'] = photo.file_id
-                broadcast_data['caption'] = update.message.caption or ""
-                context.user_data['broadcast_data'] = broadcast_data
-                await confirm_broadcast(update, context)
-                return
-                
-            elif update.message.voice and broadcast_type == 'voice':
-                voice = update.message.voice
-                broadcast_data['media_id'] = voice.file_id
-                broadcast_data['caption'] = update.message.caption or ""
-                context.user_data['broadcast_data'] = broadcast_data
-                await confirm_broadcast(update, context)
-                return
-                
-            elif broadcast_type == 'other':
-                # Handle various media types
-                if update.message.document:
-                    broadcast_data['type'] = 'document'
-                    broadcast_data['media_id'] = update.message.document.file_id
-                    broadcast_data['caption'] = update.message.caption or ""
-                elif update.message.video:
-                    broadcast_data['type'] = 'video'
-                    broadcast_data['media_id'] = update.message.video.file_id
-                    broadcast_data['caption'] = update.message.caption or ""
-                elif update.message.audio:
-                    broadcast_data['type'] = 'audio'
-                    broadcast_data['media_id'] = update.message.audio.file_id
-                    broadcast_data['caption'] = update.message.caption or ""
-                elif update.message.text:
-                    broadcast_data['type'] = 'text'
-                    broadcast_data['content'] = update.message.text
-                else:
-                    await update.message.reply_text(
-                        "❌ Unsupported media type. Please send text, photo, voice, video, or document.",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    return
-                
-                context.user_data['broadcast_data'] = broadcast_data
-                await confirm_broadcast(update, context)
-                return
-                
-            else:
-                # Mismatch between expected and actual content type
-                await update.message.reply_text(
-                    f"❌ Expected {broadcast_type} but received different content. Please try again or cancel.",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                return
-    if not user:
+
         anon = create_anonymous_name(user_id)
         is_admin = str(user_id) == str(ADMIN_ID)
         db_execute(
@@ -5392,16 +5323,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 post_content = update.message.caption or ""
             else:
                 # Handle other media types or show error
-                await update.message.reply_text(
-                    "❌ Unsupported media type. Please send text, photo, or voice message.",
-                    reply_markup=main_menu
-                )
-                # Reset state
-                db_execute(
-                    "UPDATE users SET waiting_for_post = FALSE, selected_category = NULL WHERE user_id = %s",
-                    (user_id,)
-                )
                 return
+
             
             # FIX: Reset user state for BOTH text and media posts
             db_execute(
@@ -5416,7 +5339,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error reading media: {e}")
             await update.message.reply_text(
                 "❌ Error processing your media. Please try again.",
-                reply_markup=main_menu
+                reply_markup=get_main_menu(user_id)
+
             )
             # Reset state on error
             db_execute(
@@ -5467,12 +5391,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     
         # Insert new comment
-        comment_row = db_execute(
-            """INSERT INTO comments 
-            (post_id, parent_comment_id, author_id, content, type, file_id) 
-            VALUES (%s, %s, %s, %s, %s, %s) RETURNING comment_id""",
-            (post_id, parent_comment_id, user_id, content, comment_type, file_id),
-            fetchone=True
+        db_execute(
+            """INSERT INTO comments
+            (post_id, parent_comment_id, author_id, content, type, file_id)
+            VALUES (%s, %s, %s, %s, %s, %s)""",
+            (post_id, parent_comment_id, user_id, content, comment_type, file_id)
         )
         
         # Clear Aura Cache
@@ -5486,7 +5409,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (user_id,)
         )
     
-        await update.message.reply_text("✅ Your comment has been posted!", reply_markup=main_menu)
+        await update.message.reply_text("✅ Your comment has been posted!", reply_markup=get_main_menu(user_id))
+
         
         # Update comment count
         await update_channel_post_comment_count(context, post_id)
@@ -5509,8 +5433,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_blocked:
             await update.message.reply_text(
                 "❌ You cannot send messages to this user. They have blocked you.",
-                reply_markup=main_menu
+                reply_markup=get_main_menu(user_id)
             )
+
+
             db_execute(
                 "UPDATE users SET waiting_for_private_message = FALSE, private_message_target = NULL WHERE user_id = %s",
                 (user_id,)
@@ -5535,8 +5461,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(
             "✅ Your message has been sent!",
-            reply_markup=main_menu
+            reply_markup=get_main_menu(user_id)
         )
+
+
         return
 
     if user and user.get('awaiting_name'):
@@ -5549,8 +5477,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"✅ Name updated to *{new_name}*!", 
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=main_menu
+                reply_markup=cancel_menu
             )
+
+
             await send_updated_profile(user_id, update.message.chat.id, context)
         else:
             await update.message.reply_text("❌ Name cannot be empty or longer than 30 characters. Please try again.")
@@ -5579,7 +5509,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
              return
              
         db_execute("UPDATE users SET bio = %s, awaiting_bio = FALSE WHERE user_id = %s", (text, user_id))
-        await update.message.reply_text("✅ Bio updated successfully!", reply_markup=main_menu)
+        await update.message.reply_text("✅ Bio updated successfully!", reply_markup=get_main_menu(user_id))
+
         await send_updated_profile(user_id, update.message.chat.id, context)
         return 
 
@@ -5610,14 +5541,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
         return
 
-    elif text == "🌐 Web App":
+    elif text == "🌐 Open App":
         await mini_app_command(update, context)
         return
+
 
     # If none of the above, show main menu
     await update.message.reply_text(
         "How can I help you?",
-        reply_markup=main_menu
+        reply_markup=get_main_menu(user_id)
+
     )
 async def handle_private_message_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -6299,7 +6232,255 @@ def mini_app_page():
             100% {{ background-position: -200% 0; }}
         }}
 
+        /* ===== DARK / LIGHT MODE ===== */
+        :root {{
+            --bg-dark: linear-gradient(135deg, #090909 0%, #151515 100%);
+            --bg-light: linear-gradient(135deg, #f0ede6 0%, #faf8f4 100%);
+            --card-dark: linear-gradient(145deg, rgba(30,30,30,0.7), rgba(15,15,15,0.8));
+            --card-light: linear-gradient(145deg, rgba(255,255,255,0.9), rgba(245,243,238,0.95));
+            --text-dark: #f0e8d0;
+            --text-light: #1a1410;
+            --glass-bg-dark: rgba(26,26,26,0.7);
+            --glass-bg-light: rgba(255,255,255,0.75);
+            --glass-border-dark: rgba(255,255,255,0.1);
+            --glass-border-light: rgba(0,0,0,0.08);
+            --nav-bg-dark: rgba(15,15,15,0.85);
+            --nav-bg-light: rgba(255,255,255,0.88);
+        }}
 
+        body.light-mode {{
+            background: var(--bg-light);
+            color: var(--text-light);
+        }}
+        body.light-mode .glass-card {{
+            background: var(--card-light);
+            border-color: rgba(0,0,0,0.07);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+        }}
+        body.light-mode .post-card {{
+            background: rgba(255,255,255,0.85);
+            border-color: rgba(0,0,0,0.07);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.06);
+        }}
+        body.light-mode .bottom-nav {{
+            background: var(--nav-bg-light);
+            border-color: rgba(var(--primary-rgb),0.15);
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
+        }}
+        body.light-mode .nav-item {{
+            color: #444;
+        }}
+        body.light-mode .vent-textarea,
+        body.light-mode .category-select {{
+            background: rgba(245,243,238,0.9);
+            color: var(--text-light);
+            border-color: rgba(var(--primary-rgb),0.25);
+        }}
+        body.light-mode .identity-badge {{
+            color: rgba(0,0,0,0.5);
+        }}
+        body.light-mode .app-footer {{
+            color: rgba(0,0,0,0.4);
+        }}
+        body.light-mode .skeleton {{
+            background: linear-gradient(90deg, #e8e4dc 25%, #f0ede6 50%, #e8e4dc 75%);
+            background-size: 200% 100%;
+        }}
+        body.light-mode .comment-thread-line {{
+            background: rgba(var(--primary-rgb), 0.25);
+        }}
+
+        /* ===== THEME TOGGLE BUTTON ===== */
+        .theme-toggle {{
+            position: fixed;
+            top: 18px;
+            right: 18px;
+            z-index: 2000;
+            background: rgba(var(--primary-rgb), 0.12);
+            border: 1px solid rgba(var(--primary-rgb), 0.25);
+            color: var(--primary);
+            border-radius: 50%;
+            width: 42px;
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            cursor: pointer;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }}
+        .theme-toggle:hover {{
+            transform: scale(1.1) rotate(15deg);
+            background: rgba(var(--primary-rgb), 0.25);
+        }}
+
+        /* ===== THREADED COMMENTS ===== */
+        .comment-thread {{
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }}
+        .comment-item {{
+            display: flex;
+            gap: 10px;
+            position: relative;
+        }}
+        .comment-item.is-reply {{
+            margin-left: 42px;
+        }}
+        /* Vertical thread line */
+        .comment-item.is-reply::before {{
+            content: '';
+            position: absolute;
+            left: -22px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: rgba(var(--primary-rgb), 0.2);
+            border-radius: 2px;
+        }}
+        /* Horizontal connector */
+        .comment-item.is-reply::after {{
+            content: '';
+            position: absolute;
+            left: -22px;
+            top: 18px;
+            width: 16px;
+            height: 2px;
+            background: rgba(var(--primary-rgb), 0.2);
+            border-radius: 2px;
+        }}
+        .comment-body {{
+            flex: 1;
+            background: rgba(20,20,20,0.45);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 16px;
+            padding: 12px 14px;
+            transition: border-color 0.3s ease;
+        }}
+        body.light-mode .comment-body {{
+            background: rgba(255,255,255,0.85);
+            border-color: rgba(0,0,0,0.06);
+        }}
+        .comment-body:hover {{
+            border-color: rgba(var(--primary-rgb),0.2);
+        }}
+        .comment-avatar {{
+            width: 34px;
+            height: 34px;
+            background: rgba(var(--primary-rgb), 0.1);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.05rem;
+            border: 1px solid rgba(var(--primary-rgb),0.15);
+            flex-shrink: 0;
+            margin-top: 2px;
+        }}
+        .comment-header {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }}
+        .comment-author {{
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--primary);
+        }}
+        .comment-time {{
+            font-size: 0.68rem;
+            opacity: 0.45;
+        }}
+        .comment-text {{
+            font-size: 0.92rem;
+            font-weight: 300;
+            line-height: 1.55;
+        }}
+        .comment-reply-btn {{
+            margin-top: 8px;
+            background: none;
+            border: none;
+            color: rgba(var(--primary-rgb), 0.7);
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            padding: 0;
+            transition: color 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            letter-spacing: 0.3px;
+        }}
+        .comment-reply-btn:hover {{ color: var(--primary); }}
+
+        /* Inline reply compose box */
+        .inline-reply-box {{
+            margin-top: 10px;
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+        }}
+        .inline-reply-box.visible {{ display: flex; }}
+        .inline-reply-textarea {{
+            width: 100%;
+            background: rgba(15,15,15,0.5);
+            border: 1px solid rgba(var(--primary-rgb),0.2);
+            color: var(--text);
+            border-radius: 12px;
+            padding: 10px 13px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.88rem;
+            resize: none;
+            min-height: 70px;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }}
+        body.light-mode .inline-reply-textarea {{
+            background: rgba(245,243,238,0.9);
+            color: var(--text-light);
+        }}
+        .inline-reply-textarea:focus {{
+            border-color: var(--primary);
+        }}
+        .inline-reply-actions {{
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }}
+        .reply-cancel-btn {{
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.5);
+            padding: 7px 14px;
+            border-radius: 10px;
+            font-size: 0.78rem;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.2s ease;
+        }}
+        .reply-cancel-btn:hover {{ opacity: 0.8; }}
+        .reply-send-btn {{
+            background: linear-gradient(135deg, var(--primary), #d4af37);
+            border: none;
+            color: #000;
+            padding: 7px 18px;
+            border-radius: 10px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.2s ease;
+        }}
+        .reply-send-btn:hover {{ transform: translateY(-1px); }}
         
     </style>
 
@@ -6309,6 +6490,9 @@ def mini_app_page():
     <canvas id="particleCanvas"></canvas>
 
     <div class="app-container" id="appContainer">
+        <!-- Theme Toggle Button -->
+        <button class="theme-toggle" id="themeToggle" title="Toggle theme" aria-label="Toggle dark/light mode">🌙</button>
+
         <!-- Header -->
         <header class="app-header">
             <div class="brand">
@@ -6481,7 +6665,28 @@ def mini_app_page():
                 this.apiBaseUrl = window.location.origin;
                 this.isAdmin = false;
                 this.initParticles();
+                this.initTheme();
                 this.init();
+            }}
+
+            // ===== DARK / LIGHT THEME =====
+            initTheme() {{
+                const saved = localStorage.getItem('cv_theme') || 'dark';
+                this.applyTheme(saved);
+                const btn = document.getElementById('themeToggle');
+                if (btn) btn.addEventListener('click', () => this.toggleTheme());
+            }}
+
+            applyTheme(theme) {{
+                document.body.classList.toggle('light-mode', theme === 'light');
+                const btn = document.getElementById('themeToggle');
+                if (btn) btn.textContent = theme === 'light' ? '🌙' : '☀️';
+                localStorage.setItem('cv_theme', theme);
+            }}
+
+            toggleTheme() {{
+                const isLight = document.body.classList.contains('light-mode');
+                this.applyTheme(isLight ? 'dark' : 'light');
             }}
             
             // ----- Particle Background -----
@@ -6770,42 +6975,139 @@ def mini_app_page():
                 }}
             }}
             
+            // ===== THREADED COMMENT RENDERING =====
+            buildCommentTree(comments) {{
+                // Build a map of id -> comment
+                const map = {{}};
+                const roots = [];
+                comments.forEach(c => {{
+                    map[c.id] = {{ ...c, children: [] }};
+                }});
+                comments.forEach(c => {{
+                    if (c.parent_id && map[c.parent_id]) {{
+                        map[c.parent_id].children.push(map[c.id]);
+                    }} else {{
+                        roots.push(map[c.id]);
+                    }}
+                }});
+                return roots;
+            }}
+
+            renderCommentNode(comment, depth = 0) {{
+                const avatar = comment.author.avatar || (comment.author.sex === 'Female' ? '👩' : '👨');
+                const isReply = depth > 0;
+                const replyClass = isReply ? 'is-reply' : '';
+                // Recursively render children
+                const childrenHtml = comment.children
+                    .map(child => this.renderCommentNode(child, depth + 1))
+                    .join('');
+
+                return `
+                    <div class="comment-item ${{replyClass}}" id="comment-${{comment.id}}">
+                        <div class="comment-avatar">${{avatar}}</div>
+                        <div class="comment-body">
+                            <div class="comment-header">
+                                <div class="comment-author">
+                                    <span>${{comment.author.name}}</span>
+                                    <span style="font-size:0.8rem">${{comment.author.aura}}</span>
+                                </div>
+                                <span class="comment-time">${{comment.time_ago}}</span>
+                            </div>
+                            <div class="comment-text">${{this.escapeHtml(comment.content)}}</div>
+                            <button class="comment-reply-btn"
+                                onclick="app.toggleInlineReply(${{comment.id}})"
+                                aria-label="Reply to comment">
+                                ↩ Reply
+                            </button>
+                            <!-- Inline reply compose box -->
+                            <div class="inline-reply-box" id="reply-box-${{comment.id}}">
+                                <textarea
+                                    class="inline-reply-textarea"
+                                    id="reply-text-${{comment.id}}"
+                                    placeholder="Write your reply..."
+                                    rows="2"
+                                ></textarea>
+                                <div class="inline-reply-actions">
+                                    <button class="reply-cancel-btn"
+                                        onclick="app.toggleInlineReply(${{comment.id}})">
+                                        Cancel
+                                    </button>
+                                    <button class="reply-send-btn"
+                                        onclick="app.submitReply(${{comment.id}})">
+                                        Send Reply
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    ${{childrenHtml}}
+                `;
+            }}
+
+            toggleInlineReply(commentId) {{
+                const box = document.getElementById(`reply-box-${{commentId}}`);
+                if (!box) return;
+                const isVisible = box.classList.contains('visible');
+                // Close all other open boxes first
+                document.querySelectorAll('.inline-reply-box.visible').forEach(b => b.classList.remove('visible'));
+                if (!isVisible) {{
+                    box.classList.add('visible');
+                    const ta = document.getElementById(`reply-text-${{commentId}}`);
+                    if (ta) setTimeout(() => ta.focus(), 50);
+                }}
+            }}
+
+            async submitReply(parentCommentId) {{
+                const ta = document.getElementById(`reply-text-${{parentCommentId}}`);
+                if (!ta) return;
+                const content = ta.value.trim();
+                if (!content) {{ this.showMessage('Please write something first.', 'error'); return; }}
+
+                const sendBtn = ta.parentElement.querySelector('.reply-send-btn');
+                if (sendBtn) {{ sendBtn.textContent = 'Sending...'; sendBtn.disabled = true; }}
+
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/post/${{this.currentPostId}}/comment`, {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{
+                            user_id: this.userId,
+                            content: content,
+                            parent_comment_id: parentCommentId
+                        }})
+                    }});
+                    const data = await response.json();
+                    if (data.success) {{
+                        ta.value = '';
+                        this.toggleInlineReply(parentCommentId);
+                        this.showMessage('Reply posted!', 'success');
+                        this.loadPostComments(this.currentPostId);
+                    }} else {{
+                        this.showMessage(data.error || 'Failed to post reply.', 'error');
+                    }}
+                }} catch(e) {{
+                    this.showMessage('Network error.', 'error');
+                }} finally {{
+                    if (sendBtn) {{ sendBtn.textContent = 'Send Reply'; sendBtn.disabled = false; }}
+                }}
+            }}
+
             async loadPostComments(postId) {{
                 const container = document.getElementById('detailCommentsContainer');
                 container.innerHTML = '<div class="loading">Sensing energy...</div>';
-                
+
                 try {{
                     const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/post/${{postId}}/comments`);
                     const data = await response.json();
-                    
+
                     if (data.success) {{
                         const comments = data.data;
                         if (comments.length === 0) {{
-                            container.innerHTML = '<p style="text-align: center; opacity: 0.5; font-size: 0.9rem; padding: 20px;">No responses yet. Offer your prayer.</p>';
+                            container.innerHTML = '<p style="text-align:center;opacity:0.5;font-size:0.9rem;padding:20px;">No responses yet. Offer your prayer.</p>';
                             return;
                         }}
-                        
-                        container.innerHTML = comments.map(comment => `
-                            <div class="glass-card" style="padding: 15px; margin-bottom: 0; background: rgba(20,20,20,0.5); border-radius: 15px;">
-                                <div style="display: flex; gap: 12px;">
-                                    <div class="author-icon" style="width: 35px; height: 35px; font-size: 1.1rem; flex-shrink: 0;">
-                                        ${{comment.author.avatar || (comment.author.sex === 'Female' ? '👩' : '👨')}}
-                                    </div>
-                                    <div style="flex: 1;">
-                                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px;">
-                                            <div style="display: flex; align-items: center; gap: 6px;">
-                                                <span style="font-size: 0.85rem; font-weight: 600; font-family: 'Oswald'; color: var(--primary); text-transform: uppercase;">${{comment.author.name}}</span>
-                                                <span style="font-size: 0.8rem;">${{comment.author.aura}}</span>
-                                            </div>
-                                            <span style="font-size: 0.7rem; opacity: 0.5;">${{comment.time_ago}}</span>
-                                        </div>
-                                        <div style="font-size: 0.95rem; font-weight: 300; line-height: 1.5;">
-                                            ${{this.escapeHtml(comment.content)}}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        `).join('');
+                        const tree = this.buildCommentTree(comments);
+                        container.innerHTML = `<div class="comment-thread">${{tree.map(c => this.renderCommentNode(c, 0)).join('')}}</div>`;
                     }} else {{
                         container.innerHTML = '<div class="message error-message">Failed to load responses.</div>';
                     }}
@@ -7308,18 +7610,24 @@ def mini_app_get_single_post(post_id):
 
 @flask_app.route('/api/mini-app/post/<int:post_id>/comments', methods=['GET'])
 def mini_app_get_post_comments(post_id):
-    """API endpoint for fetching a post's comments"""
+    """API endpoint for fetching a post's comments with threading support"""
     try:
         comments = db_fetch_all('''
             SELECT 
-                c.comment_id, c.content, c.timestamp as time_ago,
-                u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name
+                c.comment_id,
+                c.parent_comment_id,
+                c.content,
+                c.timestamp as time_ago,
+                u.user_id as author_id,
+                u.sex as author_sex,
+                u.avatar_emoji as author_avatar,
+                u.anonymous_name as author_name
             FROM comments c
             JOIN users u ON c.author_id = u.user_id
             WHERE c.post_id = %s
             ORDER BY c.timestamp ASC
         ''', (post_id,))
-        
+
         formatted_comments = []
         now = datetime.now()
         for c in comments:
@@ -7327,7 +7635,7 @@ def mini_app_get_post_comments(post_id):
                 c_time = datetime.strptime(c['time_ago'], '%Y-%m-%d %H:%M:%S')
             else:
                 c_time = c['time_ago']
-            
+
             tdiff = now - c_time
             if tdiff.days > 0:
                 calc_time = f"{tdiff.days}d ago"
@@ -7337,11 +7645,12 @@ def mini_app_get_post_comments(post_id):
                 calc_time = f"{tdiff.seconds // 60}m ago"
             else:
                 calc_time = "Just now"
-                
+
             rating = calculate_user_rating(c['author_id'])
-            
+
             formatted_comments.append({
                 'id': c['comment_id'],
+                'parent_id': c['parent_comment_id'] or 0,
                 'content': c['content'],
                 'time_ago': calc_time,
                 'author': {
@@ -7351,7 +7660,7 @@ def mini_app_get_post_comments(post_id):
                     'aura': format_aura(rating)
                 }
             })
-            
+
         return jsonify({'success': True, 'data': formatted_comments})
     except Exception as e:
         logger.error(f"Error fetching comments for {post_id}: {e}")
@@ -7359,29 +7668,30 @@ def mini_app_get_post_comments(post_id):
 
 @flask_app.route('/api/mini-app/post/<int:post_id>/comment', methods=['POST'])
 def mini_app_submit_comment(post_id):
-    """API endpoint for appending a comment natively"""
+    """API endpoint for appending a comment natively, supports parent_comment_id for threading"""
     try:
         data = request.get_json()
         user_id = data.get('user_id')
         content = data.get('content', '').strip()
-        
+        parent_comment_id = data.get('parent_comment_id', 0) or 0
+
         if not user_id:
             return jsonify({'success': False, 'error': 'Not authenticated'}), 401
         if not content:
             return jsonify({'success': False, 'error': 'Empty response'}), 400
-            
+
         db_execute(
-            "INSERT INTO comments (post_id, author_id, content) VALUES (%s, %s, %s)",
-            (post_id, user_id, content)
+            "INSERT INTO comments (post_id, author_id, content, parent_comment_id) VALUES (%s, %s, %s, %s)",
+            (post_id, user_id, content, parent_comment_id)
         )
         db_execute(
             "UPDATE posts SET comment_count = COALESCE(comment_count, 0) + 1 WHERE post_id = %s",
             (post_id,)
         )
-        
+
         # Update Channel Message Inline Keyboard immediately
         update_channel_post_comment_count_sync(post_id)
-        
+
         return jsonify({'success': True, 'message': 'Reply posted successfully!'})
     except Exception as e:
         logger.error(f"Failed to post native comment: {e}")
@@ -7569,20 +7879,7 @@ def mini_app_admin_reject_post():
         logger.error(f"Error in mini-app reject post: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 if __name__ == "__main__": 
-    # Initialize database first
-    try:
-        init_db()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize database: {e}")
-        exit(1)
-    
-    # Start Flask server in a separate thread for Render
-    port = int(os.environ.get('PORT', 5000))
-    threading.Thread(
-        target=lambda: flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False),
-        daemon=True
-    ).start()
-    
-    # Start Telegram bot in main thread
+    # The main() function already handles initializing the DB, 
+    # starting the Flask server, and running the bot polling.
     main()
+
