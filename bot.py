@@ -3087,18 +3087,28 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             return msg.message_id
             
         elif comment_type == 'sticker' and file_id:
+            # Send the sticker
             msg = await context.bot.send_sticker(
                 chat_id=chat_id,
                 sticker=file_id,
                 reply_to_message_id=reply_to_message_id
             )
+            # Then send the author text + buttons as a separate message, replying to the sticker
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=author_text,
+                reply_markup=kb,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_to_message_id=msg.message_id
+            )
             return msg.message_id
             
         else:
-            # Fallback for unknown types
+            # Fallback: media not supported or missing file_id
+            fallback_text = f"📎 *[Media comment]*\n{content}\n\n{author_text}"
             msg = await context.bot.send_message(
                 chat_id=chat_id,
-                text=message_text,
+                text=fallback_text,
                 reply_markup=kb,
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_to_message_id=reply_to_message_id,
@@ -3225,14 +3235,15 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         
         if str(commenter_id) == str(post_author_id):
             author_text = (
-                f"{display_sex} "
-                f"✅ _[vent author]({escape_markdown(profile_link, version=2)})_ "
-                f"{aura_text}"
-            ).strip()
+                author_text = (
+                    f"{display_sex} "
+                    f"_[{escape_markdown(display_name, version=2)}]({profile_link})_ "
+                    f"{aura_text}"
+                ).strip()
         else:
             author_text = (
                 f"{display_sex} "
-                f"_[{escape_markdown(display_name, version=2)}]({escape_markdown(profile_link, version=2)})_ "
+                f"_[{escape_markdown(display_name, version=2)}]({profile_link})_ "
                 f"{aura_text}"
             ).strip()
 
