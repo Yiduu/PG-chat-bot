@@ -3231,7 +3231,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         else:
             author_text = (
                 f"{display_sex} "
-                f"_[{escape_markdown(display_name, version=2)}]({escape_markdown(profile_link, version=2)})_ "
+                f"_[{escape_markdown(display_name, version=2)}](profile_link)})_ "
                 f"{aura_text}"
             ).strip()
 
