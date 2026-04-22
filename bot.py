@@ -3052,7 +3052,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
     try:
         escaped_content = escape_markdown_v2(content) if content else ""
         message_text = f"{escaped_content}\n\n{author_text}"
-        
+
         if comment_type == 'text':
             msg = await context.bot.send_message(
                 chat_id=chat_id,
@@ -3063,7 +3063,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 disable_web_page_preview=True
             )
             return msg.message_id
-            
+
         elif comment_type == 'voice' and file_id:
             msg = await context.bot.send_voice(
                 chat_id=chat_id,
@@ -3074,7 +3074,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 reply_to_message_id=reply_to_message_id
             )
             return msg.message_id
-            
+
         elif comment_type == 'gif' and file_id:
             msg = await context.bot.send_animation(
                 chat_id=chat_id,
@@ -3085,7 +3085,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 reply_to_message_id=reply_to_message_id
             )
             return msg.message_id
-            
+
         elif comment_type == 'sticker' and file_id:
             # Send the sticker
             msg = await context.bot.send_sticker(
@@ -3102,10 +3102,11 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 reply_to_message_id=msg.message_id
             )
             return msg.message_id
-            
+
         else:
             # Fallback: media not supported or missing file_id
-            fallback_text = f"📎 *[Media comment]*\n{content}\n\n{author_text}"
+            escaped_content = escape_markdown_v2(content) if content else ""
+            fallback_text = f"📎 *[Media comment]*\n{escaped_content}\n\n{author_text}"
             msg = await context.bot.send_message(
                 chat_id=chat_id,
                 text=fallback_text,
@@ -3115,12 +3116,13 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 disable_web_page_preview=True
             )
             return msg.message_id
-            
+
     except Exception as e:
         logger.error(f"Error sending comment {comment_id}: {e}")
         # Fallback to text without markdown on error
         try:
-            message_text = f"[Media] {content}\n\n{author_text}"
+            escaped_content = escape_markdown_v2(content) if content else ""
+            message_text = f"📎 *[Media comment]*\n{escaped_content}\n\n{author_text}"
             msg = await context.bot.send_message(
                 chat_id=chat_id,
                 text=message_text,
@@ -3228,23 +3230,14 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         is_admin = commenter.get('is_admin', False)
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}_{post_id}"
 
-
-
         # Format author text
         aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not is_admin else ""
-        
-        if str(commenter_id) == str(post_author_id):
-                author_text = (
-                    f"{display_sex} "
-                    f"_[{escape_markdown(display_name, version=2)}]({profile_link})_ "
-                    f"{aura_text}"
-                ).strip()
-        else:
-            author_text = (
-                f"{display_sex} "
-                f"_[{escape_markdown(display_name, version=2)}]({profile_link})_ "
-                f"{aura_text}"
-            ).strip()
+
+        author_text = (
+            f"{display_sex} "
+            f"_[{escape_markdown_v2(display_name)}]({profile_link})_ "
+            f"{aura_text}"
+        ).strip()
 
         # LINKING LOGIC: If it's a reply, try to link to the immediate parent's message
         reply_to_id = None
@@ -3298,7 +3291,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     else:
         reply_author_text = (
             f"{reply_display_sex} "
-            f"_[{escape_markdown(reply_display_name, version=2)}]({reply_profile_link})_ "
+            f"_[{escape_markdown_v2(reply_display_name)}]({reply_profile_link})_ "
             f"{aura_text}"
         ).strip()
 
