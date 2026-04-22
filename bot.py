@@ -3231,7 +3231,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}_{post_id}"
 
         # Format author text
-        aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not is_admin else ""
+        aura_text = f"⚡ _Aura_ {escape_markdown_v2(str(rating))} {format_aura(rating)}" if not is_admin else ""
 
         author_text = (
             f"{display_sex} "
@@ -3277,7 +3277,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     
     reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply_user_id}_{post_id}"
     is_admin = reply_user.get('is_admin', False)
-    aura_text = f"⚡ _Aura_ {rating_reply} {format_aura(rating_reply)}" if not is_admin else ""
+    aura_text = f"⚡ _Aura_ {escape_markdown_v2(str(rating_reply))} {format_aura(rating_reply)}" if not is_admin else ""
 
 
     
