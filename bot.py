@@ -3235,7 +3235,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
         author_text = (
             f"{display_sex} "
-            f"_[{escape_markdown_v2(display_name)}]({profile_link})_ "
+            f"[{escape_markdown_v2(display_name)}]({profile_link}) "
             f"{aura_text}"
         ).strip()
 
@@ -3291,7 +3291,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     else:
         reply_author_text = (
             f"{reply_display_sex} "
-            f"_[{escape_markdown_v2(reply_display_name)}]({reply_profile_link})_ "
+            f"[{escape_markdown_v2(reply_display_name)}]({reply_profile_link}) "
             f"{aura_text}"
         ).strip()
 
