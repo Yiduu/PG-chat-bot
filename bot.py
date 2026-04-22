@@ -1028,13 +1028,11 @@ def get_cancel_reply_keyboard():
 def get_display_name(user_data):
     if not user_data:
         return "Anonymous"
-
-    # Only show avatar if user explicitly set it (not None, not empty, not default)
-    emoji = user_data.get('avatar_emoji')
+    
+    emoji = user_data.get('avatar_emoji') or ""
     name = user_data.get('anonymous_name') or "Anonymous"
-
-    # Only show emoji if it's not None and not empty string
-    if emoji is not None and str(emoji).strip() != "":
+    
+    if emoji:
         return f"{emoji} {name}"
     return name
 
@@ -2193,14 +2191,14 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         # CRITICAL FIX: Update the admin's original message to remove Approve/Reject buttons
         # =============================================
         try:
-            # Edit the original admin notification message to show it's approved (using HTML)
+            # Edit the original admin notification message to show it's approved
             await query.edit_message_text(
-                f"✅ <b>Post Approved and Published!</b>\n\n"
-                f"<b>Vent Number:</b> {vent_display}\n"
-                f"<b>Category:</b> {post['category']}\n"
-                f"<b>Published to channel:</b> ✅\n\n"
-                f"<b>Content Preview:</b>\n{post['content'][:150]}...",
-                parse_mode=ParseMode.HTML
+                f"✅ **Post Approved and Published!**\n\n"
+                f"**Vent Number:** {vent_display}\n"
+                f"**Category:** {post['category']}\n"
+                f"**Published to channel:** ✅\n\n"
+                f"**Content Preview:**\n{post['content'][:150]}...",
+                parse_mode=ParseMode.MARKDOWN
             )
             
             # Alternative: You can also delete the admin notification message entirely
@@ -2274,14 +2272,13 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
         # =============================================
         try:
             # Edit the original admin notification message
-            # Edit the original admin notification message (using HTML)
             await query.edit_message_text(
-                f"❌ <b>Post Rejected</b>\n\n"
-                f"<b>Post ID:</b> #{post_id}\n"
-                f"<b>Category:</b> {post['category']}\n"
-                f"<b>Action:</b> Deleted from database\n\n"
-                f"<b>Content Preview:</b>\n{post['content'][:100]}...",
-                parse_mode=ParseMode.HTML
+                f"❌ **Post Rejected**\n\n"
+                f"**Post ID:** #{post_id}\n"
+                f"**Category:** {post['category']}\n"
+                f"**Action:** Deleted from database\n\n"
+                f"**Content Preview:**\n{post['content'][:100]}...",
+                parse_mode=ParseMode.MARKDOWN
             )
             
         except BadRequest:
@@ -3054,7 +3051,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
     try:
         escaped_content = escape_markdown_v2(content) if content else ""
         message_text = f"{escaped_content}\n\n{author_text}"
-
+        
         if comment_type == 'text':
             msg = await context.bot.send_message(
                 chat_id=chat_id,
@@ -3065,7 +3062,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 disable_web_page_preview=True
             )
             return msg.message_id
-
+            
         elif comment_type == 'voice' and file_id:
             msg = await context.bot.send_voice(
                 chat_id=chat_id,
@@ -3076,7 +3073,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 reply_to_message_id=reply_to_message_id
             )
             return msg.message_id
-
+            
         elif comment_type == 'gif' and file_id:
             msg = await context.bot.send_animation(
                 chat_id=chat_id,
@@ -3087,44 +3084,32 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 reply_to_message_id=reply_to_message_id
             )
             return msg.message_id
-
+            
         elif comment_type == 'sticker' and file_id:
-            # Send the sticker
             msg = await context.bot.send_sticker(
                 chat_id=chat_id,
                 sticker=file_id,
                 reply_to_message_id=reply_to_message_id
             )
-            # Then send the author text + buttons as a separate message, replying to the sticker
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=author_text,
-                reply_markup=kb,
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_to_message_id=msg.message_id
-            )
             return msg.message_id
-
+            
         else:
-            # Fallback: media not supported or missing file_id
-            escaped_content = escape_markdown_v2(content) if content else ""
-            fallback_text = f"📎 *[Media comment]*\n{escaped_content}\n\n{author_text}"
+            # Fallback for unknown types
             msg = await context.bot.send_message(
                 chat_id=chat_id,
-                text=fallback_text,
+                text=message_text,
                 reply_markup=kb,
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_to_message_id=reply_to_message_id,
                 disable_web_page_preview=True
             )
             return msg.message_id
-
+            
     except Exception as e:
         logger.error(f"Error sending comment {comment_id}: {e}")
         # Fallback to text without markdown on error
         try:
-            escaped_content = escape_markdown_v2(content) if content else ""
-            message_text = f"📎 *[Media comment]*\n{escaped_content}\n\n{author_text}"
+            message_text = f"[Media] {content}\n\n{author_text}"
             msg = await context.bot.send_message(
                 chat_id=chat_id,
                 text=message_text,
@@ -3232,14 +3217,23 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         is_admin = commenter.get('is_admin', False)
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}_{post_id}"
 
-        # Format author text
-        aura_text = f"⚡ _Aura_ {escape_markdown_v2(str(rating))} {format_aura(rating)}" if not is_admin else ""
 
-        author_text = (
-            f"{display_sex} "
-            f"[{escape_markdown_v2(display_name)}]({profile_link}) "
-            f"{aura_text}"
-        ).strip()
+
+        # Format author text
+        aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not is_admin else ""
+        
+        if str(commenter_id) == str(post_author_id):
+            author_text = (
+                f"{display_sex} "
+                f"✅ _[vent author]({escape_markdown(profile_link, version=2)})_ "
+                f"{aura_text}"
+            ).strip()
+        else:
+            author_text = (
+                f"{display_sex} "
+                f"_[{escape_markdown(display_name, version=2)}]({escape_markdown(profile_link, version=2)})_ "
+                f"{aura_text}"
+            ).strip()
 
         # LINKING LOGIC: If it's a reply, try to link to the immediate parent's message
         reply_to_id = None
@@ -3279,7 +3273,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     
     reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply_user_id}_{post_id}"
     is_admin = reply_user.get('is_admin', False)
-    aura_text = f"⚡ _Aura_ {escape_markdown_v2(str(rating_reply))} {format_aura(rating_reply)}" if not is_admin else ""
+    aura_text = f"⚡ _Aura_ {rating_reply} {format_aura(rating_reply)}" if not is_admin else ""
 
 
     
@@ -3293,7 +3287,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     else:
         reply_author_text = (
             f"{reply_display_sex} "
-            f"[{escape_markdown_v2(reply_display_name)}]({reply_profile_link}) "
+            f"_[{escape_markdown(reply_display_name, version=2)}]({reply_profile_link})_ "
             f"{aura_text}"
         ).strip()
 
