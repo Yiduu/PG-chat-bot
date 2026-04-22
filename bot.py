@@ -1026,8 +1026,17 @@ def get_cancel_reply_keyboard():
         one_time_keyboard=True,  # Set to True so it disappears after use
     )
 def get_display_name(user_data):
-    # Always return 'Vent Author' for vent posts to preserve privacy
-    return "🛡 Vent Author"
+    if not user_data:
+        return "Anonymous"
+
+    # Only show avatar if user explicitly set it (not None, not empty, not default)
+    emoji = user_data.get('avatar_emoji')
+    name = user_data.get('anonymous_name') or "Anonymous"
+
+    # Only show emoji if it's not None and not empty string
+    if emoji is not None and str(emoji).strip() != "":
+        return f"{emoji} {name}"
+    return name
 
 def get_display_sex(user_data):
     if user_data and user_data.get('sex'):
@@ -2378,7 +2387,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Contextual Anonymity Check
                 display_name = get_display_name(user_data)
-                # Always show 'Vent Author' if viewing profile via a post and the target is the author (not self)
                 if post_id:
                     post_info = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
                     if post_info and str(post_info['author_id']) == str(target_user_id) and str(target_user_id) != str(user_id):
