@@ -3234,7 +3234,6 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not is_admin else ""
         
         if str(commenter_id) == str(post_author_id):
-            author_text = (
                 author_text = (
                     f"{display_sex} "
                     f"_[{escape_markdown(display_name, version=2)}]({profile_link})_ "
