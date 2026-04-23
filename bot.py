@@ -1410,7 +1410,6 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
             return
         
         author_id = post['author_id']
-        # Don't notify if the commenter is the same as the post author
         if author_id == commenter_id:
             return
         
@@ -1423,20 +1422,22 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
         
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
         
-        safe_commenter_name = escape_markdown(commenter_name, version=2)
-        safe_post_preview = escape_markdown(post_preview, version=2)
+        # Use HTML parsing – no need to escape markdown special characters
+        import html
+        safe_commenter_name = html.escape(commenter_name)
+        safe_post_preview = html.escape(post_preview)
         
         notification_text = (
-            f"💬 *New comment on your vent!*\n\n"
+            f"💬 <b>New comment on your vent!</b>\n\n"
             f"👤 {safe_commenter_name} commented:\n\n"
-            f"📝 *Your vent:* {safe_post_preview}\n\n"
-            f"[👁 View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+            f"📝 <b>Your vent:</b> {safe_post_preview}\n\n"
+            f"🔗 <a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>"
         )
         
         await context.bot.send_message(
             chat_id=author_id,
             text=notification_text,
-            parse_mode=ParseMode.MARKDOWN_V2
+            parse_mode=ParseMode.HTML
         )
     except Exception as e:
         logger.error(f"Error notifying vent author: {e}")
