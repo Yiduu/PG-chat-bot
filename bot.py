@@ -1,3 +1,47 @@
+# --- Notify vent author of new top-level comment ---
+async def notify_vent_author_of_comment(context, post_id, commenter_id):
+    try:
+        # Fetch post and author
+        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+        if not post:
+            return
+        author_id = post['author_id']
+        post_content = post['content']
+
+        # Do not notify self-comment
+        if commenter_id == author_id:
+            return
+
+        author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (author_id,))
+        if not author or not author['notifications_enabled']:
+            return
+
+        commenter = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (commenter_id,))
+        if not commenter:
+            return
+        anon_name = commenter.get('anonymous_name') or 'Anonymous'
+
+        from telegram.helpers import escape_markdown
+        from telegram.constants import ParseMode
+        vent_preview = post_content[:50] + ("..." if len(post_content) > 50 else "")
+        safe_anon_name = escape_markdown(anon_name, version=2)
+        safe_vent_preview = escape_markdown(vent_preview, version=2)
+        from os import getenv
+        BOT_USERNAME = getenv('BOT_USERNAME') or context.bot.username
+        text = (
+            f"💬 *New comment on your vent!*\n\n"
+            f"👤 {safe_anon_name}\n"
+            f"📝 _\"{safe_vent_preview}\"_\n\n"
+            f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+        )
+        await context.bot.send_message(
+            chat_id=author_id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        logger.error(f"Error sending vent author notification: {e}")
 import jwt
 import requests
 import os
@@ -5415,6 +5459,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Update comment count
         await update_channel_post_comment_count(context, post_id)
         
+        # Notify vent author if top-level comment
+        if parent_comment_id == 0:
+            await notify_vent_author_of_comment(context, post_id, user_id)
+
         # Notify parent comment author if this is a reply
         if parent_comment_id != 0:
             await notify_user_of_reply(context, post_id, parent_comment_id, user_id)
