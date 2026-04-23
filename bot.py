@@ -1402,7 +1402,44 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("❌ Error showing confirmation. Please try again.")
         elif update.callback_query:
             await update.callback_query.message.reply_text("❌ Error showing confirmation. Please try again.")
-
+async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post_id: int, commenter_id: str):
+    """Notify the post author when a new top‑level comment is added."""
+    try:
+        post = db_fetch_one("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,))
+        if not post:
+            return
+        
+        author_id = post['author_id']
+        # Don't notify if the commenter is the same as the post author
+        if author_id == commenter_id:
+            return
+        
+        author = db_fetch_one("SELECT user_id, notifications_enabled FROM users WHERE user_id = %s", (author_id,))
+        if not author or not author['notifications_enabled']:
+            return
+        
+        commenter = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (commenter_id,))
+        commenter_name = get_display_name(commenter)
+        
+        post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
+        
+        safe_commenter_name = escape_markdown(commenter_name, version=2)
+        safe_post_preview = escape_markdown(post_preview, version=2)
+        
+        notification_text = (
+            f"💬 *New comment on your vent!*\n\n"
+            f"👤 {safe_commenter_name} commented:\n\n"
+            f"📝 *Your vent:* {safe_post_preview}\n\n"
+            f"[👁 View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+        )
+        
+        await context.bot.send_message(
+            chat_id=author_id,
+            text=notification_text,
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+    except Exception as e:
+        logger.error(f"Error notifying vent author: {e}")
 async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str):
     try:
         comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
@@ -5414,6 +5451,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Update comment count
         await update_channel_post_comment_count(context, post_id)
+        
+        # Notify vent author if this is a top‑level comment
+        if parent_comment_id == 0:
+            await notify_vent_author_of_comment(context, post_id, user_id)
         
         # Notify parent comment author if this is a reply
         if parent_comment_id != 0:
