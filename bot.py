@@ -7641,66 +7641,61 @@ def mini_app_page():
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{
-                try {
-                    const response = await fetch(`${this.apiBaseUrl}/api/mini-app/submit-vent`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
                             user_id: this.userId,
                             content: content,
                             categories: [category]
-                        })
-                    });
+                        }})
+                    }});
                     
                     const data = await response.json();
                     
-                    if (data.success) {
+                    if (data.success) {{
                         this.showMessage(data.message, 'success');
                         ventText.value = '';
                         document.getElementById('charCount').textContent = '0/5000 characters';
-                        setTimeout(() => {
+                        setTimeout(() => {{
                             this.switchTab('posts');
                             this.loadPosts();
-                        }, 2000);
-                    } else {
+                        }}, 2000);
+                    }} else {{
                         this.showMessage(data.error || 'Failed to submit vent', 'error');
-                    }
-                } catch (error) {
+                    }}
+                }} catch (error) {{
                     console.error('Error submitting vent:', error);
                     this.showMessage('Network error. Please try again.', 'error');
-                } finally {
+                }} finally {{
                     submitBtn.textContent = originalText;
                     submitBtn.disabled = false;
-                }
-            }
+                }}
+            }}
             
-            showMessage(message, type = 'success') {
+            showMessage(message, type = 'success') {{
                 const existingMessages = document.querySelectorAll('.message');
                 existingMessages.forEach(msg => msg.remove());
                 
                 const messageEl = document.createElement('div');
-                messageEl.className = `message ${type === 'error' ? 'error-message' : 'success-message'}`;
+                messageEl.className = `message ${{type === 'error' ? 'error-message' : 'success-message'}}`;
                 messageEl.textContent = message;
                 
                 const appContainer = document.getElementById('appContainer');
-                if (appContainer) {
+                if (appContainer) {{
                     appContainer.insertBefore(messageEl, appContainer.firstChild);
-                    setTimeout(() => {
+                    setTimeout(() => {{
                         if (messageEl.parentNode) messageEl.remove();
-                    }, 5000);
-                }
-            }
+                    }}, 5000);
+                }}
+            }}
             
-            escapeHtml(text) {
+            escapeHtml(text) {{
                 const div = document.createElement('div');
                 div.textContent = text;
                 return div.innerHTML;
-            }
-        }
+            }}
+        }}
         
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', () => {{
             window.app = new ChristianVentApp();
-        });
+        }});
     </script>
 </body>
 </html>'''
