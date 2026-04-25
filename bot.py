@@ -92,6 +92,7 @@ def init_db():
                     post_id SERIAL PRIMARY KEY,
                     content TEXT,
                     author_id TEXT,
+                    category TEXT,
                     channel_message_id BIGINT,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     media_type TEXT DEFAULT 'text',
@@ -102,28 +103,6 @@ def init_db():
                     thread_from_post_id BIGINT DEFAULT NULL
                 )
                 ''')
-
-                # ---------------- NEW: Multi-Category Support Migration ----------------
-                c.execute('''
-                CREATE TABLE IF NOT EXISTS post_categories (
-                    post_id INTEGER REFERENCES posts(post_id) ON DELETE CASCADE,
-                    category_code TEXT,
-                    PRIMARY KEY (post_id, category_code)
-                )
-                ''')
-
-                # Check if 'category' column exists in 'posts' table (migration needed)
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='posts' AND column_name='category'
-                """)
-                if c.fetchone():
-                    logger.info("Migrating data from posts.category to post_categories table")
-                    # Migrate existing data
-                    c.execute("INSERT INTO post_categories (post_id, category_code) SELECT post_id, category FROM posts WHERE category IS NOT NULL ON CONFLICT DO NOTHING")
-                    # Drop the old column
-                    logger.info("Dropping old category column from posts table")
-                    c.execute("ALTER TABLE posts DROP COLUMN category")
 
                 c.execute('''
                 CREATE TABLE IF NOT EXISTS comments (
@@ -608,38 +587,10 @@ CATEGORIES = [
     ("💍 Marriage", "Marriage"),
     ("🧑‍🤝‍🧑 Youth", "Youth"),
     ("💰 Finance", "Finance"),
-    ("🎶 Worship & Music", "WorshipMusic"),
-    ("🏠 Family Issues", "Family"),
-    ("🙌 Testimony", "Testimony"),
-    ("💊 Addiction & Recovery", "AddictionRecovery"),
-    ("📖 Bible Question", "BibleQuestion"),
     ("🔖 Other", "Other"),
 ] 
 
-def build_multi_category_keyboard(selected_set=None):
-    """Build a keyboard with multiple category selection (checkbox style)"""
-    if selected_set is None:
-        selected_set = set()
-    
-    buttons = []
-    for i in range(0, len(CATEGORIES), 2):
-        row = []
-        for j in range(2):
-            if i + j < len(CATEGORIES):
-                name, code = CATEGORIES[i + j]
-                status = " ✅" if code in selected_set else ""
-                row.append(InlineKeyboardButton(f"{name}{status}", callback_data=f'cat_toggle_{code}'))
-        buttons.append(row)
-    
-    buttons.append([
-        InlineKeyboardButton("✅ Done", callback_data='cat_done'),
-        InlineKeyboardButton("🔄 Reset", callback_data='cat_reset')
-    ])
-    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')])
-    return InlineKeyboardMarkup(buttons)
-
 def build_category_buttons():
-    """Legacy single-selection keyboard (fallback)"""
     buttons = []
     for i in range(0, len(CATEGORIES), 2):
         row = []
@@ -1468,10 +1419,7 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif update.callback_query:
             await update.callback_query.message.reply_text("❌ Error loading settings. Please try again.")
 
-async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, categories: list, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None):
-    if isinstance(categories, str):
-        categories = [categories]
-    
+async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None):
     keyboard = [
         [
             InlineKeyboardButton("✏️ Edit", callback_data='edit_post'),
@@ -1492,9 +1440,8 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
             else:
                 thread_text = f"🔄 *Threading from previous post:*\n{escape_markdown(thread_preview, version=2)}\n\n"
     
-    cats_display = ", ".join(["#" + c for c in categories])
     preview_text = (
-        f"{thread_text}📝 *Post Preview* [{escape_markdown(cats_display, 2)}]\n\n"
+        f"{thread_text}📝 *Post Preview* [{escape_markdown(category, 2)}]\n\n"
         f"{escape_markdown(post_content, version=2)}\n\n"
         f"Please confirm your post\\:"
     )
@@ -1502,7 +1449,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     
     context.user_data['pending_post'] = {
         'content': post_content,
-        'categories': categories,
+        'category': category,
         'media_type': media_type,
         'media_id': media_id,
         'thread_from_post_id': thread_from_post_id,
@@ -2191,15 +2138,12 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.callback_query.message.reply_text("❌ You don't have permission to access this.")
         return
     
-    # Get pending posts with multiple categories
+    # Get pending posts (simplified - no JOIN with pending_notifications)
     posts = db_fetch_all("""
-        SELECT p.post_id, p.content, u.anonymous_name, p.media_type, p.media_id,
-               string_agg(pc.category_code, ', ') as categories
+        SELECT p.post_id, p.content, p.category, u.anonymous_name, p.media_type, p.media_id
         FROM posts p
         JOIN users u ON p.author_id = u.user_id
-        LEFT JOIN post_categories pc ON p.post_id = pc.post_id
         WHERE p.approved = FALSE
-        GROUP BY p.post_id, u.anonymous_name
         ORDER BY p.timestamp
     """)
     
@@ -2220,8 +2164,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ])
         
         preview = post['content'][:200] + '...' if len(post['content']) > 200 else post['content']
-        cats_display = post['categories'] if post['categories'] else "None"
-        text = f"📝 *Pending Post* [{cats_display}]\n\n{preview}\n\n👤 {post['anonymous_name']}"
+        text = f"📝 *Pending Post* [{post['category']}]\n\n{preview}\n\n👤 {post['anonymous_name']}"
         
         try:
             if post['media_type'] == 'text':
@@ -2310,12 +2253,8 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         max_vent = db_fetch_one("SELECT MAX(vent_number) as max_num FROM posts WHERE approved = TRUE")
         next_vent_number = (max_vent['max_num'] or 0) + 1
         
-        # Get all categories for this post
-        categories_data = db_fetch_all("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,))
-        if categories_data:
-            hashtags = " ".join([f"#{c['category_code']}" for c in categories_data])
-        else:
-            hashtags = "#Other"
+        # Format the post content for the channel with vent number
+        hashtag = f"#{post['category']}"
         
         # Create the vent number text (copyable format)
         vent_display = f"Vent - {next_vent_number:03d}"
@@ -2324,7 +2263,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             f"`{vent_display}`\n\n"
             f"{post['content']}\n\n"
             f"━━━━━━━━━━━━━━━\n"
-            f"{hashtags}\n"
+            f"{hashtag}\n"
             f"[Telegram](https://t.me/christianvent)| [Bot](https://t.me/{BOT_USERNAME})"
         )
         
@@ -4254,56 +4193,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return  # Do nothing and exit the function
             
         if query.data == 'ask':
-            context.user_data['selected_categories'] = set()
-            await query.edit_message_text(
-                "📚 *Choose categories (select multiple):*",
-                reply_markup=build_multi_category_keyboard(set()),
+            await query.message.reply_text(
+                "📚 *Choose a category:*",
+                reply_markup=build_category_buttons(),
                 parse_mode=ParseMode.MARKDOWN
             )
 
-        elif query.data.startswith('cat_toggle_'):
-            code = query.data.split('_')[-1]
-            selected = context.user_data.get('selected_categories', set())
-            if not isinstance(selected, set):
-                selected = set(selected)
-            
-            if code in selected:
-                selected.remove(code)
-            else:
-                selected.add(code)
-            
-            context.user_data['selected_categories'] = selected
-            await query.edit_message_reply_markup(reply_markup=build_multi_category_keyboard(selected))
-            
-        elif query.data == 'cat_reset':
-            context.user_data['selected_categories'] = set()
-            await query.edit_message_reply_markup(reply_markup=build_multi_category_keyboard(set()))
-            
-        elif query.data == 'cat_done':
-            selected = context.user_data.get('selected_categories', set())
-            if not selected:
-                await query.answer("⚠️ Please select at least one category!", show_alert=True)
-                return
-            
-            # Transition to post collection
-            user_id = str(query.from_user.id)
-            # Store first category as primary for legacy reasons if needed, 
-            # but we'll use post_categories table now.
-            primary_cat = list(selected)[0]
+        elif query.data.startswith('category_'):
+            await query.answer("✍️ Opening Category...", show_alert=False)
+            category = query.data.split('_', 1)[1]
             db_execute(
                 "UPDATE users SET waiting_for_post = TRUE, selected_category = %s WHERE user_id = %s",
-                (primary_cat, user_id)
+                (category, user_id)
             )
-            
+        
             await query.message.reply_text(
-                f"✍️ *Please type your thought for {', '.join(['#'+c for c in selected])}:*\n\nYou may also send a photo or voice message.\n\nTap ❌ Cancel to return to menu.",
+                f"✍️ *Please type your thought for #{category}:*\n\nYou may also send a photo or voice message.\n\nTap ❌ Cancel to return to menu.",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=cancel_menu
             )
-            try:
-                await query.message.delete()
-            except: pass
-
+        
         elif query.data == 'menu':
             await query.answer("📱 Opening Menu...", show_alert=False)
             await query.message.reply_text(
@@ -5156,32 +5065,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await loading_msg.edit_caption("❌ Post data not found. Please start over.")
                     return
                 
-                categories = pending_post.get('categories', [])
+                category = pending_post['category']
                 post_content = pending_post['content']
                 media_type = pending_post.get('media_type', 'text')
                 media_id = pending_post.get('media_id')
                 thread_from_post_id = pending_post.get('thread_from_post_id')
                 
-                # Insert post without category column
+                # Insert post with thread reference if available
                 if thread_from_post_id:
                     post_row = db_execute(
-                        "INSERT INTO posts (content, author_id, media_type, media_id, thread_from_post_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
-                        (post_content, user_id, media_type, media_id, thread_from_post_id),
+                        "INSERT INTO posts (content, author_id, category, media_type, media_id, thread_from_post_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, category, media_type, media_id, thread_from_post_id),
                         fetchone=True
                     )
                 else:
                     post_row = db_execute(
-                        "INSERT INTO posts (content, author_id, media_type, media_id) VALUES (%s, %s, %s, %s) RETURNING post_id",
-                        (post_content, user_id, media_type, media_id),
+                        "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, category, media_type, media_id),
                         fetchone=True
                     )
                 
+                # Clean up user data
+                if 'pending_post' in context.user_data:
+                    del context.user_data['pending_post']
+                if 'thread_from_post_id' in context.user_data:
+                    del context.user_data['thread_from_post_id']
+                if 'editing_post' in context.user_data:
+                    del context.user_data['editing_post']
+                
                 if post_row:
                     post_id = post_row['post_id']
-                    # Insert multiple categories
-                    for cat_code in categories:
-                        db_execute("INSERT INTO post_categories (post_id, category_code) VALUES (%s, %s)", (post_id, cat_code))
-                    
                     await notify_admin_of_new_post(context, post_id)
                     
                     # Replace loading with success animation
@@ -5613,7 +5526,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_post_confirmation(
                 update, context, 
                 pending_post['content'], 
-                pending_post.get('categories', []), 
+                pending_post['category'], 
                 pending_post.get('media_type', 'text'), 
                 pending_post.get('media_id'),
                 pending_post.get('thread_from_post_id')
@@ -5644,13 +5557,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thread_from_post_id = context.user_data.get('thread_from_post_id')
     
     if user and user['waiting_for_post']:
-        # Get selected categories from context
-        selected_cats = context.user_data.get('selected_categories', set())
-        if not selected_cats:
-            # Fallback
-            selected_cats = {user['selected_category']} if user['selected_category'] else {"Other"}
-        
-        categories = list(selected_cats)
+        category = user['selected_category']
         
         post_content = ""
         media_type = 'text'
@@ -5682,7 +5589,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             # Send confirmation
-            await send_post_confirmation(update, context, post_content, categories, media_type, media_id, thread_from_post_id=thread_from_post_id)
+            await send_post_confirmation(update, context, post_content, category, media_type, media_id, thread_from_post_id=thread_from_post_id)
             return
         except Exception as e:
             logger.error(f"Error reading media: {e}")
@@ -7643,7 +7550,7 @@ def mini_app_page():
                         body: JSON.stringify({{
                             user_id: this.userId,
                             content: content,
-                            categories: [category]
+                            category: category
                         }})
                     }});
                     
@@ -7704,47 +7611,63 @@ def mini_app_page():
 
 # ==================== MINI APP API ENDPOINTS ====================
 
+# ==================== MINI APP API ENDPOINTS ====================
+
 @flask_app.route('/api/mini-app/submit-vent', methods=['POST'])
 def mini_app_submit_vent():
+    """API endpoint for submitting vents from mini app - SIMPLIFIED"""
     try:
+        # Get data from request
         data = request.get_json()
         if not data:
-            return jsonify({"success": False, "error": "No data provided"}), 400
-            
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
         user_id = data.get('user_id')
         content = data.get('content', '').strip()
-        categories = data.get('categories', [])
-        if not categories:
-            single_cat = data.get('category', 'Other')
-            categories = [single_cat]
-            
-        if not user_id or not content:
-            return jsonify({"success": False, "error": "Missing user_id or content"}), 400
-            
+        category = data.get('category', 'Other')
+        
+        if not user_id:
+            return jsonify({'success': False, 'error': 'User ID required'}), 400
+        
+        if not content:
+            return jsonify({'success': False, 'error': 'Content cannot be empty'}), 400
+        
+        # Check if user exists
         user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
         if not user:
-            return jsonify({"success": False, "error": "User not found"}), 404
-            
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        
+        # Insert the post (simple and clean)
         post_row = db_execute(
-            "INSERT INTO posts (content, author_id) VALUES (%s, %s) RETURNING post_id",
-            (content, user_id),
+            "INSERT INTO posts (content, author_id, category, media_type, approved) VALUES (%s, %s, %s, 'text', FALSE) RETURNING post_id",
+            (content, user_id, category),
             fetchone=True
         )
         
         if post_row:
             post_id = post_row['post_id']
-            for cat_code in categories:
-                db_execute("INSERT INTO post_categories (post_id, category_code) VALUES (%s, %s)", (post_id, cat_code))
-                
-            notify_admin_of_new_post_sync(post_id)
-            return jsonify({"success": True, "message": "Post submitted for approval!"})
             
-        return jsonify({"success": False, "error": "Database error"}), 500
+            # Log it (optional)
+            logger.info(f"📝 Mini App Post submitted: ID {post_id} by {user_id}")
+            
+            # Notify admin immediately to prevent missed vents
+            notify_admin_of_new_post_sync(post_id)
+            
+            return jsonify({
+                'success': True,
+                'message': '✅ Your vent has been submitted for admin approval!',
+                'post_id': post_id
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to create post'}), 500
+            
     except Exception as e:
-        logger.error(f"Error in submit-vent: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"Error in mini-app submit vent: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
+# Helper function for sync context (since Flask routes can't be async)
 def notify_admin_of_new_post_sync(post_id):
+    """Sync version of notify_admin_of_new_post"""
     try:
         if not ADMIN_ID:
             return
@@ -7778,6 +7701,7 @@ def notify_admin_of_new_post_sync(post_id):
         logger.error(f"Error in sync admin notification: {e}")
 
 def update_channel_post_comment_count_sync(post_id):
+    """Sync version of update_channel_post_comment_count for the mini app"""
     try:
         post = db_fetch_one("SELECT channel_message_id FROM posts WHERE post_id = %s", (post_id,))
         if not post or not post['channel_message_id']:
@@ -7801,23 +7725,37 @@ def update_channel_post_comment_count_sync(post_id):
 
 @flask_app.route('/api/mini-app/get-posts', methods=['GET'])
 def mini_app_get_posts():
+    """API endpoint for getting posts from mini app - SHOW SEX ONLY"""
     try:
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
         offset = (page - 1) * per_page
         
+        # Get approved posts WITH sex but WITHOUT name
         posts = db_fetch_all('''
-            SELECT p.*, u.anonymous_name, u.sex, u.avatar_emoji as avatar,
-                   (SELECT string_agg(category_code, ',') FROM post_categories WHERE post_id = p.post_id) as categories
+            SELECT 
+                p.post_id,
+                p.content,
+                p.category,
+                p.timestamp,
+                p.comment_count,
+                p.media_type,
+                u.user_id as author_id,
+                u.sex as author_sex,
+                u.avatar_emoji as author_avatar,
+                u.anonymous_name as author_name
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             WHERE p.approved = TRUE
             ORDER BY p.timestamp DESC
             LIMIT %s OFFSET %s
+
         ''', (per_page, offset))
         
+        # Format posts - ANONYMOUS NAME BUT SHOW SEX
         formatted_posts = []
         for post in posts:
+            # Format timestamp
             if isinstance(post['timestamp'], str):
                 post_time = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S')
             else:
@@ -7835,10 +7773,12 @@ def mini_app_get_posts():
             else:
                 time_ago = "Just now"
             
+            # Truncate content
             content_preview = post['content']
             if len(content_preview) > 300:
                 content_preview = content_preview[:297] + '...'
             
+            # Calculate aura for display
             rating = calculate_user_rating(post['author_id'])
             aura_sticker = format_aura(rating)
             
@@ -7846,13 +7786,13 @@ def mini_app_get_posts():
                 'id': post['post_id'],
                 'content': content_preview,
                 'full_content': post['content'],
+                'category': post['category'],
                 'time_ago': time_ago,
-                'categories': post['categories'].split(',') if post['categories'] else [],
                 'comments': post['comment_count'] or 0,
                 'author': {
                     'name': 'Anonymous',
-                    'sex': post['sex'] or '👤',
-                    'avatar': post['avatar'] or "",
+                    'sex': post['author_sex'] or '👤',
+                    'avatar': post['author_avatar'] or "",
                     'aura': aura_sticker
                 },
                 'has_media': post['media_type'] != 'text'
@@ -7879,8 +7819,9 @@ def mini_app_get_single_post(post_id):
     """API endpoint for fetching a single full vent natively in the Mini App"""
     try:
         post = db_fetch_one('''
-            SELECT p.*, u.anonymous_name, u.sex, u.avatar_emoji as avatar,
-                   (SELECT string_agg(category_code, ',') FROM post_categories WHERE post_id = p.post_id) as categories
+            SELECT 
+                p.post_id, p.content, p.category, p.timestamp, p.comment_count, p.media_type,
+                u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             WHERE p.post_id = %s AND p.approved = TRUE
@@ -7912,13 +7853,13 @@ def mini_app_get_single_post(post_id):
         formatted_post = {
             'id': post['post_id'],
             'content': post['content'],
-            'categories': post['categories'].split(',') if post['categories'] else [],
+            'category': post['category'],
             'time_ago': time_ago,
             'comments': post['comment_count'] or 0,
             'author': {
                 'name': 'Anonymous',
-                'sex': post['sex'] or '👤',
-                'avatar': post['avatar'] or "",
+                'sex': post['author_sex'] or '👤',
+                'avatar': post['author_avatar'] or "",
                 'aura': format_aura(rating)
             }
         }
