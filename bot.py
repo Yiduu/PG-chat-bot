@@ -473,6 +473,109 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
 
         except Exception as e:
             logger.error(f"Error restoring main menu: {e}")
+
+def fix_orphaned_comments_for_post(post_id: int):
+    """Scan and fix orphaned replies for a specific post"""
+    try:
+        # Find comments for this post where parent doesn't exist
+        # parent_comment_id != 0 AND parent_comment_id NOT IN (SELECT comment_id FROM comments)
+        orphans = db_fetch_all("""
+            SELECT comment_id, parent_comment_id 
+            FROM comments 
+            WHERE post_id = %s 
+            AND parent_comment_id != 0 
+            AND parent_comment_id NOT IN (SELECT comment_id FROM comments)
+        """, (post_id,))
+        
+        if not orphans:
+            return 0
+            
+        count = 0
+        for orphan in orphans:
+            db_execute(
+                "UPDATE comments SET parent_comment_id = 0 WHERE comment_id = %s",
+                (orphan['comment_id'],)
+            )
+            logger.info(f"Adopted comment {orphan['comment_id']} to top-level because parent {orphan['parent_comment_id']} was missing for post {post_id}")
+            count += 1
+            
+        return count
+    except Exception as e:
+        logger.error(f"Error fixing orphans for post {post_id}: {e}")
+        return 0
+
+async def adopt_orphaned_replies(context: ContextTypes.DEFAULT_TYPE, post_id: int):
+    """Helper to fix orphans and update channel count"""
+    fixed_count = fix_orphaned_comments_for_post(post_id)
+    
+    # Recalculate total count
+    new_count = count_all_comments(post_id)
+    
+    # Update DB column
+    db_execute("UPDATE posts SET comment_count = %s WHERE post_id = %s", (new_count, post_id))
+    
+    # Update channel button
+    await update_channel_post_comment_count(context, post_id)
+    
+    return fixed_count
+
+async def recount_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to fix orphans and update comment counts for all posts"""
+    user_id = str(update.effective_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    
+    if not user or not user['is_admin']:
+        if update.message:
+            await update.message.reply_text("❌ You don't have permission to use this command.")
+        return
+        
+    status_msg = await update.message.reply_text("🔄 Scanning all posts and fixing comment counts...")
+    
+    try:
+        # Get all approved posts
+        posts = db_fetch_all("SELECT post_id FROM posts WHERE approved = TRUE")
+        
+        posts_scanned = len(posts)
+        posts_fixed = 0
+        orphans_adopted = 0
+        
+        for post in posts:
+            post_id = post['post_id']
+            
+            # Adopt orphans for this post
+            fixed = fix_orphaned_comments_for_post(post_id)
+            if fixed > 0:
+                orphans_adopted += fixed
+                
+            # Recalculate count
+            actual_count = count_all_comments(post_id)
+            
+            # Get current DB count
+            db_post = db_fetch_one("SELECT comment_count FROM posts WHERE post_id = %s", (post_id,))
+            current_db_count = db_post['comment_count'] if db_post else 0
+            
+            if actual_count != current_db_count or fixed > 0:
+                # Update DB
+                db_execute("UPDATE posts SET comment_count = %s WHERE post_id = %s", (actual_count, post_id))
+                posts_fixed += 1
+                
+                # Update channel button if possible
+                try:
+                    await update_channel_post_comment_count(context, post_id)
+                except Exception as e:
+                    logger.error(f"Failed to update channel button for post {post_id}: {e}")
+                    
+        report = (
+            f"✅ *Comment Recount Complete*\n\n"
+            f"• 📁 Posts Scanned: {posts_scanned}\n"
+            f"• 🛠 Posts Updated: {posts_fixed}\n"
+            f"• 🐣 Orphans Adopted: {orphans_adopted}"
+        )
+        await status_msg.edit_text(report, parse_mode=ParseMode.MARKDOWN)
+        
+    except Exception as e:
+        logger.error(f"Error in recount_comments: {e}")
+        await status_msg.edit_text(f"❌ Error during recount: {str(e)}")
 # Categories
 CATEGORIES = [
     ("🙏 Pray For Me", "PrayForMe"),
@@ -4492,6 +4595,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Get post_id before deleting for updating comment count
                 post_id = comment['post_id']
                 
+                # Orphan Adoption: Become top-level first
+                db_execute("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (comment_id,))
+                
                 # Delete the comment and its reactions
                 db_execute("DELETE FROM reactions WHERE comment_id = %s", (comment_id,))
                 db_execute("DELETE FROM comments WHERE comment_id = %s", (comment_id,))
@@ -4499,8 +4605,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("✅ Comment deleted")
                 await query.message.delete()
                 
-                # Update comment count
-                await update_channel_post_comment_count(context, post_id)
+                # Update comment count with orphan check
+                await adopt_orphaned_replies(context, post_id)
             else:
                 await query.answer("❌ You can only delete your own comments", show_alert=True)
 
@@ -5857,6 +5963,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("inbox", show_inbox))
     app.add_handler(CommandHandler("fixventnumbers", fix_vent_numbers))
+    app.add_handler(CommandHandler("recount_comments", recount_comments))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_message_text))
