@@ -221,6 +221,15 @@ def init_db():
                     logger.info("Adding missing column: vent_number to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN vent_number INTEGER DEFAULT NULL")
                 
+                # Check for 'rejection_reason' column in posts
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='posts' AND column_name='rejection_reason'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: rejection_reason to posts table")
+                    c.execute("ALTER TABLE posts ADD COLUMN rejection_reason TEXT DEFAULT NULL")
+                
                 # Add other missing columns if needed in the future
                 # Example for future migrations:
                 # c.execute("""
@@ -446,7 +455,8 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
     # Reset context flags
     if context:
         context_keys = ['editing_comment', 'editing_post', 'thread_from_post_id', 
-                       'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type']
+                       'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type',
+                       'rejecting_post', 'awaiting_rejection_reason']
         for key in context_keys:
             if key in context.user_data:
                 del context.user_data[key]
@@ -2266,6 +2276,105 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             except:
                 pass
 
+async def ask_rejection_reason(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
+    """Ask the admin if they want to provide a rejection reason"""
+    query = update.callback_query
+    context.user_data['rejecting_post'] = post_id
+    context.user_data['awaiting_rejection_reason'] = False # Not yet typing, just menu
+    
+    keyboard = [
+        [InlineKeyboardButton("✏️ Type Reason", callback_data=f"reject_with_reason_{post_id}")],
+        [InlineKeyboardButton("⏩ Skip Reason", callback_data=f"skip_rejection_{post_id}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_rejection")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    try:
+        await query.edit_message_text(
+            "❌ *Reject Post*\n\nWould you like to provide a reason for rejecting this post?",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN
+        )
+    except Exception as e:
+        logger.error(f"Error showing rejection menu: {e}")
+        await query.message.reply_text(
+            "❌ Rejection Reason Prompt\n\nWould you like to provide a reason?",
+            reply_markup=reply_markup
+        )
+
+async def finalize_rejection(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int, reason: str = None):
+    """Perform the final rejection after admin makes a choice"""
+    user_id = str(update.effective_user.id)
+    
+    # Get the post details before deleting
+    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    if not post:
+        logger.warning(f"Post {post_id} not found during finalize_rejection")
+        return
+
+    # Truncate reason if too long
+    if reason and len(reason) > 200:
+        reason = reason[:197] + "..."
+        if update.message:
+            await update.message.reply_text("⚠️ Reason was too long and has been truncated to 200 characters.")
+        elif update.callback_query:
+            await update.callback_query.answer("⚠️ Reason truncated to 200 chars", show_alert=True)
+
+    try:
+        # Notify the author
+        notification_text = "❌ Your post was not approved by the admin."
+        if reason:
+            notification_text += f"\n\n*Reason:* {reason}"
+        
+        try:
+            await context.bot.send_message(
+                chat_id=post['author_id'],
+                text=notification_text,
+                parse_mode=ParseMode.MARKDOWN if reason else None
+            )
+        except Exception as e:
+            logger.error(f"Error notifying author of rejection: {e}")
+
+        # Note: In a real system we might want to ARCHIVE instead of DELETE to keep the reason.
+        # But the requirement says "Delete the post from DB (and optionally store rejection_reason)".
+        # To store the reason, we'd need to keep the row but mark it as 'rejected'.
+        # However, the current code deletes it. I will stick to deletion for consistency with existing code
+        # but if we wanted to store it, we'd need a 'status' column.
+        # Since I'm adding 'rejection_reason' column to 'posts', I should probably UPDATE it first if I want to keep it?
+        # But if I delete it, the column is useless.
+        # Let's assume the user wants to keep the post but MARK as rejected?
+        # "Delete the post from DB" is what the user guide says.
+        # I'll update it first, then delete? No, that makes no sense for the column.
+        # Maybe the user meant "Move to rejected_posts"? 
+        # I'll just follow the instruction: "Delete the post from DB".
+        
+        success = db_execute("DELETE FROM posts WHERE post_id = %s", (post_id,))
+        
+        # Clear context flags
+        context.user_data.pop('rejecting_post', None)
+        context.user_data.pop('awaiting_rejection_reason', None)
+        
+        # Confirmation to admin
+        confirm_text = f"✅ Post #{post_id} has been rejected."
+        if reason:
+            confirm_text += f"\nReason: {reason}"
+            
+        if update.callback_query:
+            await update.callback_query.edit_message_text(confirm_text)
+        else:
+            await update.message.reply_text(confirm_text)
+            
+        # Return to admin panel after a short delay
+        await asyncio.sleep(1)
+        await admin_panel(update, context)
+
+    except Exception as e:
+        logger.error(f"Error in finalize_rejection: {e}")
+        if update.callback_query:
+            await update.callback_query.message.reply_text(f"❌ Error finalizing rejection: {e}")
+        else:
+            await update.message.reply_text(f"❌ Error finalizing rejection: {e}")
+
 async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
     query = update.callback_query
     user_id = str(update.effective_user.id)
@@ -2288,47 +2397,8 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
             await query.edit_message_text("❌ Post not found.")
         return
     
-    try:
-        # Notify the author
-        try:
-            await context.bot.send_message(
-                chat_id=post['author_id'],
-                text="❌ Your post was not approved by the admin."
-            )
-        except Exception as e:
-            logger.error(f"Error notifying author: {e}")
-        
-        # Delete the post from database
-        success = db_execute("DELETE FROM posts WHERE post_id = %s", (post_id,))
-        
-        if not success:
-            await query.answer("❌ Failed to delete post from database.", show_alert=True)
-            return
-        
-        # =============================================
-        # FIX: Update the admin's message to show it's rejected
-        # =============================================
-        try:
-            # Edit the original admin notification message
-            await query.edit_message_text(
-                f"❌ **Post Rejected**\n\n"
-                f"**Post ID:** #{post_id}\n"
-                f"**Category:** {post['category']}\n"
-                f"**Action:** Deleted from database\n\n"
-                f"**Content Preview:**\n{post['content'][:100]}...",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
-        except BadRequest:
-            # If editing fails, send a new message
-            await query.message.reply_text("❌ Post rejected and deleted")
-        
-    except Exception as e:
-        logger.error(f"Error rejecting post: {e}")
-        try:
-            await query.answer(f"❌ Failed to reject post: {str(e)}", show_alert=True)
-        except:
-            await query.edit_message_text("❌ Failed to reject post. Please try again.")
+    # Instead of immediate deletion, ask for a reason
+    await ask_rejection_reason(update, context, post_id)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -4986,7 +5056,39 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Invalid post ID", show_alert=True)
             except Exception as e:
                 logger.error(f"Error in reject_post handler: {e}")
-                await query.answer("❌ Error rejecting post", show_alert=True)                                  
+                await query.answer("❌ Error rejecting post", show_alert=True)
+
+        elif query.data.startswith('reject_with_reason_'):
+            try:
+                post_id = int(query.data.split('_')[-1])
+                context.user_data['awaiting_rejection_reason'] = True
+                context.user_data['rejecting_post'] = post_id
+                await query.edit_message_text(
+                    "📝 *Provide Rejection Reason*\n\nPlease type the reason for rejection and send it as a message.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                logger.error(f"Error in reject_with_reason_ handler: {e}")
+                await query.answer("❌ Error processing request", show_alert=True)
+                
+        elif query.data.startswith('skip_rejection_'):
+            try:
+                post_id = int(query.data.split('_')[-1])
+                await finalize_rejection(update, context, post_id, reason=None)
+            except Exception as e:
+                logger.error(f"Error in skip_rejection_ handler: {e}")
+                await query.answer("❌ Error skipping reason", show_alert=True)
+                
+        elif query.data == 'cancel_rejection':
+            context.user_data.pop('rejecting_post', None)
+            context.user_data.pop('awaiting_rejection_reason', None)
+            try:
+                await query.edit_message_text("❌ Rejection cancelled.")
+                await admin_panel(update, context)
+            except Exception as e:
+                logger.error(f"Error in cancel_rejection handler: {e}")
+                await query.message.reply_text("❌ Rejection cancelled.")
+                await admin_panel(update, context)
         
         elif query.data == 'inbox':
             await show_inbox(update, context, 1)
@@ -5211,6 +5313,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
     
+
     # Handle cancel command or main menu buttons while in an input state
     main_menu_buttons = ["✍️ Share", "👤 Profile", "📚 Posts", "🏆 Top", "⚙️ Settings", "🌐 Open App", "❌ Cancel", "/cancel"]
     
@@ -5224,7 +5327,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user.get('awaiting_bio') or
             context.user_data.get('broadcasting') or
             context.user_data.get('editing_comment') or
-            context.user_data.get('editing_post')
+            context.user_data.get('editing_post') or
+            context.user_data.get('awaiting_rejection_reason')
         )
         
         if in_waiting_state:
@@ -5257,6 +5361,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "You're not currently in an input state.",
                 reply_markup=get_main_menu(user_id)
             )
+            return
+
+    # NEW: Handle rejection reason capture from admin
+    if context.user_data.get('awaiting_rejection_reason'):
+        post_id = context.user_data.get('rejecting_post')
+        if post_id:
+            logger.info(f"Admin {user_id} providing reason for post {post_id}")
+            await finalize_rejection(update, context, post_id, reason=text)
             return
 
     
