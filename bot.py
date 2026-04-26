@@ -6910,9 +6910,9 @@ def mini_app_page():
             cursor: pointer;
             font-family: 'Inter', sans-serif;
             transition: all 0.2s ease;
-        }
-        .reply-cancel-btn:hover { opacity: 0.8; }
-        .reply-send-btn {
+        }}
+        .reply-cancel-btn:hover {{ opacity: 0.8; }}
+        .reply-send-btn {{
             background: linear-gradient(135deg, var(--primary), #d4af37);
             border: none;
             color: #000;
@@ -6923,8 +6923,8 @@ def mini_app_page():
             cursor: pointer;
             font-family: 'Inter', sans-serif;
             transition: all 0.2s ease;
-        }
-        .reply-send-btn:hover { transform: translateY(-1px); }
+        }}
+        .reply-send-btn:hover {{ transform: translateY(-1px); }}
         
     </style>
 
