@@ -1748,13 +1748,21 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
         if not original_author or not original_author['notifications_enabled']:
             return
         
-        replier = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (replier_id,))
-        replier_name = get_display_name(replier)
-        
         post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+        if not post:
+            return
+            
+        # === FIX: Vent author anonymization in reply notification ===
+        if str(replier_id) == str(post['author_id']):
+            replier_display = "Vent author"
+            safe_replier_name = replier_display
+        else:
+            replier = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (replier_id,))
+            replier_name = get_display_name(replier)
+            safe_replier_name = escape_markdown(replier_name, version=2)
+        
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
         
-        safe_replier_name = escape_markdown(replier_name, version=2)
         safe_post_preview = escape_markdown(post_preview, version=2)
         safe_comment_preview = escape_markdown(comment['content'][:100], version=2)
 
@@ -4777,11 +4785,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         (comment['author_id'],)
                     )
                     if comment_author and comment_author['notifications_enabled'] and comment_author['user_id'] != user_id:
-                        reactor_name = get_display_name(
-                            db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
-                        )
                         post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-                        post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
+                        
+                        # === FIX: Vent author anonymization in reaction notification ===
+                        if post and str(user_id) == str(post['author_id']):
+                            reactor_display = "Vent author"
+                            safe_reactor_name = reactor_display
+                        else:
+                            reactor_name = get_display_name(
+                                db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+                            )
+                            safe_reactor_name = escape_markdown(reactor_name, version=2)
+                        
+                        post_preview = post['content'][:50] + '...' if post and len(post['content']) > 50 else (post['content'] if post else "")
                         
                         # Modernized Reaction Notification
                         reaction_label = "liked 👍" if reaction_type == 'like' else "disliked 👎"
@@ -4789,7 +4805,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                         notification_text = (
                             f"{reaction_icon} *New Interaction\\!*\n\n"
-                            f"👤 {escape_markdown(reactor_name, version=2)} *{reaction_label}* your comment\\:\n\n"
+                            f"👤 {safe_reactor_name} *{reaction_label}* your comment\\:\n\n"
                             f"🗨 _{escape_markdown(comment['content'][:150], version=2)}_\n\n"
                             f"📝 *Post Context\\:*\n{escape_markdown(post_preview, version=2)}\n\n"
                             f"🔗 [View Discussion](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
