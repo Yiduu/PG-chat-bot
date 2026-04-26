@@ -18,7 +18,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 import threading
 from flask import Flask, jsonify, request, redirect, send_from_directory
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
 import time
 import asyncio
 from functools import lru_cache
@@ -256,19 +256,20 @@ def init_db():
                             PRIMARY KEY (post_id, category_code)
                         )
                     ''')
-                    
-                    # Migrate existing data
-                    c.execute("SELECT post_id, category FROM posts WHERE category IS NOT NULL")
-                    old_posts = c.fetchall()
-                    for post_id, category in old_posts:
-                        c.execute(
-                            "INSERT INTO post_categories (post_id, category_code) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                            (post_id, category)
-                        )
-                    
-                    # Drop old column
-                    c.execute("ALTER TABLE posts DROP COLUMN category")
                     logger.info("Migrated posts to multi-category (post_categories table)")
+
+                # ---------------- Weekly Contributor History Migration ----------------
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS weekly_rankings (
+                        id SERIAL PRIMARY KEY,
+                        user_id TEXT REFERENCES users(user_id),
+                        week_start DATE NOT NULL,
+                        rank INTEGER NOT NULL,
+                        points_earned INTEGER,
+                        badge_emoji TEXT,
+                        UNIQUE(user_id, week_start)
+                    )
+                """)
 
                 # ---------------- Create admin user if specified ----------------
                 if ADMIN_ID:
@@ -322,38 +323,51 @@ def assign_vent_numbers_to_existing_posts():
         logger.error(f"Error assigning vent numbers: {e}")
 
 async def fix_vent_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-                    """Admin command to fix vent numbers"""
-                    user_id = str(update.effective_user.id)
-                    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
-                    
-                    if not user or not user['is_admin']:
-                        await update.message.reply_text("❌ You don't have permission to use this command.")
-                        return
-                    
-                    await update.message.reply_text("🔄 Reassigning vent numbers to all approved posts...")
-                    
-                    try:
-                        # Reset all vent numbers first
-                        db_execute("UPDATE posts SET vent_number = NULL WHERE approved = TRUE")
-                        
-                        # Get all approved posts in chronological order
-                        posts = db_fetch_all(
-                            "SELECT post_id FROM posts WHERE approved = TRUE ORDER BY timestamp ASC"
-                        )
-                        
-                        count = 0
-                        for idx, post in enumerate(posts, start=1):
-                            db_execute(
-                                "UPDATE posts SET vent_number = %s WHERE post_id = %s",
-                                (idx, post['post_id'])
-                            )
-                            count += 1
-                        
-                        await update.message.reply_text(f"✅ Successfully assigned vent numbers to {count} posts.")
-                        
-                    except Exception as e:
-                        logger.error(f"Error in fix_vent_numbers: {e}")
-                        await update.message.reply_text(f"❌ Error: {str(e)}")
+    """Admin command to fix vent numbers"""
+    user_id = str(update.effective_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    
+    if not user or not user['is_admin']:
+        await update.message.reply_text("❌ You don't have permission to use this command.")
+        return
+    
+    await update.message.reply_text("🔄 Reassigning vent numbers to all approved posts...")
+    
+    try:
+        # Reset all vent numbers first
+        db_execute("UPDATE posts SET vent_number = NULL WHERE approved = TRUE")
+        
+        # Get all approved posts in chronological order
+        posts = db_fetch_all(
+            "SELECT post_id FROM posts WHERE approved = TRUE ORDER BY timestamp ASC"
+        )
+        
+        count = 0
+        for idx, post in enumerate(posts, start=1):
+            db_execute(
+                "UPDATE posts SET vent_number = %s WHERE post_id = %s",
+                (idx, post['post_id'])
+            )
+            count += 1
+        
+        await update.message.reply_text(f"✅ Successfully assigned vent numbers to {count} posts.")
+        
+    except Exception as e:
+        logger.error(f"Error in fix_vent_numbers: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def reset_weekly_badges_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to manually trigger weekly badge awarding."""
+    user_id = str(update.effective_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    
+    if not user or not user['is_admin']:
+        await update.message.reply_text("❌ You don't have permission to use this command.")
+        return
+    
+    await update.message.reply_text("🔄 Recalculating weekly contributors and announcing...")
+    await award_weekly_badges(context)
+    await update.message.reply_text("✅ Weekly contributors have been announced.")
 def is_media_message(message):
     """Check if a message contains media"""
     return (message.photo or message.voice or message.video or 
@@ -1153,6 +1167,107 @@ def calculate_user_rating(user_id):
     
     return post_points + comm_points + rx_points + block_points
 
+def calculate_top_weekly_contributors():
+    """Calculate top 3 users by aura points earned in the last 7 days."""
+    query = """
+        SELECT u.user_id,
+               (COALESCE(p.post_points, 0) + COALESCE(c.comment_points, 0) + COALESCE(r.rx_points, 0) - COALESCE(b.block_points, 0)) as weekly_points
+        FROM users u
+        LEFT JOIN (
+            SELECT author_id, COUNT(*) * 10 as post_points
+            FROM posts 
+            WHERE approved = TRUE AND timestamp >= NOW() - INTERVAL '7 days'
+            GROUP BY author_id
+        ) p ON u.user_id = p.author_id
+        LEFT JOIN (
+            SELECT author_id, COUNT(*) * 2 as comment_points
+            FROM comments 
+            WHERE timestamp >= NOW() - INTERVAL '7 days'
+            GROUP BY author_id
+        ) c ON u.user_id = c.author_id
+        LEFT JOIN (
+            SELECT c.author_id, 
+                   SUM(CASE WHEN r.type = 'like' THEN 1 ELSE 0 END) - SUM(CASE WHEN r.type = 'dislike' THEN 2 ELSE 0 END) as rx_points
+            FROM reactions r
+            JOIN comments c ON r.comment_id = c.comment_id
+            WHERE r.timestamp >= NOW() - INTERVAL '7 days'
+            GROUP BY c.author_id
+        ) r ON u.user_id = r.author_id
+        LEFT JOIN (
+            SELECT blocked_id, COUNT(*) * 10 as block_points
+            FROM blocks 
+            WHERE timestamp >= NOW() - INTERVAL '7 days'
+            GROUP BY blocked_id
+        ) b ON u.user_id = b.blocked_id
+        WHERE (COALESCE(p.post_points, 0) + COALESCE(c.comment_points, 0) + COALESCE(r.rx_points, 0) - COALESCE(b.block_points, 0)) > 0
+        ORDER BY weekly_points DESC
+        LIMIT 3
+    """
+    return db_fetch_all(query)
+
+async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
+    """Weekly job to announce top contributors."""
+    try:
+        logger.info("🏆 Starting weekly contributor announcement job...")
+        
+        # 1. Calculate top 3
+        top_users = calculate_top_weekly_contributors()
+        if not top_users:
+            logger.info("ℹ️ No users earned points this week. No announcement made.")
+            return
+
+        badges = ["🥇", "🥈", "🥉"]
+        winners_info = []
+        today = datetime.now(timezone.utc).date()
+        
+        # 2. Record and format
+        for idx, user_data in enumerate(top_users):
+            user_id = user_data['user_id']
+            points = user_data['weekly_points']
+            rank = idx + 1
+            badge = badges[idx]
+            
+            # Record in history (optional but good for tracking)
+            db_execute("""
+                INSERT INTO weekly_rankings (user_id, week_start, rank, points_earned, badge_emoji)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, week_start) DO UPDATE 
+                SET rank = EXCLUDED.rank, points_earned = EXCLUDED.points_earned, badge_emoji = EXCLUDED.badge_emoji
+            """, (user_id, today, rank, points, badge))
+            
+            # Get user info for announcement
+            user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_id,))
+            name = user['anonymous_name'] if user else "Contributor"
+            winners_info.append(f"{badge} {name} – {points} pts")
+            
+            # Notify winner via DM
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"🎊 *Weekly Highlight!* 🎊\n\nYou are one of the *Top Contributors* this week with *{points} points*!\n\nThank you for your valuable contributions and for being a light in the community! 🙏",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as dm_e:
+                logger.warning(f"Could not send DM to weekly winner {user_id}: {dm_e}")
+
+        # 3. Announce in Channel
+        if CHANNEL_ID and winners_info:
+            announcement = "🏆 *Weekly Top Contributors* 🏆\n\n" + "\n".join(winners_info) + \
+                          "\n\nCongratulations! Thank you for being such a blessing to this community. ✨"
+            try:
+                await context.bot.send_message(
+                    chat_id=CHANNEL_ID,
+                    text=announcement,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as ch_e:
+                logger.error(f"Failed to announce weekly winners in channel: {ch_e}")
+                
+        logger.info(f"✅ Weekly contributors announced: {len(winners_info)} users.")
+        
+    except Exception as e:
+        logger.error(f"❌ Error in award_weekly_badges job: {e}")
+
 
 @lru_cache(maxsize=128)
 def format_aura(rating):
@@ -1201,7 +1316,9 @@ def get_cancel_reply_keyboard():
         resize_keyboard=True,
         one_time_keyboard=True,  # Set to True so it disappears after use
     )
+
 def get_display_name(user_data):
+    """Helper to get user's display name with sex emoji"""
     if not user_data:
         return "Anonymous"
     
@@ -1297,7 +1414,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Get top 10 users with weighted aura
     top_users = db_fetch_all('''
-        SELECT u.user_id, u.anonymous_name, u.sex,
+        SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji,
                (
                 (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
                 (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
@@ -6106,6 +6223,7 @@ def main():
     app.add_handler(CommandHandler("inbox", show_inbox))
     app.add_handler(CommandHandler("fixventnumbers", fix_vent_numbers))
     app.add_handler(CommandHandler("recount_comments", recount_comments))
+    app.add_handler(CommandHandler("reset_weekly_badges", reset_weekly_badges_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_message_text))
@@ -6123,6 +6241,16 @@ def main():
     
     logger.info(f"✅ Flask health check server started on port {port}")
     
+    # Schedule Weekly Badges (Every Monday at 00:00 UTC)
+    job_queue = app.job_queue
+    if job_queue:
+        job_queue.run_daily(
+            award_weekly_badges,
+            time=time(0, 0, tzinfo=timezone.utc),
+            days=(0,)  # Monday = 0
+        )
+        logger.info("📅 Weekly badge awarding job scheduled for Mondays at 00:00 UTC")
+
     # Start polling
     logger.info("Starting bot polling...")
     app.run_polling()
