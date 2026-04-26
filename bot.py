@@ -230,15 +230,45 @@ def init_db():
                     logger.info("Adding missing column: rejection_reason to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN rejection_reason TEXT DEFAULT NULL")
                 
-                # Add other missing columns if needed in the future
-                # Example for future migrations:
-                # c.execute("""
-                #     SELECT column_name 
-                #     FROM information_schema.columns 
-                #     WHERE table_name='users' AND column_name='new_column'
-                # """)
-                # if not c.fetchone():
-                #     c.execute("ALTER TABLE users ADD COLUMN new_column TEXT DEFAULT NULL")
+                # ---------------- Database Multi-Category Migration ----------------
+                # 1. Add selected_categories to users table
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='users' AND column_name='selected_categories'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: selected_categories to users table")
+                    c.execute("ALTER TABLE users ADD COLUMN selected_categories TEXT DEFAULT NULL")
+
+                # 2. Check if posts still has 'category' column
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='posts' AND column_name='category'
+                """)
+                has_category_column = c.fetchone()
+
+                if has_category_column:
+                    # Create junction table
+                    c.execute('''
+                        CREATE TABLE IF NOT EXISTS post_categories (
+                            post_id INTEGER REFERENCES posts(post_id) ON DELETE CASCADE,
+                            category_code TEXT,
+                            PRIMARY KEY (post_id, category_code)
+                        )
+                    ''')
+                    
+                    # Migrate existing data
+                    c.execute("SELECT post_id, category FROM posts WHERE category IS NOT NULL")
+                    old_posts = c.fetchall()
+                    for post_id, category in old_posts:
+                        c.execute(
+                            "INSERT INTO post_categories (post_id, category_code) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                            (post_id, category)
+                        )
+                    
+                    # Drop old column
+                    c.execute("ALTER TABLE posts DROP COLUMN category")
+                    logger.info("Migrated posts to multi-category (post_categories table)")
 
                 # ---------------- Create admin user if specified ----------------
                 if ADMIN_ID:
@@ -605,6 +635,30 @@ def build_category_buttons():
                 row.append(InlineKeyboardButton(name, callback_data=f'category_{code}'))
         buttons.append(row)
     return InlineKeyboardMarkup(buttons) 
+
+def build_multi_category_keyboard(selected_codes):
+    """Create inline keyboard with checkboxes for multi-category selection."""
+    keyboard = []
+    row = []
+    for i, (display, code) in enumerate(CATEGORIES):
+        check = "✅ " if code in selected_codes else "☐ "
+        button_text = f"{check}{display}"
+        row.append(InlineKeyboardButton(button_text, callback_data=f"cat_toggle_{code}"))
+        if len(row) == 2:  # Two buttons per row
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    # Action buttons
+    keyboard.append([
+        InlineKeyboardButton("✅ Done", callback_data="cat_done"),
+        InlineKeyboardButton("🔄 Reset", callback_data="cat_reset")
+    ])
+    keyboard.append([
+        InlineKeyboardButton("❌ Cancel", callback_data="cancel_input")
+    ])
+    return InlineKeyboardMarkup(keyboard)
 
 
 # Initialize Flask app for Render health checks
@@ -1445,8 +1499,12 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
             else:
                 thread_text = f"🔄 *Threading from previous post:*\n{escape_markdown(thread_preview, version=2)}\n\n"
     
+    # Format categories for preview
+    category_list = category.split(',') if category else []
+    cat_display = ", ".join(category_list)
+    
     preview_text = (
-        f"{thread_text}📝 *Post Preview* [{escape_markdown(category, 2)}]\n\n"
+        f"{thread_text}📝 *Post Preview* [{escape_markdown(cat_display, 2)}]\n\n"
         f"{escape_markdown(post_content, version=2)}\n\n"
         f"Please confirm your post\\:"
     )
@@ -1454,7 +1512,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     
     context.user_data['pending_post'] = {
         'content': post_content,
-        'category': category,
+        'category': category, # Keep as comma-separated string
         'media_type': media_type,
         'media_id': media_id,
         'thread_from_post_id': thread_from_post_id,
@@ -1507,7 +1565,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
             try:
                 # Try to send as a new message instead
                 await update.callback_query.message.reply_text(
-                    f"📝 *Post Preview* [{category}]\n\n"
+                    f"📝 *Post Preview* [{cat_display}]\n\n"
                     f"{escape_markdown(post_content, version=2)}\n\n"
                     f"Please confirm your post:",
                     reply_markup=InlineKeyboardMarkup(keyboard),
@@ -2145,10 +2203,13 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Get pending posts (simplified - no JOIN with pending_notifications)
     posts = db_fetch_all("""
-        SELECT p.post_id, p.content, p.category, u.anonymous_name, p.media_type, p.media_id
+        SELECT p.post_id, p.content, u.anonymous_name, p.media_type, p.media_id,
+               STRING_AGG(pc.category_code, ', ') as categories
         FROM posts p
         JOIN users u ON p.author_id = u.user_id
+        LEFT JOIN post_categories pc ON p.post_id = pc.post_id
         WHERE p.approved = FALSE
+        GROUP BY p.post_id, u.anonymous_name, p.media_type, p.media_id, p.content, p.timestamp
         ORDER BY p.timestamp
     """)
     
@@ -2169,7 +2230,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ])
         
         preview = post['content'][:200] + '...' if len(post['content']) > 200 else post['content']
-        text = f"📝 *Pending Post* [{post['category']}]\n\n{preview}\n\n👤 {post['anonymous_name']}"
+        text = f"📝 *Pending Post* [{post['categories'] or 'Other'}]\n\n{preview}\n\n👤 {post['anonymous_name']}"
         
         try:
             if post['media_type'] == 'text':
@@ -2258,8 +2319,10 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         max_vent = db_fetch_one("SELECT MAX(vent_number) as max_num FROM posts WHERE approved = TRUE")
         next_vent_number = (max_vent['max_num'] or 0) + 1
         
-        # Format the post content for the channel with vent number
-        hashtag = f"#{post['category']}"
+        # Get categories for this post
+        cats_row = db_fetch_all("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,))
+        categories = [row['category_code'] for row in cats_row]
+        hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
         
         # Create the vent number text (copyable format)
         vent_display = f"Vent - {next_vent_number:03d}"
@@ -2268,7 +2331,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             f"`{vent_display}`\n\n"
             f"{post['content']}\n\n"
             f"━━━━━━━━━━━━━━━\n"
-            f"{hashtag}\n"
+            f"{hashtags}\n"
             f"[Telegram](https://t.me/christianvent)| [Bot](https://t.me/{BOT_USERNAME})"
         )
         
@@ -4198,25 +4261,63 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return  # Do nothing and exit the function
             
         if query.data == 'ask':
+            context.user_data['selected_categories'] = set()
             await query.message.reply_text(
-                "📚 *Choose a category:*",
-                reply_markup=build_category_buttons(),
+                "📚 *Select categories (you can choose multiple):*",
+                reply_markup=build_multi_category_keyboard(set()),
                 parse_mode=ParseMode.MARKDOWN
             )
 
-        elif query.data.startswith('category_'):
-            await query.answer("✍️ Opening Category...", show_alert=False)
-            category = query.data.split('_', 1)[1]
-            db_execute(
-                "UPDATE users SET waiting_for_post = TRUE, selected_category = %s WHERE user_id = %s",
-                (category, user_id)
+        elif query.data.startswith("cat_toggle_"):
+            code = query.data.split("_", 2)[2]
+            selected = context.user_data.get('selected_categories', set())
+            if not isinstance(selected, set):
+                selected = set(selected) if selected else set()
+            
+            if code in selected:
+                selected.remove(code)
+            else:
+                selected.add(code)
+            
+            context.user_data['selected_categories'] = selected
+            await query.message.edit_reply_markup(
+                reply_markup=build_multi_category_keyboard(selected)
             )
-        
+            await query.answer()
+
+        elif query.data == "cat_reset":
+            context.user_data['selected_categories'] = set()
+            await query.message.edit_reply_markup(
+                reply_markup=build_multi_category_keyboard(set())
+            )
+            await query.answer("Categories reset", show_alert=False)
+
+        elif query.data == "cat_done":
+            selected = context.user_data.get('selected_categories', set())
+            if not selected:
+                await query.answer("❌ Please select at least one category.", show_alert=True)
+                return
+            
+            # Store selected categories in user's DB record
+            db_execute(
+                "UPDATE users SET selected_categories = %s WHERE user_id = %s",
+                (','.join(selected), user_id)
+            )
+            db_execute(
+                "UPDATE users SET waiting_for_post = TRUE WHERE user_id = %s",
+                (user_id,)
+            )
+            
             await query.message.reply_text(
-                f"✍️ *Please type your thought for #{category}:*\n\nYou may also send a photo or voice message.\n\nTap ❌ Cancel to return to menu.",
+                f"✍️ *You selected: {', '.join(selected)}*\n\nNow send your post content (text, photo, or voice).",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=cancel_menu
             )
+            try:
+                await query.message.delete()  # Remove category selection message
+            except:
+                pass
+            await query.answer()
         
         elif query.data == 'menu':
             await query.answer("📱 Opening Menu...", show_alert=False)
@@ -5076,19 +5177,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_id = pending_post.get('media_id')
                 thread_from_post_id = pending_post.get('thread_from_post_id')
                 
-                # Insert post with thread reference if available
+                # Insert post (without 'category' column which was dropped)
                 if thread_from_post_id:
                     post_row = db_execute(
-                        "INSERT INTO posts (content, author_id, category, media_type, media_id, thread_from_post_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
-                        (post_content, user_id, category, media_type, media_id, thread_from_post_id),
+                        "INSERT INTO posts (content, author_id, media_type, media_id, thread_from_post_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, media_type, media_id, thread_from_post_id),
                         fetchone=True
                     )
                 else:
                     post_row = db_execute(
-                        "INSERT INTO posts (content, author_id, category, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
-                        (post_content, user_id, category, media_type, media_id),
+                        "INSERT INTO posts (content, author_id, media_type, media_id) VALUES (%s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, media_type, media_id),
                         fetchone=True
                     )
+                
+                if post_row:
+                    post_id = post_row['post_id']
+                    
+                    # Insert categories into junction table
+                    category_list = category.split(',') if category else []
+                    for cat_code in category_list:
+                        db_execute(
+                            "INSERT INTO post_categories (post_id, category_code) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                            (post_id, cat_code.strip())
+                        )
                 
                 # Clean up user data
                 if 'pending_post' in context.user_data:
@@ -5562,8 +5674,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thread_from_post_id = context.user_data.get('thread_from_post_id')
     
     if user and user['waiting_for_post']:
-        category = user['selected_category']
-        
+        category = user.get('selected_categories')
+        if not category:
+            category = user.get('selected_category') # Fallback for transition
+            
+        if not category:
+            await update.message.reply_text("❌ No categories selected. Please start over.", reply_markup=get_main_menu(user_id))
+            db_execute("UPDATE users SET waiting_for_post = FALSE WHERE user_id = %s", (user_id,))
+            return
+
         post_content = ""
         media_type = 'text'
         media_id = None
@@ -5589,7 +5708,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # FIX: Reset user state for BOTH text and media posts
             db_execute(
-                "UPDATE users SET waiting_for_post = FALSE, selected_category = NULL WHERE user_id = %s",
+                "UPDATE users SET waiting_for_post = FALSE, selected_categories = NULL, selected_category = NULL WHERE user_id = %s",
                 (user_id,)
             )
             
@@ -7642,15 +7761,29 @@ def mini_app_submit_vent():
         if not user:
             return jsonify({'success': False, 'error': 'User not found'}), 404
         
-        # Insert the post (simple and clean)
+        # Insert the post (without category column)
         post_row = db_execute(
-            "INSERT INTO posts (content, author_id, category, media_type, approved) VALUES (%s, %s, %s, 'text', FALSE) RETURNING post_id",
-            (content, user_id, category),
+            "INSERT INTO posts (content, author_id, media_type, approved) VALUES (%s, %s, 'text', FALSE) RETURNING post_id",
+            (content, user_id),
             fetchone=True
         )
         
         if post_row:
             post_id = post_row['post_id']
+            
+            # Handle categories (support both single string and list from JSON)
+            if isinstance(category, str):
+                category_list = [c.strip() for c in category.split(',') if c.strip()]
+            elif isinstance(category, list):
+                category_list = category
+            else:
+                category_list = ['Other']
+                
+            for cat_code in category_list:
+                db_execute(
+                    "INSERT INTO post_categories (post_id, category_code) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (post_id, cat_code)
+                )
             
             # Log it (optional)
             logger.info(f"📝 Mini App Post submitted: ID {post_id} by {user_id}")
@@ -7670,7 +7803,6 @@ def mini_app_submit_vent():
         logger.error(f"Error in mini-app submit vent: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-# Helper function for sync context (since Flask routes can't be async)
 def notify_admin_of_new_post_sync(post_id):
     """Sync version of notify_admin_of_new_post"""
     try:
@@ -7791,7 +7923,7 @@ def mini_app_get_posts():
                 'id': post['post_id'],
                 'content': content_preview,
                 'full_content': post['content'],
-                'category': post['category'],
+                'category': post['categories'] or 'Other',
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
                 'author': {
@@ -7825,11 +7957,14 @@ def mini_app_get_single_post(post_id):
     try:
         post = db_fetch_one('''
             SELECT 
-                p.post_id, p.content, p.category, p.timestamp, p.comment_count, p.media_type,
-                u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name
+                p.post_id, p.content, p.timestamp, p.comment_count, p.media_type,
+                u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
+                STRING_AGG(pc.category_code, ', ') as categories
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
+            LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.post_id = %s AND p.approved = TRUE
+            GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name
         ''', (post_id,))
         
         if not post:
@@ -7858,7 +7993,7 @@ def mini_app_get_single_post(post_id):
         formatted_post = {
             'id': post['post_id'],
             'content': post['content'],
-            'category': post['category'],
+            'category': post['categories'] or 'Other',
             'time_ago': time_ago,
             'comments': post['comment_count'] or 0,
             'author': {
