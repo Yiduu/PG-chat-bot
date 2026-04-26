@@ -7781,7 +7781,7 @@ def mini_app_page():
                     }} else {{
                         if (!append) container.innerHTML = `<div class="message error-message">Failed to load posts.</div>`;
                     }}
-                } catch (error) {{
+                }} catch (error) {{
                     if (!append) container.innerHTML = `<div class="message error-message">Network error.</div>`;
                 }} finally {{
                     this.isLoading = false;
@@ -7958,7 +7958,7 @@ def mini_app_page():
                         this.closeModal('editCommentModal');
                         this.loadPostComments(this.currentPostId);
                     }}
-                } catch(e) {{ this.showMessage('Network error', 'error'); }}
+                }} catch(e) {{ this.showMessage('Network error', 'error'); }}
             }}
 
             async deleteComment(commentId) {{
@@ -7973,7 +7973,7 @@ def mini_app_page():
                         this.showMessage('Comment deleted.', 'success');
                         this.loadPostComments(this.currentPostId);
                     }}
-                } catch(e) {{ this.showMessage('Network error', 'error'); }}
+                }} catch(e) {{ this.showMessage('Network error', 'error'); }}
             }}
 
             async openPostDetail(postId) {{
@@ -8334,8 +8334,7 @@ def mini_app_page():
                                 </div>
                             </div>
                         `;
-                    }}
- else {{
+                    }} else {{
                         container.innerHTML = '<div class="error-message">Failed to load profile</div>';
                     }}
                 }} catch (error) {{
