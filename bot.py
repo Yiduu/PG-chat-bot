@@ -642,8 +642,11 @@ def build_multi_category_keyboard(selected_codes):
     keyboard = []
     row = []
     for display, code in CATEGORIES:
-        check = "✅ " if code in selected_codes else "☐ "
-        button_text = f"{check}{display}"
+        if code in selected_codes:
+            button_text = f"✅ {display}"
+        else:
+            button_text = display
+            
         row.append(InlineKeyboardButton(button_text, callback_data=f"cat_toggle_{code}"))
         if len(row) == 2:
             keyboard.append(row)
@@ -2411,11 +2414,14 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         # CRITICAL FIX: Update the admin's original message to remove Approve/Reject buttons
         # =============================================
         try:
+            # Format categories for display
+            categories_display = ', '.join(categories) if categories else 'None'
+            
             # Edit the original admin notification message to show it's approved
             await query.edit_message_text(
                 f"✅ **Post Approved and Published!**\n\n"
                 f"**Vent Number:** {vent_display}\n"
-                f"**Category:** {post['category']}\n"
+                f"**Categories:** {categories_display}\n"
                 f"**Published to channel:** ✅\n\n"
                 f"**Content Preview:**\n{post['content'][:150]}...",
                 parse_mode=ParseMode.MARKDOWN
@@ -4050,8 +4056,14 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
     loading_msg = await query.message.edit_text("📄 Loading post details...")
     await animated_loading(loading_msg, "Loading", 2)
     
-    # Get post details
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    # Get post details with categories
+    post = db_fetch_one("""
+        SELECT p.*, STRING_AGG(pc.category_code, ', ') as categories
+        FROM posts p
+        LEFT JOIN post_categories pc ON p.post_id = pc.post_id
+        WHERE p.post_id = %s
+        GROUP BY p.post_id
+    """, (post_id,))
     
     if not post:
         await replace_with_error(loading_msg, "Post not found")
@@ -4066,7 +4078,7 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
     
     # Format the post content
     escaped_content = escape_markdown(post['content'], version=2)
-    escaped_category = escape_markdown(post['category'], version=2)
+    escaped_categories = escape_markdown(post['categories'] or 'None', version=2)
     
     # Format timestamp
     if isinstance(post['timestamp'], str):
@@ -4082,7 +4094,7 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
         f"📝 *Post Details*\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🆔 **Post ID:** \\#{post['post_id']}\n"
-        f"📌 **Category:** {escaped_category}\n"
+        f"📌 **Categories:** {escaped_categories}\n"
         f"📅 **Posted on:** {escape_markdown(timestamp, version=2)}\n"
         f"💬 **Comments:** {comment_count}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
