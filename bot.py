@@ -6523,6 +6523,47 @@ def mini_app_page():
             letter-spacing: 1.8px;
         }}
 
+        .categories-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin: 15px 0;
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }}
+        .category-item {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            padding: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-radius: 8px;
+        }}
+        .category-item:hover {{
+            background: rgba(255, 255, 255, 0.05);
+        }}
+        .category-item input[type="checkbox"] {{
+            accent-color: var(--primary);
+            width: 16px;
+            height: 16px;
+        }}
+        .category-badge {{
+            background: rgba(var(--primary-rgb), 0.1);
+            color: var(--primary);
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            margin-right: 4px;
+            display: inline-block;
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+        }}
+
         .refresh-btn {{
             background: rgba(var(--primary-rgb), 0.08);
             border: 1px solid rgba(var(--primary-rgb), 0.18);
@@ -6869,9 +6910,9 @@ def mini_app_page():
             cursor: pointer;
             font-family: 'Inter', sans-serif;
             transition: all 0.2s ease;
-        }}
-        .reply-cancel-btn:hover {{ opacity: 0.8; }}
-        .reply-send-btn {{
+        }
+        .reply-cancel-btn:hover { opacity: 0.8; }
+        .reply-send-btn {
             background: linear-gradient(135deg, var(--primary), #d4af37);
             border: none;
             color: #000;
@@ -6882,8 +6923,8 @@ def mini_app_page():
             cursor: pointer;
             font-family: 'Inter', sans-serif;
             transition: all 0.2s ease;
-        }}
-        .reply-send-btn:hover {{ transform: translateY(-1px); }}
+        }
+        .reply-send-btn:hover { transform: translateY(-1px); }
         
     </style>
 
@@ -6939,18 +6980,10 @@ def mini_app_page():
                     <h2 class="form-title">Share Your Thoughts</h2>
                     <p class="form-description">Share your struggles anonymously. Your identity is always hidden.</p>
 
-                    <select class="category-select" id="categorySelect">
-                        <option value="PrayForMe">🙏 Pray For Me</option>
-                        <option value="Bible">📖 Bible Study</option>
-                        <option value="WorkLife">💼 Work and Life</option>
-                        <option value="SpiritualLife">🕊️ Spiritual Life</option>
-                        <option value="ChristianChallenges">⚔️ Christian Challenges</option>
-                        <option value="Relationship">❤️ Relationship</option>
-                        <option value="Marriage">💍 Marriage</option>
-                        <option value="Youth">👥 Youth</option>
-                        <option value="Finance">💰 Finance</option>
-                        <option value="Other" selected>📝 Other</option>
-                    </select>
+                    <h3 style="color: var(--primary); font-family: 'Oswald'; font-size: 1.1rem; margin-top: 15px;">SELECT CATEGORIES</h3>
+                    <div id="categoriesContainer" class="categories-grid">
+                        <!-- Populated by JS -->
+                    </div>
 
 
                     <textarea 
@@ -7167,6 +7200,7 @@ def mini_app_page():
                     this.userId = String(tg.initDataUnsafe.user.id);
                     tg.expand();
                     await this.loadUserData();
+                    this.renderCategoryCheckboxes();
                     await this.loadPosts();
                     await this.loadLeaderboard();
                     return;
@@ -7198,6 +7232,7 @@ def mini_app_page():
                     
                     this.userId = data.user_id;
                     await this.loadUserData();
+                    this.renderCategoryCheckboxes();
                     
                 }} catch (error) {{
                     console.error('Auth error:', error);
@@ -7314,8 +7349,9 @@ def mini_app_page():
                                     <span class="aura-sticker">${{post.author.aura || ''}}</span>
                                 </div>
                                 <div class="post-meta">
-                                    <span class="identity-badge" style="font-size: 0.7rem; padding: 2px 8px;">${{post.category}}</span>
-                                    <span>•</span>
+                                    <div class="categories-list" style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">
+                                        ${{post.categories.map(cat => `<span class="category-badge" style="font-size: 0.8rem; padding: 3px 10px;">${{cat}}</span>`).join('')}}
+                                    </div>
                                     <span>${{post.time_ago}}</span>
                                 </div>
                             </div>
@@ -7357,8 +7393,9 @@ def mini_app_page():
                                             <span class="aura-sticker">${{post.author.aura || ''}}</span>
                                         </div>
                                         <div class="post-meta">
-                                            <span class="identity-badge" style="font-size: 0.7rem; padding: 2px 8px;">${{post.category}}</span>
-                                            <span>•</span>
+                                            <div class="categories-list" style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">
+                                                ${{post.categories.map(cat => `<span class="category-badge" style="font-size: 0.8rem; padding: 3px 10px;">${{cat}}</span>`).join('')}}
+                                            </div>
                                             <span>${{post.time_ago}}</span>
                                         </div>
                                     </div>
@@ -7612,16 +7649,45 @@ def mini_app_page():
                 `).join('');
             }}
 
-            
+            renderCategoryCheckboxes() {{
+                const container = document.getElementById('categoriesContainer');
+                if (!container) return;
+                const categoriesList = [
+                    ["PrayForMe", "🙏 Pray For Me"],
+                    ["Bible", "📖 Bible Study"],
+                    ["WorkLife", "💼 Work and Life"],
+                    ["SpiritualLife", "🕊️ Spiritual Life"],
+                    ["ChristianChallenges", "⚔️ Christian Challenges"],
+                    ["Relationship", "❤️ Relationship"],
+                    ["Marriage", "💍 Marriage"],
+                    ["Youth", "🧑‍🤝‍🧑 Youth"],
+                    ["Finance", "💰 Finance"],
+                    ["WorshipMusic", "🎶 Worship & Music"],
+                    ["Family", "🏠 Family Issues"],
+                    ["Testimony", "🙌 Testimony"],
+                    ["AddictionRecovery", "💊 Addiction & Recovery"],
+                    ["BibleQuestion", "📖 Bible Question"],
+                    ["Other", "🔖 Other"]
+                ];
+                container.innerHTML = categoriesList.map(([code, label]) => `
+                    <label class="category-item">
+                        <input type="checkbox" value="${{code}}" ${{code === 'Other' ? 'checked' : ''}}>
+                        <span>${{label}}</span>
+                    </label>
+                `).join('');
+            }}
+
+            getSelectedCategories() {{
+                const checkboxes = document.querySelectorAll('#categoriesContainer input:checked');
+                return Array.from(checkboxes).map(cb => cb.value);
+            }}
+
             async loadProfile(userId) {{
                 const container = document.getElementById('profileContainer');
                 if (!container) return;
                 container.innerHTML = '<div class="loading">Loading profile...</div>';
                 
                 try {{
-                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/profile/${{userId}}`);
-                    const data = await response.json();
-                    
                     if (data.success) {{
                         const profile = data.data;
                         container.innerHTML = `
@@ -7663,16 +7729,20 @@ def mini_app_page():
             
             async submitVent() {{
                 const ventText = document.getElementById('ventText');
-                const categorySelect = document.getElementById('categorySelect');
                 const submitBtn = document.getElementById('submitVent');
                 
-                if (!ventText || !categorySelect || !submitBtn) return;
+                if (!ventText || !submitBtn) return;
                 
                 const content = ventText.value.trim();
-                const category = categorySelect.value;
+                const categories = this.getSelectedCategories();
                 
                 if (!content) {{
                     this.showMessage('Please write something before posting', 'error');
+                    return;
+                }}
+                
+                if (categories.length === 0) {{
+                    this.showMessage('Please select at least one category', 'error');
                     return;
                 }}
                 
@@ -7692,7 +7762,7 @@ def mini_app_page():
                         body: JSON.stringify({{
                             user_id: this.userId,
                             content: content,
-                            category: category
+                            categories: categories
                         }})
                     }});
                     
@@ -7702,6 +7772,11 @@ def mini_app_page():
                         this.showMessage(data.message, 'success');
                         ventText.value = '';
                         document.getElementById('charCount').textContent = '0/5000 characters';
+                        // Reset checkboxes
+                        document.querySelectorAll('#categoriesContainer input').forEach(cb => {{
+                            cb.checked = (cb.value === 'Other');
+                        }});
+                        
                         setTimeout(() => {{
                             this.switchTab('posts');
                             this.loadPosts();
@@ -7757,7 +7832,7 @@ def mini_app_page():
 
 @flask_app.route('/api/mini-app/submit-vent', methods=['POST'])
 def mini_app_submit_vent():
-    """API endpoint for submitting vents from mini app - SIMPLIFIED"""
+    """API endpoint for submitting vents from mini app - Supports Multiple Categories"""
     try:
         # Get data from request
         data = request.get_json()
@@ -7766,20 +7841,23 @@ def mini_app_submit_vent():
         
         user_id = data.get('user_id')
         content = data.get('content', '').strip()
-        category = data.get('category', 'Other')
+        categories = data.get('categories', []) # Expected as array
         
         if not user_id:
             return jsonify({'success': False, 'error': 'User ID required'}), 400
         
         if not content:
             return jsonify({'success': False, 'error': 'Content cannot be empty'}), 400
+            
+        if not categories:
+            return jsonify({'success': False, 'error': 'At least one category is required'}), 400
         
         # Check if user exists
         user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
         if not user:
             return jsonify({'success': False, 'error': 'User not found'}), 404
         
-        # Insert the post (without category column)
+        # Insert the post (no category column)
         post_row = db_execute(
             "INSERT INTO posts (content, author_id, media_type, approved) VALUES (%s, %s, 'text', FALSE) RETURNING post_id",
             (content, user_id),
@@ -7789,24 +7867,17 @@ def mini_app_submit_vent():
         if post_row:
             post_id = post_row['post_id']
             
-            # Handle categories (support both single string and list from JSON)
-            if isinstance(category, str):
-                category_list = [c.strip() for c in category.split(',') if c.strip()]
-            elif isinstance(category, list):
-                category_list = category
-            else:
-                category_list = ['Other']
-                
-            for cat_code in category_list:
+            # Insert each category into junction table
+            for cat_code in categories:
                 db_execute(
                     "INSERT INTO post_categories (post_id, category_code) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                     (post_id, cat_code)
                 )
             
-            # Log it (optional)
-            logger.info(f"📝 Mini App Post submitted: ID {post_id} by {user_id}")
+            # Log it
+            logger.info(f"📝 Mini App Multi-Cat Post submitted: ID {post_id} by {user_id}")
             
-            # Notify admin immediately to prevent missed vents
+            # Notify admin immediately
             notify_admin_of_new_post_sync(post_id)
             
             return jsonify({
@@ -7937,11 +8008,14 @@ def mini_app_get_posts():
             rating = calculate_user_rating(post['author_id'])
             aura_sticker = format_aura(rating)
             
+            # Parse categories into array
+            category_list = post['categories'].split(',') if post['categories'] else ['Other']
+            
             formatted_posts.append({
                 'id': post['post_id'],
                 'content': content_preview,
                 'full_content': post['content'],
-                'category': post['categories'] or 'Other',
+                'categories': category_list,
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
                 'author': {
@@ -8008,10 +8082,13 @@ def mini_app_get_single_post(post_id):
             
         rating = calculate_user_rating(post['author_id'])
         
+        # Parse categories
+        category_list = post['categories'].split(',') if post['categories'] else ['Other']
+        
         formatted_post = {
             'id': post['post_id'],
             'content': post['content'],
-            'category': post['categories'] or 'Other',
+            'categories': category_list,
             'time_ago': time_ago,
             'comments': post['comment_count'] or 0,
             'author': {
@@ -8228,14 +8305,16 @@ def mini_app_admin_pending_posts():
             SELECT 
                 p.post_id,
                 p.content,
-                p.category,
                 p.timestamp,
                 p.media_type,
                 u.anonymous_name as author_name,
-                u.sex as author_sex
+                u.sex as author_sex,
+                STRING_AGG(pc.category_code, ',') as categories
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
+            LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.approved = FALSE
+            GROUP BY p.post_id, u.anonymous_name, u.sex, p.content, p.timestamp, p.media_type
             ORDER BY p.timestamp
         ''')
         
