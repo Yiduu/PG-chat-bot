@@ -588,6 +588,11 @@ CATEGORIES = [
     ("🧑‍🤝‍🧑 Youth", "Youth"),
     ("💰 Finance", "Finance"),
     ("🔖 Other", "Other"),
+    ("🎶 Worship & Music", "WorshipMusic"),
+    ("🏠 Family Issues", "Family"),
+    ("🙌 Testimony", "Testimony"),
+    ("💊 Addiction & Recovery", "AddictionRecovery"),
+    ("📖 Bible Question", "BibleQuestion"),
 ] 
 
 def build_category_buttons():
