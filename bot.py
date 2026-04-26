@@ -169,7 +169,16 @@ def init_db():
                     target_group TEXT DEFAULT 'all',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-                ''')                  
+                ''')
+
+                c.execute('''
+                CREATE TABLE IF NOT EXISTS post_views (
+                    user_id TEXT REFERENCES users(user_id),
+                    post_id INTEGER REFERENCES posts(post_id),
+                    last_viewed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, post_id)
+                )
+                ''')
                 # ---------------- Database Schema Migration (Postgres Robust) ----------------
                 
                 # Check for 'bio' column in users
@@ -229,6 +238,22 @@ def init_db():
                 if not c.fetchone():
                     logger.info("Adding missing column: rejection_reason to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN rejection_reason TEXT DEFAULT NULL")
+
+                # Check for 'search_vector' column in posts
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='posts' AND column_name='search_vector'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding search_vector to posts table")
+                    try:
+                        c.execute("""
+                            ALTER TABLE posts ADD COLUMN search_vector tsvector
+                            GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
+                        """)
+                        c.execute("CREATE INDEX idx_posts_search ON posts USING GIN(search_vector)")
+                    except Exception as e:
+                        logger.error(f"Failed to add search_vector (maybe not Postgres?): {e}")
                 
                 # ---------------- Database Multi-Category Migration ----------------
                 # 1. Add selected_categories to users table
@@ -7070,6 +7095,186 @@ def mini_app_page():
         }}
         .reply-send-btn:hover {{ transform: translateY(-1px); }}
         
+        /* ===== ADVANCED FEATURES STYLES ===== */
+        .unread-badge {{
+            background: #ff4444;
+            color: white;
+            font-size: 0.65rem;
+            font-weight: 800;
+            padding: 2px 6px;
+            border-radius: 10px;
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            animation: pulse 2s infinite;
+        }}
+
+        @keyframes pulse {{
+            0% {{ transform: scale(1); }}
+            50% {{ transform: scale(1.1); }}
+            100% {{ transform: scale(1); }}
+        }}
+
+        .search-container {{
+            margin-bottom: 20px;
+            position: relative;
+            display: flex;
+            gap: 10px;
+        }}
+
+        .search-input {{
+            flex: 1;
+            background: rgba(var(--primary-rgb), 0.05);
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+            border-radius: 15px;
+            padding: 12px 15px 12px 40px;
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            outline: none;
+            transition: all 0.3s ease;
+        }}
+
+        .search-input:focus {{
+            border-color: var(--primary);
+            background: rgba(var(--primary-rgb), 0.1);
+            box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.1);
+        }}
+
+        .search-icon {{
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            opacity: 0.5;
+        }}
+
+        .share-btn {{
+            background: rgba(var(--primary-rgb), 0.1);
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+            color: var(--primary);
+            padding: 8px 12px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }}
+
+        .share-btn:hover {{
+            background: rgba(var(--primary-rgb), 0.2);
+            transform: translateY(-2px);
+        }}
+
+        /* Modal Styles */
+        .modal-overlay {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }}
+
+        .modal-overlay.active {{
+            display: flex;
+            opacity: 1;
+        }}
+
+        .modal-content {{
+            background: var(--card-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 25px;
+            padding: 30px;
+            width: 100%;
+            max-width: 450px;
+            transform: translateY(20px);
+            transition: transform 0.3s ease;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+        }}
+
+        .modal-overlay.active .modal-content {{
+            transform: translateY(0);
+        }}
+
+        .modal-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }}
+
+        .close-modal {{
+            background: none;
+            border: none;
+            color: var(--text);
+            font-size: 1.5rem;
+            cursor: pointer;
+            opacity: 0.5;
+        }}
+
+        /* Comment Actions */
+        .comment-actions {{
+            display: flex;
+            gap: 10px;
+            margin-top: 8px;
+            opacity: 0.6;
+            transition: opacity 0.3s;
+        }}
+
+        .comment-body:hover .comment-actions {{
+            opacity: 1;
+        }}
+
+        .action-btn {{
+            background: none;
+            border: none;
+            font-size: 0.75rem;
+            cursor: pointer;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }}
+
+        .action-btn:hover {{
+            color: var(--primary);
+        }}
+
+        /* Loading Trigger for Infinite Scroll */
+        #loadMoreTrigger {{
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 20px;
+        }}
+
+        .spinner {{
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(var(--primary-rgb), 0.2);
+            border-top: 3px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }}
+
+        @keyframes spin {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(360deg); }}
+        }}
+
     </style>
 
 </head>
@@ -7153,6 +7358,10 @@ def mini_app_page():
 
             <!-- Posts Tab -->
             <div id="posts-tab" class="tab-pane">
+                <div class="search-container">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="searchInput" class="search-input" placeholder="Search vents or keywords...">
+                </div>
                 <div class="section-header" style="padding: 0 10px;">
                     <h2 class="section-title">Global Feed</h2>
                     <button class="refresh-btn" id="refreshPosts" style="background: rgba(var(--primary-rgb), 0.1); border-color: rgba(var(--primary-rgb), 0.2);">↻ Refresh</button>
@@ -7160,6 +7369,9 @@ def mini_app_page():
                 <div class="posts-container" id="postsContainer">
                     <!-- Cards will be injected as glass-cards via JS -->
                     <div class="loading">Loading posts...</div>
+                </div>
+                <div id="loadMoreTrigger">
+                    <div class="spinner" style="display: none;"></div>
                 </div>
             </div>
 
@@ -7233,6 +7445,53 @@ def mini_app_page():
         </footer>
     </div>
 
+    <!-- ===== MODALS ===== -->
+    <!-- Profile Edit Modal -->
+    <div class="modal-overlay" id="profileModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="margin:0">Edit Your Profile</h3>
+                <button class="close-modal" onclick="app.closeModal('profileModal')">&times;</button>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:15px;">
+                <div>
+                    <label style="display:block; margin-bottom:8px; font-size:0.8rem; opacity:0.7;">ANONYMOUS NAME</label>
+                    <input type="text" id="editName" class="category-select" style="background-image:none; padding-right:20px;">
+                </div>
+                <div>
+                    <label style="display:block; margin-bottom:8px; font-size:0.8rem; opacity:0.7;">BIO / TESTIMONY</label>
+                    <textarea id="editBio" class="vent-textarea" style="min-height:100px; margin-bottom:0;"></textarea>
+                </div>
+                <div>
+                    <label style="display:block; margin-bottom:8px; font-size:0.8rem; opacity:0.7;">AVATAR EMOJI</label>
+                    <div style="display:flex; gap:10px; font-size:1.5rem; flex-wrap:wrap;">
+                        <span class="emoji-opt" onclick="app.setEmoji('👨')">👨</span>
+                        <span class="emoji-opt" onclick="app.setEmoji('👩')">👩</span>
+                        <span class="emoji-opt" onclick="app.setEmoji('👤')">👤</span>
+                        <span class="emoji-opt" onclick="app.setEmoji('🕊️')">🕊️</span>
+                        <span class="emoji-opt" onclick="app.setEmoji('🙏')">🙏</span>
+                        <span class="emoji-opt" onclick="app.setEmoji('📖')">📖</span>
+                        <input type="hidden" id="editAvatar">
+                    </div>
+                </div>
+                <button class="submit-btn" onclick="app.saveProfile()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Comment Modal -->
+    <div class="modal-overlay" id="editCommentModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="margin:0">Edit Comment</h3>
+                <button class="close-modal" onclick="app.closeModal('editCommentModal')">&times;</button>
+            </div>
+            <textarea id="editCommentText" class="vent-textarea" style="min-height:120px;"></textarea>
+            <input type="hidden" id="editCommentId">
+            <button class="submit-btn" onclick="app.saveCommentEdit()">Save Edit</button>
+        </div>
+    </div>
+
     <script>
         // Christian Vent Mini App - Main JavaScript with Particle Background
         class ChristianVentApp {{
@@ -7244,6 +7503,17 @@ def mini_app_page():
                 this.botUsername = "{bot_username}";
                 this.apiBaseUrl = window.location.origin;
                 this.isAdmin = false;
+                
+                // Pagination state
+                this.currentPage = 1;
+                this.isLoading = false;
+                this.hasMore = true;
+                this.searchTerm = '';
+                
+                // Polling state
+                this.commentInterval = null;
+                this.lastCommentCount = 0;
+
                 this.initParticles();
                 this.initTheme();
                 this.init();
@@ -7425,11 +7695,50 @@ def mini_app_page():
                     submitBtn.addEventListener('click', () => this.submitVent());
                 }}
                 
-                document.getElementById('refreshPosts')?.addEventListener('click', () => this.loadPosts());
+                document.getElementById('refreshPosts')?.addEventListener('click', () => {{
+                    this.currentPage = 1;
+                    this.hasMore = true;
+                    this.loadPosts();
+                }});
                 document.getElementById('refreshLeaderboard')?.addEventListener('click', () => this.loadLeaderboard());
+
+                // Search input listener
+                const searchInput = document.getElementById('searchInput');
+                if (searchInput) {{
+                    let debounce;
+                    searchInput.addEventListener('input', (e) => {{
+                        clearTimeout(debounce);
+                        debounce = setTimeout(() => {{
+                            this.searchTerm = e.target.value;
+                            this.currentPage = 1;
+                            this.hasMore = true;
+                            this.loadPosts();
+                        }}, 500);
+                    }});
+                }}
+
+                this.initInfiniteScroll();
+            }}
+
+            initInfiniteScroll() {{
+                const trigger = document.getElementById('loadMoreTrigger');
+                if (!trigger) return;
+
+                const observer = new IntersectionObserver((entries) => {{
+                    if (entries[0].isIntersecting && !this.isLoading && this.hasMore) {{
+                        this.loadMorePosts();
+                    }}
+                }}, {{ threshold: 0.1 }});
+
+                observer.observe(trigger);
             }}
             
             switchTab(tabName) {{
+                // Stop polling if leaving post detail
+                if (tabName !== 'post-detail') {{
+                    this.stopCommentPolling();
+                }}
+
                 document.querySelectorAll('.nav-item').forEach(item => {{
                     item.classList.toggle('active', item.dataset.tab === tabName);
                 }});
@@ -7443,34 +7752,53 @@ def mini_app_page():
             }}
 
             
-            async loadPosts() {{
+            async loadPosts(append = false) {{
+                if (this.isLoading) return;
+                this.isLoading = true;
+                
                 const container = document.getElementById('postsContainer');
-                if (!container) return;
-                container.innerHTML = `
-                    <div class="glass-card skeleton" style="height: 150px; margin-top: 20px;"></div>
-                    <div class="glass-card skeleton" style="height: 150px;"></div>
-                `;
+                const spinner = document.querySelector('#loadMoreTrigger .spinner');
+                
+                if (!append) {{
+                    container.innerHTML = `
+                        <div class="glass-card skeleton" style="height: 150px; margin-top: 20px;"></div>
+                        <div class="glass-card skeleton" style="height: 150px;"></div>
+                    `;
+                    this.currentPage = 1;
+                }} else if (spinner) {{
+                    spinner.style.display = 'block';
+                }}
                 
                 try {{
-                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/get-posts?page=1&per_page=15`);
+                    const url = `${{this.apiBaseUrl}}/api/mini-app/get-posts?page=${{this.currentPage}}&per_page=10&user_id=${{this.userId}}&q=${{encodeURIComponent(this.searchTerm)}}`;
+                    const response = await fetch(url);
                     const data = await response.json();
                     
                     if (data.success) {{
-                        this.renderPosts(data.data);
+                        this.hasMore = data.has_more;
+                        this.renderPosts(data.data, append);
+                        if (this.hasMore) this.currentPage++;
                     }} else {{
-                        container.innerHTML = `<div class="message error-message">Failed to load posts.</div>`;
+                        if (!append) container.innerHTML = `<div class="message error-message">Failed to load posts.</div>`;
                     }}
-                }} catch (error) {{
-                    container.innerHTML = `<div class="message error-message">Network error. Check connection.</div>`;
+                } catch (error) {{
+                    if (!append) container.innerHTML = `<div class="message error-message">Network error.</div>`;
+                }} finally {{
+                    this.isLoading = false;
+                    if (spinner) spinner.style.display = 'none';
                 }}
             }}
 
+            async loadMorePosts() {{
+                await this.loadPosts(true);
+            }}
+
             
-            renderPosts(posts) {{
+            renderPosts(posts, append = false) {{
                 const container = document.getElementById('postsContainer');
                 if (!container) return;
                 
-                if (!posts || posts.length === 0) {{
+                if (!append && (!posts || posts.length === 0)) {{
                     container.innerHTML = `
                         <div class="glass-card" style="text-align: center;">
                             <h3 style="color: var(--primary);">No Posts Yet</h3>
@@ -7481,8 +7809,9 @@ def mini_app_page():
                     return;
                 }}
                 
-                container.innerHTML = posts.map(post => `
-                    <div class="post-card">
+                const html = posts.map(post => `
+                    <div class="post-card" style="position:relative">
+                        ${{post.unread_comments > 0 ? `<div class="unread-badge">📬 ${{post.unread_comments}}</div>` : ''}}
                         <div class="post-header">
                             <div class="author-icon">
                                 ${{post.author.avatar || (post.author.sex === 'Female' ? '👩' : '👨')}}
@@ -7501,20 +7830,156 @@ def mini_app_page():
                             </div>
                         </div>
                         <div class="post-content" style="font-weight: 300; line-height: 1.8;">${{this.escapeHtml(post.content)}}</div>
-                        <div class="post-footer" style="border-top-color: rgba(255,255,255,0.05);">
+                        <div class="post-footer" style="border-top-color: rgba(255,255,255,0.05); flex-wrap: wrap; gap: 10px;">
                             <div class="comment-count" style="font-weight: 500; color: var(--primary);">🕊️ ${{post.comments}} Responses</div>
-                            <button onclick="app.openPostDetail(${{post.id}})" 
-                                    style="background: transparent; color: var(--primary); border: 1px solid rgba(var(--primary-rgb), 0.3); padding: 8px 15px; border-radius: 12px; font-size: 0.8rem; cursor: pointer; font-family: 'Oswald'; transition: all 0.3s;">
-                                READ FULL VENT
-                            </button>
+                            <div style="display:flex; gap:8px;">
+                                <button class="share-btn" onclick="app.sharePost(${{post.id}}, '${{this.escapeHtml(post.content.substring(0, 50))}}')">📤 Share</button>
+                                <button onclick="app.openPostDetail(${{post.id}})" 
+                                        style="background: transparent; color: var(--primary); border: 1px solid rgba(var(--primary-rgb), 0.3); padding: 8px 15px; border-radius: 12px; font-size: 0.8rem; cursor: pointer; font-family: 'Oswald'; transition: all 0.3s;">
+                                    READ FULL VENT
+                                </button>
+                            </div>
                         </div>
                     </div>
                 `).join('');
+
+                if (append) {{
+                    container.insertAdjacentHTML('beforeend', html);
+                }} else {{
+                    container.innerHTML = html;
+                }}
+            }}
+
+            // ===== ADVANCED FUNCTIONALITIES =====
+            
+            startCommentPolling(postId) {{
+                this.stopCommentPolling();
+                this.commentInterval = setInterval(async () => {{
+                    try {{
+                        const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/post/${{postId}}/comments`);
+                        const data = await response.json();
+                        if (data.success && data.data.length > this.lastCommentCount) {{
+                            this.lastCommentCount = data.data.length;
+                            this.loadPostComments(postId);
+                            this.showMessage('New comments arrived! ✨', 'success');
+                        }}
+                    }} catch(e) {{ console.error('Polling error', e); }}
+                }}, 5000);
+            }}
+
+            stopCommentPolling() {{
+                if (this.commentInterval) {{
+                    clearInterval(this.commentInterval);
+                    this.commentInterval = null;
+                }}
+            }}
+
+            async markPostViewed(postId) {{
+                try {{
+                    await fetch(`${{this.apiBaseUrl}}/api/mini-app/post/${{postId}}/view`, {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ user_id: this.userId }})
+                    }});
+                }} catch(e) {{ console.error('View tracking error', e); }}
+            }}
+
+            sharePost(postId, preview) {{
+                const text = `Check out this vent on Christian Vent:\n\n"${{preview}}..."\n\nRead more: https://t.me/${{this.botUsername}}?start=viewpost_${{postId}}`;
+                window.open(`tg://msg?text=${{encodeURIComponent(text)}}`, '_blank');
+            }}
+
+            // Modal Management
+            openModal(modalId) {{
+                document.getElementById(modalId).classList.add('active');
+            }}
+
+            closeModal(modalId) {{
+                document.getElementById(modalId).classList.remove('active');
+            }}
+
+            // Profile Edit
+            editProfile() {{
+                if (!this.user) return;
+                document.getElementById('editName').value = this.user.name || '';
+                document.getElementById('editBio').value = this.user.bio || '';
+                document.getElementById('editAvatar').value = this.user.avatar || '';
+                this.openModal('profileModal');
+            }}
+
+            setEmoji(emoji) {{
+                document.getElementById('editAvatar').value = emoji;
+                this.showMessage(`Avatar set to ${{emoji}}`, 'success');
+            }}
+
+            async saveProfile() {{
+                const name = document.getElementById('editName').value;
+                const bio = document.getElementById('editBio').value;
+                const avatar = document.getElementById('editAvatar').value;
+                
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/profile/${{this.userId}}`, {{
+                        method: 'PUT',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ name, bio, avatar }})
+                    }});
+                    const data = await response.json();
+                    if (data.success) {{
+                        this.showMessage('Profile updated! ✨', 'success');
+                        this.closeModal('profileModal');
+                        await this.loadUserData();
+                        this.loadProfile(this.userId);
+                    }} else {{
+                        this.showMessage(data.error || 'Failed to update', 'error');
+                    }}
+                }} catch(e) {{ this.showMessage('Network error', 'error'); }}
+            }}
+
+            // Comment CRUD
+            editComment(commentId, content) {{
+                document.getElementById('editCommentId').value = commentId;
+                document.getElementById('editCommentText').value = content;
+                this.openModal('editCommentModal');
+            }}
+
+            async saveCommentEdit() {{
+                const commentId = document.getElementById('editCommentId').value;
+                const content = document.getElementById('editCommentText').value;
+                
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/comment/${{commentId}}`, {{
+                        method: 'PUT',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ user_id: this.userId, content }})
+                    }});
+                    const data = await response.json();
+                    if (data.success) {{
+                        this.showMessage('Comment updated! ✨', 'success');
+                        this.closeModal('editCommentModal');
+                        this.loadPostComments(this.currentPostId);
+                    }}
+                } catch(e) {{ this.showMessage('Network error', 'error'); }}
+            }}
+
+            async deleteComment(commentId) {{
+                if (!confirm('Are you sure you want to delete this comment?')) return;
+                
+                try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/comment/${{commentId}}?user_id=${{this.userId}}`, {{
+                        method: 'DELETE'
+                    }});
+                    const data = await response.json();
+                    if (data.success) {{
+                        this.showMessage('Comment deleted.', 'success');
+                        this.loadPostComments(this.currentPostId);
+                    }}
+                } catch(e) {{ this.showMessage('Network error', 'error'); }}
             }}
 
             async openPostDetail(postId) {{
                 this.currentPostId = postId;
                 this.switchTab('post-detail');
+                this.markPostViewed(postId);
                 
                 const container = document.getElementById('detailPostContainer');
                 container.innerHTML = '<div class="loading">Aligning spirit...</div>';
@@ -7547,6 +8012,9 @@ def mini_app_page():
                                 <div class="post-content" style="font-weight: 300; line-height: 1.8; font-size: 1.05rem;">
                                     ${{this.escapeHtml(post.content)}}
                                 </div>
+                                <div style="display:flex; justify-content:flex-end; padding-top:15px; border-top:1px solid rgba(255,255,255,0.05)">
+                                    <button class="share-btn" onclick="app.sharePost(${{post.id}}, '${{this.escapeHtml(post.content.substring(0, 50))}}')">📤 Share to Telegram</button>
+                                </div>
                             </div>
                         `;
                         
@@ -7561,7 +8029,6 @@ def mini_app_page():
             
             // ===== THREADED COMMENT RENDERING =====
             buildCommentTree(comments) {{
-                // Build a map of id -> comment
                 const map = {{}};
                 const roots = [];
                 comments.forEach(c => {{
@@ -7581,7 +8048,8 @@ def mini_app_page():
                 const avatar = comment.author.avatar || (comment.author.sex === 'Female' ? '👩' : '👨');
                 const isReply = depth > 0;
                 const replyClass = isReply ? 'is-reply' : '';
-                // Recursively render children
+                const isMyComment = String(comment.author_id) === String(this.userId);
+                
                 const childrenHtml = comment.children
                     .map(child => this.renderCommentNode(child, depth + 1))
                     .join('');
@@ -7592,34 +8060,32 @@ def mini_app_page():
                         <div class="comment-body">
                             <div class="comment-header">
                                 <div class="comment-author">
-                                    <span>${{comment.author.name}}</span>
-                                    <span style="font-size:0.8rem">${{comment.author.aura}}</span>
+                                    ${{comment.author.name}}
+                                    ${{comment.author.aura ? `<span class="aura-sticker">${{comment.author.aura}}</span>` : ''}}
                                 </div>
-                                <span class="comment-time">${{comment.time_ago}}</span>
+                                <div class="comment-time">${{comment.time_ago}}</div>
                             </div>
                             <div class="comment-text">${{this.escapeHtml(comment.content)}}</div>
-                            <button class="comment-reply-btn"
-                                onclick="app.toggleInlineReply(${{comment.id}})"
-                                aria-label="Reply to comment">
-                                ↩ Reply
-                            </button>
-                            <!-- Inline reply compose box -->
+                            
+                            <div class="comment-actions">
+                                <button class="action-btn" onclick="app.toggleInlineReply(${{comment.id}})">
+                                    <span>↩</span> Reply
+                                </button>
+                                ${{isMyComment ? `
+                                    <button class="action-btn" onclick="app.editComment(${{comment.id}}, '${{this.escapeJsString(comment.content)}}')">
+                                        <span>✏️</span> Edit
+                                    </button>
+                                    <button class="action-btn" onclick="app.deleteComment(${{comment.id}})" style="color: #ff4444;">
+                                        <span>🗑️</span> Delete
+                                    </button>
+                                ` : ''}}
+                            </div>
+
                             <div class="inline-reply-box" id="reply-box-${{comment.id}}">
-                                <textarea
-                                    class="inline-reply-textarea"
-                                    id="reply-text-${{comment.id}}"
-                                    placeholder="Write your reply..."
-                                    rows="2"
-                                ></textarea>
+                                <textarea id="reply-text-${{comment.id}}" class="inline-reply-textarea" placeholder="Write a reply..."></textarea>
                                 <div class="inline-reply-actions">
-                                    <button class="reply-cancel-btn"
-                                        onclick="app.toggleInlineReply(${{comment.id}})">
-                                        Cancel
-                                    </button>
-                                    <button class="reply-send-btn"
-                                        onclick="app.submitReply(${{comment.id}})">
-                                        Send Reply
-                                    </button>
+                                    <button class="reply-cancel-btn" onclick="app.toggleInlineReply(${{comment.id}})">Cancel</button>
+                                    <button class="reply-send-btn" onclick="app.submitReply(${{comment.id}})">Send Reply</button>
                                 </div>
                             </div>
                         </div>
@@ -7628,16 +8094,17 @@ def mini_app_page():
                 `;
             }}
 
+            escapeJsString(str) {{
+                return str.replace(/'/g, "\\'").replace(/\n/g, "\\n");
+            }}
+
             toggleInlineReply(commentId) {{
                 const box = document.getElementById(`reply-box-${{commentId}}`);
-                if (!box) return;
-                const isVisible = box.classList.contains('visible');
-                // Close all other open boxes first
-                document.querySelectorAll('.inline-reply-box.visible').forEach(b => b.classList.remove('visible'));
-                if (!isVisible) {{
-                    box.classList.add('visible');
-                    const ta = document.getElementById(`reply-text-${{commentId}}`);
-                    if (ta) setTimeout(() => ta.focus(), 50);
+                if (box) {{
+                    box.classList.toggle('visible');
+                    if (box.classList.contains('visible')) {{
+                        document.getElementById(`reply-text-${{commentId}}`).focus();
+                    }}
                 }}
             }}
 
@@ -7647,7 +8114,7 @@ def mini_app_page():
                 const content = ta.value.trim();
                 if (!content) {{ this.showMessage('Please write something first.', 'error'); return; }}
 
-                const sendBtn = ta.parentElement.querySelector('.reply-send-btn');
+                const sendBtn = ta.parentElement.parentElement.querySelector('.reply-send-btn');
                 if (sendBtn) {{ sendBtn.textContent = 'Sending...'; sendBtn.disabled = true; }}
 
                 try {{
@@ -7686,6 +8153,9 @@ def mini_app_page():
 
                     if (data.success) {{
                         const comments = data.data;
+                        this.lastCommentCount = comments.length;
+                        this.startCommentPolling(postId);
+                        
                         if (comments.length === 0) {{
                             container.innerHTML = '<p style="text-align:center;opacity:0.5;font-size:0.9rem;padding:20px;">No responses yet. Offer your prayer.</p>';
                             return;
@@ -7699,7 +8169,7 @@ def mini_app_page():
                     container.innerHTML = '<div class="message error-message">Network error.</div>';
                 }}
             }}
-            
+
             async submitComment() {{
                 if (!this.currentPostId) return;
                 
@@ -7832,6 +8302,9 @@ def mini_app_page():
                 container.innerHTML = '<div class="loading">Loading profile...</div>';
                 
                 try {{
+                    const response = await fetch(`${{this.apiBaseUrl}}/api/mini-app/profile/${{userId}}`);
+                    const data = await response.json();
+                    
                     if (data.success) {{
                         const profile = data.data;
                         container.innerHTML = `
@@ -8095,13 +8568,14 @@ def update_channel_post_comment_count_sync(post_id):
 
 @flask_app.route('/api/mini-app/get-posts', methods=['GET'])
 def mini_app_get_posts():
-    """API endpoint for getting posts from mini app - SHOW SEX ONLY"""
+    """API endpoint for getting posts from mini app - With Pagination and Unread Counts"""
     try:
+        user_id = request.args.get('user_id')
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
         offset = (page - 1) * per_page
         
-        # Get approved posts WITH sex but WITHOUT name
+        # Get approved posts
         posts = db_fetch_all('''
             SELECT 
                 p.post_id,
@@ -8113,22 +8587,27 @@ def mini_app_get_posts():
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
                 u.anonymous_name as author_name,
-                STRING_AGG(pc.category_code, ',') as categories
+                STRING_AGG(DISTINCT pc.category_code, ',') as categories,
+                COALESCE((
+                    SELECT COUNT(*) 
+                    FROM comments c2 
+                    WHERE c2.post_id = p.post_id 
+                    AND c2.timestamp > COALESCE((
+                        SELECT last_viewed FROM post_views pv 
+                        WHERE pv.user_id = %s AND pv.post_id = p.post_id
+                    ), '1970-01-01')
+                ), 0) as unread_comments
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.approved = TRUE
-            GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, 
-                     p.content, p.timestamp, p.comment_count, p.media_type
+            GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name
             ORDER BY p.timestamp DESC
             LIMIT %s OFFSET %s
-
-        ''', (per_page, offset))
+        ''', (user_id, per_page, offset))
         
-        # Format posts - ANONYMOUS NAME BUT SHOW SEX
         formatted_posts = []
         for post in posts:
-            # Format timestamp
             if isinstance(post['timestamp'], str):
                 post_time = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S')
             else:
@@ -8151,11 +8630,9 @@ def mini_app_get_posts():
             if len(content_preview) > 300:
                 content_preview = content_preview[:297] + '...'
             
-            # Calculate aura for display
             rating = calculate_user_rating(post['author_id'])
             aura_sticker = format_aura(rating)
             
-            # Parse categories into array
             category_list = post['categories'].split(',') if post['categories'] else ['Other']
             
             formatted_posts.append({
@@ -8165,17 +8642,17 @@ def mini_app_get_posts():
                 'categories': category_list,
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
+                'unread_comments': post['unread_comments'],
                 'author': {
-                    'name': 'Anonymous',
+                    'name': post['author_name'] if str(post['author_id']) == str(user_id) else 'Anonymous',
                     'sex': post['author_sex'] or '👤',
                     'avatar': post['author_avatar'] or "",
-                    'aura': aura_sticker
+                    'aura': aura_sticker,
+                    'is_me': str(post['author_id']) == str(user_id)
                 },
                 'has_media': post['media_type'] != 'text'
             })
 
-        
-        # Get total count
         total_posts = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE approved = TRUE")
         
         return jsonify({
@@ -8183,7 +8660,8 @@ def mini_app_get_posts():
             'data': formatted_posts,
             'page': page,
             'total_posts': total_posts['count'] if total_posts else 0,
-            'has_more': len(posts) == per_page
+            'has_more': len(posts) == per_page,
+            'next_page': page + 1 if len(posts) == per_page else None
         })
         
     except Exception as e:
@@ -8499,29 +8977,151 @@ def mini_app_admin_approve_post():
         logger.error(f"Error in mini-app approve post: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@flask_app.route('/api/mini-app/admin/reject-post', methods=['POST'])
-def mini_app_admin_reject_post():
-    """API endpoint for admin to reject posts"""
+@flask_app.route('/api/mini-app/search', methods=['GET'])
+def mini_app_search():
+    """API endpoint for searching vents"""
+    try:
+        query = request.args.get('q', '').strip()
+        category = request.args.get('category', '')
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 10))
+        offset = (page - 1) * per_page
+        
+        sql = '''
+            SELECT p.post_id, p.content, p.timestamp, p.comment_count,
+                   u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
+                   STRING_AGG(DISTINCT pc.category_code, ',') as categories
+            FROM posts p
+            JOIN users u ON p.author_id = u.user_id
+            LEFT JOIN post_categories pc ON p.post_id = pc.post_id
+            WHERE p.approved = TRUE
+        '''
+        params = []
+        
+        if query:
+            # Check if search_vector column exists (Postgres FTS)
+            # Otherwise fallback to ILIKE
+            sql += " AND (p.search_vector @@ plainto_tsquery('english', %s) OR p.content ILIKE %s)"
+            params.extend([query, f"%{query}%"])
+            
+        if category:
+            sql += " AND EXISTS (SELECT 1 FROM post_categories pc2 WHERE pc2.post_id = p.post_id AND pc2.category_code = %s)"
+            params.append(category)
+            
+        sql += " GROUP BY p.post_id, u.user_id ORDER BY p.timestamp DESC LIMIT %s OFFSET %s"
+        params.extend([per_page, offset])
+        
+        posts = db_fetch_all(sql, tuple(params))
+        
+        formatted_posts = []
+        for post in posts:
+            rating = calculate_user_rating(post['author_id'])
+            formatted_posts.append({
+                'id': post['post_id'],
+                'content': post['content'][:300] + '...' if len(post['content']) > 300 else post['content'],
+                'categories': post['categories'].split(',') if post['categories'] else [],
+                'comments': post['comment_count'] or 0,
+                'author': {
+                    'name': 'Anonymous',
+                    'avatar': post['author_avatar'] or "",
+                    'aura': format_aura(rating)
+                }
+            })
+            
+        return jsonify({'success': True, 'data': formatted_posts})
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/profile/<user_id>', methods=['PUT'])
+def mini_app_update_profile(user_id):
+    """API endpoint for updating user profile"""
     try:
         data = request.get_json()
-        post_id = data.get('post_id')
+        name = data.get('name', '').strip()
+        bio = data.get('bio', '').strip()
+        avatar = data.get('avatar', '').strip()
         
-        if not post_id:
-            return jsonify({'success': False, 'error': 'Post ID required'}), 400
-        
-        # Delete the post
-        success = db_execute(
-            "DELETE FROM posts WHERE post_id = %s",
-            (post_id,)
+        if not name:
+            return jsonify({'success': False, 'error': 'Name is required'}), 400
+            
+        db_execute(
+            "UPDATE users SET anonymous_name = %s, bio = %s, avatar_emoji = %s WHERE user_id = %s",
+            (name, bio, avatar, user_id)
         )
         
-        if success:
-            return jsonify({'success': True, 'message': 'Post rejected and deleted'})
-        else:
-            return jsonify({'success': False, 'error': 'Failed to reject post'}), 500
-            
+        return jsonify({'success': True, 'message': 'Profile updated successfully'})
     except Exception as e:
-        logger.error(f"Error in mini-app reject post: {e}")
+        logger.error(f"Profile update error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/comment/<int:comment_id>', methods=['PUT'])
+def mini_app_update_comment(comment_id):
+    """API endpoint for editing a comment"""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        content = data.get('content', '').strip()
+        
+        if not content:
+            return jsonify({'success': False, 'error': 'Content required'}), 400
+            
+        comment = db_fetch_one("SELECT author_id FROM comments WHERE comment_id = %s", (comment_id,))
+        if not comment or str(comment['author_id']) != str(user_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+            
+        db_execute("UPDATE comments SET content = %s WHERE comment_id = %s", (content, comment_id))
+        return jsonify({'success': True, 'message': 'Comment updated'})
+    except Exception as e:
+        logger.error(f"Comment update error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/comment/<int:comment_id>', methods=['DELETE'])
+def mini_app_delete_comment(comment_id):
+    """API endpoint for deleting a comment"""
+    try:
+        user_id = request.args.get('user_id')
+        comment = db_fetch_one("SELECT author_id, post_id FROM comments WHERE comment_id = %s", (comment_id,))
+        
+        if not comment or str(comment['author_id']) != str(user_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+            
+        post_id = comment['post_id']
+        
+        # Cascade re-parent child comments
+        db_execute("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (comment_id,))
+        # Delete reactions and comment
+        db_execute("DELETE FROM reactions WHERE comment_id = %s", (comment_id,))
+        db_execute("DELETE FROM comments WHERE comment_id = %s", (comment_id,))
+        
+        # Update post comment count
+        db_execute("UPDATE posts SET comment_count = (SELECT COUNT(*) FROM comments WHERE post_id = %s) WHERE post_id = %s", (post_id, post_id))
+        update_channel_post_comment_count_sync(post_id)
+        
+        return jsonify({'success': True, 'message': 'Comment deleted'})
+    except Exception as e:
+        logger.error(f"Comment delete error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/post/<int:post_id>/view', methods=['POST'])
+def mini_app_mark_post_viewed(post_id):
+    """API endpoint to mark a post as viewed by a user"""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': 'User ID required'}), 400
+            
+        db_execute(
+            """INSERT INTO post_views (user_id, post_id, last_viewed) 
+               VALUES (%s, %s, CURRENT_TIMESTAMP) 
+               ON CONFLICT (user_id, post_id) 
+               DO UPDATE SET last_viewed = CURRENT_TIMESTAMP""",
+            (user_id, post_id)
+        )
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error marking post as viewed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 if __name__ == "__main__": 
     # The main() function already handles initializing the DB, 
