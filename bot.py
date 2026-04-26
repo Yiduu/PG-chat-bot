@@ -476,6 +476,7 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
             waiting_for_private_message = FALSE,
             awaiting_bio = FALSE,
             selected_category = NULL,
+            selected_categories = NULL,
             comment_post_id = NULL,
             comment_idx = NULL,
             private_message_target = NULL
@@ -637,20 +638,20 @@ def build_category_buttons():
     return InlineKeyboardMarkup(buttons) 
 
 def build_multi_category_keyboard(selected_codes):
-    """Create inline keyboard with checkboxes for multi-category selection."""
+    """Return InlineKeyboardMarkup with checkboxes for given selected codes."""
     keyboard = []
     row = []
-    for i, (display, code) in enumerate(CATEGORIES):
+    for display, code in CATEGORIES:
         check = "✅ " if code in selected_codes else "☐ "
         button_text = f"{check}{display}"
         row.append(InlineKeyboardButton(button_text, callback_data=f"cat_toggle_{code}"))
-        if len(row) == 2:  # Two buttons per row
+        if len(row) == 2:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
     
-    # Action buttons
+    # Action row
     keyboard.append([
         InlineKeyboardButton("✅ Done", callback_data="cat_done"),
         InlineKeyboardButton("🔄 Reset", callback_data="cat_reset")
@@ -4267,30 +4268,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=build_multi_category_keyboard(set()),
                 parse_mode=ParseMode.MARKDOWN
             )
+            await query.answer()
 
         elif query.data.startswith("cat_toggle_"):
+            # Extract category code
             code = query.data.split("_", 2)[2]
+            # Get current selection set (default to empty set)
             selected = context.user_data.get('selected_categories', set())
             if not isinstance(selected, set):
                 selected = set(selected) if selected else set()
-            
+                
             if code in selected:
                 selected.remove(code)
             else:
                 selected.add(code)
-            
             context.user_data['selected_categories'] = selected
-            await query.message.edit_reply_markup(
-                reply_markup=build_multi_category_keyboard(selected)
-            )
+            
+            # Rebuild keyboard with updated selection
+            new_markup = build_multi_category_keyboard(selected)
+            
+            # Edit the reply markup of the original message
+            await query.message.edit_reply_markup(reply_markup=new_markup)
+            
+            # Answer callback to remove loading state
             await query.answer()
+            return
 
         elif query.data == "cat_reset":
             context.user_data['selected_categories'] = set()
-            await query.message.edit_reply_markup(
-                reply_markup=build_multi_category_keyboard(set())
-            )
-            await query.answer("Categories reset", show_alert=False)
+            new_markup = build_multi_category_keyboard(set())
+            await query.message.edit_reply_markup(reply_markup=new_markup)
+            await query.answer("Selection reset", show_alert=False)
 
         elif query.data == "cat_done":
             selected = context.user_data.get('selected_categories', set())
@@ -4300,16 +4308,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Store selected categories in user's DB record
             db_execute(
-                "UPDATE users SET selected_categories = %s WHERE user_id = %s",
+                "UPDATE users SET selected_categories = %s, waiting_for_post = TRUE WHERE user_id = %s",
                 (','.join(selected), user_id)
-            )
-            db_execute(
-                "UPDATE users SET waiting_for_post = TRUE WHERE user_id = %s",
-                (user_id,)
             )
             
             await query.message.reply_text(
-                f"✍️ *You selected: {', '.join(selected)}*\n\nNow send your post content (text, photo, or voice).",
+                f"✍️ *Selected: {', '.join(selected)}*\n\nNow send your post content (text, photo, or voice).",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=cancel_menu
             )
@@ -4318,6 +4322,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 pass
             await query.answer()
+            return
         
         elif query.data == 'menu':
             await query.answer("📱 Opening Menu...", show_alert=False)
@@ -5872,9 +5877,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Handle main menu buttons
     if text == "✍️ Share":
+        context.user_data['selected_categories'] = set()
         await update.message.reply_text(
-            "📚 *Choose a category:*",
-            reply_markup=build_category_buttons(),
+            "📚 *Select categories (you can choose multiple):*",
+            reply_markup=build_multi_category_keyboard(set()),
             parse_mode=ParseMode.MARKDOWN
         )
         return 
