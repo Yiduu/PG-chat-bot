@@ -7501,7 +7501,7 @@ def mini_app_page():
                 this.userId = null;
                 this.currentPostId = null;
                 this.botUsername = "{bot_username}";
-                this.apiBaseUrl = window.location.origin;
+                this.apiBaseUrl = window.location.origin || (window.location.protocol + "//" + window.location.host);
                 this.isAdmin = false;
                 
                 // Pagination state
@@ -7721,6 +7721,10 @@ def mini_app_page():
             }}
 
             initInfiniteScroll() {{
+                if (!window.IntersectionObserver) {{
+                    console.warn('IntersectionObserver not supported. Pagination will be manual.');
+                    return;
+                }}
                 const trigger = document.getElementById('loadMoreTrigger');
                 if (!trigger) return;
 
@@ -7833,7 +7837,7 @@ def mini_app_page():
                         <div class="post-footer" style="border-top-color: rgba(255,255,255,0.05); flex-wrap: wrap; gap: 10px;">
                             <div class="comment-count" style="font-weight: 500; color: var(--primary);">🕊️ ${{post.comments}} Responses</div>
                             <div style="display:flex; gap:8px;">
-                                <button class="share-btn" onclick="app.sharePost(${{post.id}}, '${{this.escapeHtml(post.content.substring(0, 50))}}')">📤 Share</button>
+                                <button class="share-btn" onclick="app.sharePost(${{post.id}}, '${{this.escapeJsString(post.content.substring(0, 50))}}')">📤 Share</button>
                                 <button onclick="app.openPostDetail(${{post.id}})" 
                                         style="background: transparent; color: var(--primary); border: 1px solid rgba(var(--primary-rgb), 0.3); padding: 8px 15px; border-radius: 12px; font-size: 0.8rem; cursor: pointer; font-family: 'Oswald'; transition: all 0.3s;">
                                     READ FULL VENT
@@ -8013,7 +8017,7 @@ def mini_app_page():
                                     ${{this.escapeHtml(post.content)}}
                                 </div>
                                 <div style="display:flex; justify-content:flex-end; padding-top:15px; border-top:1px solid rgba(255,255,255,0.05)">
-                                    <button class="share-btn" onclick="app.sharePost(${{post.id}}, '${{this.escapeHtml(post.content.substring(0, 50))}}')">📤 Share to Telegram</button>
+                                    <button class="share-btn" onclick="app.sharePost(${{post.id}}, '${{this.escapeJsString(post.content.substring(0, 50))}}')">📤 Share to Telegram</button>
                                 </div>
                             </div>
                         `;
