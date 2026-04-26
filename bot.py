@@ -6980,7 +6980,7 @@ def mini_app_page():
                     <h2 class="form-title">Share Your Thoughts</h2>
                     <p class="form-description">Share your struggles anonymously. Your identity is always hidden.</p>
 
-                    <h3 style="color: var(--primary); font-family: 'Oswald'; font-size: 1.1rem; margin-top: 15px;">SELECT CATEGORIES</h3>
+                    <h3 style="color: var(--primary); font-size: 1.1rem; margin-top: 15px;">SELECT CATEGORIES</h3>
                     <div id="categoriesContainer" class="categories-grid">
                         <!-- Populated by JS -->
                     </div>
@@ -7052,7 +7052,7 @@ def mini_app_page():
                 </div>
 
                 <div class="comments-section" style="margin-top: 25px;">
-                    <h3 style="color: var(--primary); padding-left: 10px; margin-bottom: 15px; font-family: 'Oswald'; text-transform: uppercase;">Spiritual Responses</h3>
+                    <h3 style="color: var(--primary); padding-left: 10px; margin-bottom: 15px; text-transform: uppercase;">Spiritual Responses</h3>
                     
                     <div id="detailCommentsContainer" style="display: flex; flex-direction: column; gap: 15px;">
                         <!-- Comments injected here by JS -->
@@ -7962,17 +7962,20 @@ def mini_app_get_posts():
             SELECT 
                 p.post_id,
                 p.content,
-                p.category,
                 p.timestamp,
                 p.comment_count,
                 p.media_type,
                 u.user_id as author_id,
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
-                u.anonymous_name as author_name
+                u.anonymous_name as author_name,
+                STRING_AGG(pc.category_code, ',') as categories
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
+            LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.approved = TRUE
+            GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, 
+                     p.content, p.timestamp, p.comment_count, p.media_type
             ORDER BY p.timestamp DESC
             LIMIT %s OFFSET %s
 
