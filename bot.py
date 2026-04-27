@@ -7018,7 +7018,7 @@ def mini_app_page():
 
   <!-- Header (only shown on vent/feed/leaderboard/profile) -->
   <header class="app-header" id="appHeader">
-    <img src="/static/images/vent%20logo.jpg" class="app-logo" id="main-logo" alt="Christian Vent Logo" 
+    <img src="/static/images/vent%20logo.png" class="app-logo" id="main-logo" alt="Christian Vent Logo" 
          style="box-shadow: 0 0 20px rgba(SLOT_RGB, 0.4); border: 3px solid var(--gold);">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Safe &amp; Anonymous</div>
