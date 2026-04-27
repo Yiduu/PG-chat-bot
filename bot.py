@@ -6320,8 +6320,6 @@ def main():
 
 @flask_app.route('/mini_app')
 def mini_app_page():
-    """Mini App with old glassmorphic UI + all new features (multi-category, edit/delete, search, settings)."""
-    
     # Environment variables (already defined globally)
     _bot      = BOT_USERNAME
     _primary  = PRIMARY_COLOR
@@ -6331,7 +6329,8 @@ def mini_app_page():
     _text     = TEXT_COLOR
     _rgb      = PRIMARY_RGB
 
-    html = f'''<!DOCTYPE html>
+    html = """
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -6342,26 +6341,26 @@ def mini_app_page():
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        :root {{
-            --primary: {_primary};
-            --primary-rgb: {_rgb};
-            --secondary: {_secondary};
-            --card-bg: {_card_bg};
-            --border: {_border};
-            --text: {_text};
+        :root {
+            --primary: SLOT_PRIMARY;
+            --primary-rgb: SLOT_RGB;
+            --secondary: SLOT_SECONDARY;
+            --card-bg: SLOT_CARD_BG;
+            --border: SLOT_BORDER;
+            --text: SLOT_TEXT;
             --glass-bg: rgba(26, 26, 26, 0.7);
             --glass-border: rgba(255, 255, 255, 0.1);
             --accent-gold: #FFD700;
-        }}
+        }
 
-        * {{
+        * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
             -webkit-tap-highlight-color: transparent;
-        }}
+        }
 
-        body {{
+        body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: linear-gradient(135deg, #090909 0%, #151515 100%);
             color: var(--text);
@@ -6372,10 +6371,9 @@ def mini_app_page():
             position: relative;
             overflow-x: hidden;
             -webkit-font-smoothing: antialiased;
-        }}
+        }
 
-        /* Particle canvas */
-        #particleCanvas {{
+        #particleCanvas {
             position: fixed;
             top: 0;
             left: 0;
@@ -6384,10 +6382,9 @@ def mini_app_page():
             z-index: -1;
             pointer-events: none;
             opacity: 0.5;
-        }}
+        }
 
-        /* Glassmorphism cards */
-        .glass-card {{
+        .glass-card {
             background: linear-gradient(145deg, rgba(26, 26, 26, 0.7), rgba(15, 15, 15, 0.8));
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
@@ -6398,11 +6395,10 @@ def mini_app_page():
             margin-bottom: 20px;
             box-shadow: 0 15px 35px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
             transition: transform 0.3s ease, border-color 0.3s ease;
-        }}
-        .glass-card:hover {{ border-color: rgba(var(--primary-rgb), 0.4); }}
+        }
+        .glass-card:hover { border-color: rgba(var(--primary-rgb), 0.4); }
 
-        /* Bottom navigation */
-        .bottom-nav {{
+        .bottom-nav {
             position: fixed;
             bottom: 20px;
             left: 50%;
@@ -6420,8 +6416,8 @@ def mini_app_page():
             z-index: 1000;
             box-shadow: 0 20px 50px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.1);
             padding: 0 10px;
-        }}
-        .nav-item {{
+        }
+        .nav-item {
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -6434,13 +6430,13 @@ def mini_app_page():
             padding: 8px 0;
             border-radius: 30px;
             position: relative;
-        }}
-        .nav-item.active {{
+        }
+        .nav-item.active {
             opacity: 1;
             color: var(--primary);
             transform: translateY(-3px);
-        }}
-        .nav-item.active::after {{
+        }
+        .nav-item.active::after {
             content: '';
             position: absolute;
             bottom: -4px;
@@ -6451,32 +6447,30 @@ def mini_app_page():
             background: var(--primary);
             border-radius: 50%;
             box-shadow: 0 0 8px var(--primary);
-        }}
-        .nav-icon {{ font-size: 1.4rem; }}
-        .nav-label {{ font-size: 0.65rem; font-weight: 600; letter-spacing: 0.3px; }}
+        }
+        .nav-icon { font-size: 1.4rem; }
+        .nav-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.3px; }
 
-        /* Layout */
-        .app-container {{
+        .app-container {
             max-width: 650px;
             margin: 0 auto;
             padding: 20px 16px;
-        }}
-        .page {{
+        }
+        .page {
             display: none;
             animation: fadeIn 0.4s ease-out;
-        }}
-        .page.active {{ display: block; }}
-        @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(10px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
+        }
+        .page.active { display: block; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
 
-        /* Header */
-        .app-header {{
+        .app-header {
             text-align: center;
             margin-bottom: 20px;
-        }}
-        .logo {{
+        }
+        .logo {
             width: 70px;
             height: 70px;
             object-fit: contain;
@@ -6486,28 +6480,27 @@ def mini_app_page():
             padding: 6px;
             box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.3);
             margin-bottom: 10px;
-        }}
-        .app-title {{
+        }
+        .app-title {
             font-size: 1.7rem;
             font-weight: 800;
             color: var(--primary);
             letter-spacing: -0.5px;
-        }}
-        .app-subtitle {{
+        }
+        .app-subtitle {
             opacity: 0.6;
             font-size: 0.75rem;
             text-transform: uppercase;
             letter-spacing: 2px;
-        }}
+        }
 
-        /* Forms & buttons */
-        .categories-grid {{
+        .categories-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 8px;
             margin-bottom: 20px;
-        }}
-        .cat-item {{
+        }
+        .cat-item {
             display: flex;
             align-items: center;
             gap: 8px;
@@ -6517,12 +6510,12 @@ def mini_app_page():
             border-radius: 40px;
             cursor: pointer;
             transition: all 0.2s;
-        }}
-        .cat-item.selected {{
+        }
+        .cat-item.selected {
             background: rgba(var(--primary-rgb), 0.15);
             border-color: var(--primary);
-        }}
-        .cat-check {{
+        }
+        .cat-check {
             width: 18px;
             height: 18px;
             border: 1.5px solid var(--primary);
@@ -6532,10 +6525,10 @@ def mini_app_page():
             justify-content: center;
             font-size: 11px;
             color: var(--primary);
-        }}
-        .cat-label {{ font-size: 0.8rem; font-weight: 500; }}
+        }
+        .cat-label { font-size: 0.8rem; font-weight: 500; }
 
-        .vent-textarea {{
+        .vent-textarea {
             width: 100%;
             background: rgba(15,15,15,0.7);
             border: 1px solid rgba(255,255,255,0.1);
@@ -6547,10 +6540,10 @@ def mini_app_page():
             resize: vertical;
             min-height: 130px;
             margin-bottom: 8px;
-        }}
-        .vent-textarea:focus {{ outline: none; border-color: var(--primary); }}
+        }
+        .vent-textarea:focus { outline: none; border-color: var(--primary); }
 
-        .submit-btn {{
+        .submit-btn {
             width: 100%;
             background: linear-gradient(135deg, var(--primary), #d4af37);
             color: #000;
@@ -6562,11 +6555,10 @@ def mini_app_page():
             cursor: pointer;
             transition: all 0.3s;
             box-shadow: 0 8px 20px rgba(var(--primary-rgb), 0.3);
-        }}
-        .submit-btn:active {{ transform: scale(0.98); }}
+        }
+        .submit-btn:active { transform: scale(0.98); }
 
-        /* Post cards */
-        .post-card {{
+        .post-card {
             background: linear-gradient(145deg, rgba(30,30,30,0.4), rgba(15,15,15,0.6));
             backdrop-filter: blur(20px);
             border: 1px solid rgba(var(--primary-rgb), 0.1);
@@ -6574,30 +6566,32 @@ def mini_app_page():
             padding: 18px;
             margin-bottom: 18px;
             transition: all 0.2s;
-        }}
-        .post-card:hover {{ border-color: rgba(var(--primary-rgb), 0.3); transform: translateY(-2px); }}
-        .post-header {{ display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }}
-        .author-icon {{
+        }
+        .post-card:hover { border-color: rgba(var(--primary-rgb), 0.3); transform: translateY(-2px); }
+        .post-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .author-icon {
             width: 40px; height: 40px;
             background: rgba(var(--primary-rgb), 0.1);
             border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 1.2rem;
-        }}
-        .author-info {{ flex: 1; }}
-        .author-name {{ font-weight: 600; }}
-        .post-meta {{ display: flex; gap: 8px; font-size: 0.7rem; opacity: 0.6; flex-wrap: wrap; align-items: center; }}
-        .cat-badge {{
+        }
+        .author-info { flex: 1; }
+        .author-name { font-weight: 600; }
+        .post-meta { display: flex; gap: 8px; font-size: 0.7rem; opacity: 0.6; flex-wrap: wrap; align-items: center; }
+        .cat-badge {
             background: rgba(var(--primary-rgb), 0.15);
             padding: 2px 10px;
             border-radius: 20px;
             font-size: 0.65rem;
             color: var(--primary);
-        }}
-        .post-content {{ font-size: 0.88rem; line-height: 1.6; margin: 12px 0; word-break: break-word; }}
-        .post-footer {{ display: flex; justify-content: space-between; align-items: center; margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px; }}
-        .comment-count {{ color: var(--primary); font-weight: 500; }}
-        .read-more-btn {{
+        }
+        .post-content { font-size: 0.88rem; line-height: 1.6; margin: 12px 0; word-break: break-word; }
+        .post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px; }
+        .comment-count { color: var(--primary); font-weight: 500; }
+        .read-more-btn {
             background: transparent;
             border: 1px solid rgba(var(--primary-rgb), 0.3);
             color: var(--primary);
@@ -6605,8 +6599,8 @@ def mini_app_page():
             border-radius: 30px;
             font-size: 0.75rem;
             cursor: pointer;
-        }}
-        .unread-badge {{
+        }
+        .unread-badge {
             background: #e67e22;
             color: #000;
             border-radius: 30px;
@@ -6614,18 +6608,17 @@ def mini_app_page():
             font-size: 0.7rem;
             font-weight: bold;
             margin-left: 8px;
-        }}
+        }
 
-        /* Comments */
-        .comment-thread {{ margin-top: 20px; }}
-        .comment-item {{
+        .comment-thread { margin-top: 20px; }
+        .comment-item {
             display: flex;
             gap: 10px;
             margin-bottom: 12px;
             position: relative;
-        }}
-        .comment-item.is-reply {{ margin-left: 35px; }}
-        .comment-item.is-reply::before {{
+        }
+        .comment-item.is-reply { margin-left: 35px; }
+        .comment-item.is-reply::before {
             content: '';
             position: absolute;
             left: -20px;
@@ -6633,8 +6626,8 @@ def mini_app_page():
             bottom: 0;
             width: 2px;
             background: rgba(var(--primary-rgb), 0.3);
-        }}
-        .comment-avatar {{
+        }
+        .comment-avatar {
             width: 32px; height: 32px;
             background: rgba(var(--primary-rgb), 0.1);
             border-radius: 50%;
@@ -6642,31 +6635,31 @@ def mini_app_page():
             align-items: center;
             justify-content: center;
             font-size: 1rem;
-        }}
-        .comment-body {{
+        }
+        .comment-body {
             flex: 1;
             background: rgba(20,20,20,0.5);
             border-radius: 16px;
             padding: 10px 12px;
-        }}
-        .comment-header {{ display: flex; justify-content: space-between; margin-bottom: 4px; }}
-        .comment-author {{ font-weight: 600; color: var(--primary); font-size: 0.8rem; }}
-        .comment-time {{ font-size: 0.65rem; opacity: 0.5; }}
-        .comment-text {{ font-size: 0.85rem; line-height: 1.5; margin-bottom: 6px; }}
-        .comment-actions {{ display: flex; gap: 10px; }}
-        .comment-action {{
+        }
+        .comment-header { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .comment-author { font-weight: 600; color: var(--primary); font-size: 0.8rem; }
+        .comment-time { font-size: 0.65rem; opacity: 0.5; }
+        .comment-text { font-size: 0.85rem; line-height: 1.5; margin-bottom: 6px; }
+        .comment-actions { display: flex; gap: 10px; }
+        .comment-action {
             background: none; border: none;
             color: var(--text);
             opacity: 0.6;
             font-size: 0.7rem;
             cursor: pointer;
-        }}
-        .inline-reply {{
+        }
+        .inline-reply {
             display: none;
             margin-top: 10px;
-        }}
-        .inline-reply.open {{ display: block; }}
-        .inline-reply textarea {{
+        }
+        .inline-reply.open { display: block; }
+        .inline-reply textarea {
             width: 100%;
             background: rgba(0,0,0,0.5);
             border: 1px solid rgba(var(--primary-rgb),0.3);
@@ -6675,25 +6668,23 @@ def mini_app_page():
             color: var(--text);
             font-size: 0.8rem;
             resize: vertical;
-        }}
-        .reply-actions {{ display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }}
+        }
+        .reply-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 
-        /* Leaderboard */
-        .lb-item {{
+        .lb-item {
             display: flex;
             align-items: center;
             gap: 12px;
             padding: 12px;
             border-bottom: 1px solid rgba(255,255,255,0.05);
-        }}
-        .lb-rank {{
+        }
+        .lb-rank {
             width: 30px;
             font-weight: 700;
-        }}
+        }
 
-        /* Profile */
-        .profile-header {{ text-align: center; }}
-        .profile-avatar {{
+        .profile-header { text-align: center; }
+        .profile-avatar {
             width: 80px; height: 80px;
             background: rgba(var(--primary-rgb), 0.15);
             border-radius: 50%;
@@ -6702,16 +6693,15 @@ def mini_app_page():
             justify-content: center;
             font-size: 2rem;
             margin: 0 auto 12px;
-        }}
-        .profile-stats {{
+        }
+        .profile-stats {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 12px;
             margin: 20px 0;
-        }}
+        }
 
-        /* Toast */
-        #toast {{
+        #toast {
             position: fixed;
             bottom: 90px;
             left: 50%;
@@ -6726,24 +6716,36 @@ def mini_app_page():
             transition: opacity 0.3s;
             pointer-events: none;
             white-space: nowrap;
-        }}
-        #toast.show {{ opacity: 1; }}
-        #toast.success {{ background: #27ae60; }}
-        #toast.error {{ background: #e74c3c; }}
+        }
+        #toast.show { opacity: 1; }
+        #toast.success { background: #27ae60; }
+        #toast.error { background: #e74c3c; }
 
-        /* Loading skeletons */
-        .skeleton {{
+        .skeleton {
             background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%);
             background-size: 200% 100%;
             animation: shimmer 1.5s infinite;
             border-radius: 16px;
             height: 120px;
             margin-bottom: 16px;
-        }}
-        @keyframes shimmer {{
-            0% {{ background-position: 200% 0; }}
-            100% {{ background-position: -200% 0; }}
-        }}
+        }
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        .switch { position:relative; display:inline-block; width:44px; height:24px; }
+        .switch input { opacity:0; width:0; height:0; }
+        .slider {
+            position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0;
+            background-color:#333; transition:.4s; border-radius:24px;
+        }
+        .slider:before {
+            position:absolute; content:""; height:16px; width:16px; left:3px; bottom:3px;
+            background-color:white; transition:.4s; border-radius:50%;
+        }
+        input:checked + .slider { background-color: var(--primary); }
+        input:checked + .slider:before { transform:translateX(20px); }
     </style>
 </head>
 <body>
@@ -6808,7 +6810,7 @@ def mini_app_page():
             </div>
         </div>
 
-        <!-- Edit Profile Modal (simple inline) -->
+        <!-- Edit Profile Modal -->
         <div id="editProfileModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:2000; align-items:center; justify-content:center;">
             <div class="glass-card" style="width:90%; max-width:400px;">
                 <h3>Edit Profile</h3>
@@ -6825,9 +6827,9 @@ def mini_app_page():
 
     <script>
         // ==================== GLOBALS ====================
-        const CONFIG = {{
+        const CONFIG = {
             apiBase: window.location.origin,
-            botUsername: '{_bot}',
+            botUsername: 'SLOT_BOT',
             categories: [
                 ["PrayForMe","🙏 Pray For Me"],["Bible","📖 Bible"],["WorkLife","💼 Work and Life"],
                 ["SpiritualLife","🕊 Spiritual Life"],["ChristianChallenges","⚔️ Christian Challenges"],
@@ -6837,8 +6839,8 @@ def mini_app_page():
                 ["BibleQuestion","📖 Bible Question"],["Other","🔖 Other"]
             ],
             emojis: ['🦁','🦊','🐉','🐼','🦄','🌈','✨','🔥','💎','🛡','🦅','🦉','🦋','🌸','🌙','🍎','🍀','⛪️','🎗','🎖']
-        }};
-        let state = {{
+        };
+        let state = {
             userId: null,
             currentPage: 'vent',
             feedPage: 1,
@@ -6847,32 +6849,32 @@ def mini_app_page():
             currentPostId: null,
             selectedCategories: new Set(),
             editCommentId: null
-        }};
+        };
 
         // ==================== UTILS ====================
-        function toast(msg, type='info') {{
+        function toast(msg, type='info') {
             const t = document.getElementById('toast');
             t.textContent = msg;
             t.className = 'show ' + type;
             setTimeout(() => t.className = '', 3000);
-        }}
-        async function apiFetch(path, opts={{}}) {{
-            const res = await fetch(CONFIG.apiBase + path, {{
-                headers: {{'Content-Type':'application/json'}},
+        }
+        async function apiFetch(path, opts={}) {
+            const res = await fetch(CONFIG.apiBase + path, {
+                headers: {'Content-Type':'application/json'},
                 ...opts
-            }});
-            if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();
-        }}
-        function timeAgo(dateStr) {{
+        }
+        function timeAgo(dateStr) {
             const d = new Date(dateStr.replace(' ', 'T'));
             const diff = (Date.now() - d) / 1000;
             if (diff < 60) return 'just now';
             if (diff < 3600) return Math.floor(diff/60)+'m ago';
             if (diff < 86400) return Math.floor(diff/3600)+'h ago';
             return Math.floor(diff/86400)+'d ago';
-        }}
-        function formatAura(p) {{
+        }
+        function formatAura(p) {
             if (p<0) return '🔴';
             if (p>=500) return '👑';
             if (p>=100) return '🟣';
@@ -6880,231 +6882,229 @@ def mini_app_page():
             if (p>=25) return '🟢';
             if (p>=10) return '🟡';
             return '⚪️';
-        }}
+        }
 
         // ==================== AUTH ====================
-        async function authenticate() {{
+        async function authenticate() {
             const tg = window.Telegram?.WebApp;
-            if (tg && tg.initDataUnsafe?.user?.id) {{
+            if (tg && tg.initDataUnsafe?.user?.id) {
                 state.userId = String(tg.initDataUnsafe.user.id);
                 tg.expand();
-                await fetch(`/api/generate-token/${{state.userId}}`);
+                await fetch(`/api/generate-token/${state.userId}`);
                 showApp();
                 return;
-            }}
+            }
             const params = new URLSearchParams(window.location.search);
             const token = params.get('token');
-            if (token) {{
-                try {{
-                    const res = await apiFetch(`/api/verify-token/${{token}}`);
-                    if (res.success && res.user_id) {{
+            if (token) {
+                try {
+                    const res = await apiFetch(`/api/verify-token/${token}`);
+                    if (res.success && res.user_id) {
                         state.userId = String(res.user_id);
                         showApp();
                         return;
-                    }}
-                }} catch(e) {{}}
-            }}
+                    }
+                } catch(e) {}
+            }
             document.body.innerHTML = '<div style="text-align:center; margin-top:50px;">❌ Authentication failed. Please open via Telegram bot using /webapp</div>';
-        }}
+        }
 
         // ==================== UI RENDERING ====================
-        function renderCategories() {{
+        function renderCategories() {
             const container = document.getElementById('categoriesContainer');
             container.innerHTML = '';
-            CONFIG.categories.forEach(([code, label]) => {{
+            CONFIG.categories.forEach(([code, label]) => {
                 const div = document.createElement('div');
                 div.className = 'cat-item';
-                div.innerHTML = `<div class="cat-check"></div><span class="cat-label">${{label}}</span>`;
-                div.onclick = () => {{
-                    if (state.selectedCategories.has(code)) {{
+                div.innerHTML = `<div class="cat-check"></div><span class="cat-label">${label}</span>`;
+                div.onclick = () => {
+                    if (state.selectedCategories.has(code)) {
                         state.selectedCategories.delete(code);
                         div.classList.remove('selected');
                         div.querySelector('.cat-check').textContent = '';
-                    }} else {{
+                    } else {
                         state.selectedCategories.add(code);
                         div.classList.add('selected');
                         div.querySelector('.cat-check').textContent = '✓';
-                    }}
-                }};
+                    }
+                };
                 container.appendChild(div);
-            }});
-        }}
+            });
+        }
 
-        async function submitVent() {{
+        async function submitVent() {
             const content = document.getElementById('ventContent').value.trim();
             const categories = Array.from(state.selectedCategories);
-            if (!content) {{ toast('Write something', 'error'); return; }}
-            if (categories.length === 0) {{ toast('Select at least one category', 'error'); return; }}
+            if (!content) { toast('Write something', 'error'); return; }
+            if (categories.length === 0) { toast('Select at least one category', 'error'); return; }
             const btn = document.getElementById('submitVentBtn');
             btn.disabled = true; btn.textContent = 'Posting...';
-            try {{
-                const res = await apiFetch('/api/mini-app/submit-vent', {{
+            try {
+                const res = await apiFetch('/api/mini-app/submit-vent', {
                     method: 'POST',
-                    body: JSON.stringify({{ user_id: state.userId, content, categories }})
-                }});
-                if (res.success) {{
+                    body: JSON.stringify({ user_id: state.userId, content, categories })
+                });
+                if (res.success) {
                     toast('Posted! Awaiting approval', 'success');
                     document.getElementById('ventContent').value = '';
                     document.getElementById('charCount').innerText = '0';
                     state.selectedCategories.clear();
-                    document.querySelectorAll('.cat-item').forEach(el => {{
+                    document.querySelectorAll('.cat-item').forEach(el => {
                         el.classList.remove('selected');
                         el.querySelector('.cat-check').textContent = '';
-                    }});
-                }} else toast(res.error || 'Failed', 'error');
-            }} catch(e) {{ toast('Network error', 'error'); }}
-            finally {{ btn.disabled = false; btn.textContent = 'Post Anonymously'; }}
-        }}
+                    });
+                } else toast(res.error || 'Failed', 'error');
+            } catch(e) { toast('Network error', 'error'); }
+            finally { btn.disabled = false; btn.textContent = 'Post Anonymously'; }
+        }
 
-        async function loadFeed(append=false) {{
+        async function loadFeed(append=false) {
             if (state.feedLoading) return;
             state.feedLoading = true;
             const container = document.getElementById('feedContainer');
             if (!append) container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
-            try {{
-                const data = await apiFetch(`/api/mini-app/get-posts?user_id=${{state.userId}}&page=${{state.feedPage}}&per_page=10`);
+            try {
+                const data = await apiFetch(`/api/mini-app/get-posts?user_id=${state.userId}&page=${state.feedPage}&per_page=10`);
                 if (!data.success) throw new Error(data.error);
                 const posts = data.data;
                 state.feedHasMore = data.has_more;
                 if (!append) container.innerHTML = '';
-                posts.forEach(post => {{
+                posts.forEach(post => {
                     const card = document.createElement('div');
                     card.className = 'post-card';
-                    const categoriesHtml = (post.categories || []).map(c => `<span class="cat-badge">#${{c}}</span>`).join('');
-                    const unreadBadge = (post.unread_comments > 0) ? `<span class="unread-badge">${{post.unread_comments}} new</span>` : '';
+                    const categoriesHtml = (post.categories || []).map(c => `<span class="cat-badge">#${c}</span>`).join('');
+                    const unreadBadge = (post.unread_comments > 0) ? `<span class="unread-badge">${post.unread_comments} new</span>` : '';
                     card.innerHTML = `
                         <div class="post-header">
-                            <div class="author-icon">${{post.author.avatar || (post.author.sex==='👩'?'👩':'👨')}}</div>
+                            <div class="author-icon">${post.author.avatar || (post.author.sex==='👩'?'👩':'👨')}</div>
                             <div class="author-info">
-                                <div class="author-name">${{post.author.name}} ${{post.author.aura}}</div>
+                                <div class="author-name">${post.author.name} ${post.author.aura}</div>
                                 <div class="post-meta">
-                                    <span>${{post.time_ago}}</span>
+                                    <span>${post.time_ago}</span>
                                     ${categoriesHtml}
                                     ${unreadBadge}
                                 </div>
                             </div>
                         </div>
-                        <div class="post-content">${{post.content}}</div>
+                        <div class="post-content">${post.content}</div>
                         <div class="post-footer">
-                            <span class="comment-count">💬 ${{post.comments}} responses</span>
-                            <button class="read-more-btn" data-post-id="${{post.id}}">Read & Reply</button>
+                            <span class="comment-count">💬 ${post.comments} responses</span>
+                            <button class="read-more-btn" data-post-id="${post.id}">Read & Reply</button>
                         </div>
                     `;
                     container.appendChild(card);
-                }});
+                });
                 document.getElementById('loadMoreBtn').style.display = state.feedHasMore ? 'block' : 'none';
                 if (state.feedHasMore) state.feedPage++;
-                document.querySelectorAll('[data-post-id]').forEach(btn => {{
+                document.querySelectorAll('[data-post-id]').forEach(btn => {
                     btn.addEventListener('click', () => openPostDetail(parseInt(btn.dataset.postId)));
-                }});
-            }} catch(e) {{ console.error(e); toast('Failed to load feed', 'error'); }}
-            finally {{ state.feedLoading = false; }}
-        }}
+                });
+            } catch(e) { console.error(e); toast('Failed to load feed', 'error'); }
+            finally { state.feedLoading = false; }
+        }
 
-        async function openPostDetail(postId) {{
+        async function openPostDetail(postId) {
             state.currentPostId = postId;
             switchPage('detail');
             document.getElementById('detailPost').innerHTML = '<div class="skeleton"></div>';
             document.getElementById('detailComments').innerHTML = '';
-            // Load post
-            try {{
-                const postRes = await apiFetch(`/api/mini-app/post/${{postId}}`);
-                if (postRes.success) {{
+            try {
+                const postRes = await apiFetch(`/api/mini-app/post/${postId}`);
+                if (postRes.success) {
                     const p = postRes.data;
-                    const categoriesHtml = (p.categories || []).map(c => `<span class="cat-badge">#${{c}}</span>`).join('');
+                    const categoriesHtml = (p.categories || []).map(c => `<span class="cat-badge">#${c}</span>`).join('');
                     document.getElementById('detailPost').innerHTML = `
                         <div class="post-card">
                             <div class="post-header">
-                                <div class="author-icon">${{p.author.avatar || '👤'}}</div>
+                                <div class="author-icon">${p.author.avatar || '👤'}</div>
                                 <div class="author-info">
-                                    <div class="author-name">${{p.author.name}} ${{p.author.aura}}</div>
-                                    <div class="post-meta"><span>${{p.time_ago}}</span> ${categoriesHtml}</div>
+                                    <div class="author-name">${p.author.name} ${p.author.aura}</div>
+                                    <div class="post-meta"><span>${p.time_ago}</span> ${categoriesHtml}</div>
                                 </div>
                             </div>
-                            <div class="post-content">${{p.content}}</div>
+                            <div class="post-content">${p.content}</div>
                         </div>
                     `;
-                }}
-            }} catch(e) {{}}
+                }
+            } catch(e) {}
             await loadComments(postId);
-        }}
+        }
 
-        async function loadComments(postId) {{
+        async function loadComments(postId) {
             const container = document.getElementById('detailComments');
             container.innerHTML = '<div class="skeleton" style="height:80px;"></div>';
-            try {{
-                const res = await apiFetch(`/api/mini-app/post/${{postId}}/comments`);
+            try {
+                const res = await apiFetch(`/api/mini-app/post/${postId}/comments`);
                 if (!res.success) throw new Error();
                 const comments = res.data;
-                if (comments.length === 0) {{
+                if (comments.length === 0) {
                     container.innerHTML = '<div style="text-align:center; opacity:0.6;">No responses yet. Be the first.</div>';
                     return;
-                }}
+                }
                 // Build tree
-                const map = {{}};
+                const map = {};
                 const roots = [];
-                comments.forEach(c => {{ map[c.id] = {{ ...c, children: [] }}; }});
-                comments.forEach(c => {{
+                comments.forEach(c => { map[c.id] = { ...c, children: [] }; });
+                comments.forEach(c => {
                     if (c.parent_id && map[c.parent_id]) map[c.parent_id].children.push(map[c.id]);
                     else roots.push(map[c.id]);
-                }});
-                function renderComment(comment, depth=0) {{
+                });
+                function renderComment(comment, depth=0) {
                     const isReply = depth > 0;
-                    const canEdit = (comment.author.name !== 'Anonymous'); // If logged in user owns it – we rely on backend, but frontend can show buttons based on author_id? We'll just always show edit/delete for demo, but token ensures only owner can modify.
                     return `
-                        <div class="comment-item ${isReply ? 'is-reply' : ''}" data-cid="${{comment.id}}">
-                            <div class="comment-avatar">${{comment.author.avatar || '👤'}}</div>
+                        <div class="comment-item ${isReply ? 'is-reply' : ''}" data-cid="${comment.id}">
+                            <div class="comment-avatar">${comment.author.avatar || '👤'}</div>
                             <div class="comment-body">
                                 <div class="comment-header">
-                                    <span class="comment-author">${{comment.author.name}} ${{comment.author.aura}}</span>
-                                    <span class="comment-time">${{comment.time_ago}}</span>
+                                    <span class="comment-author">${comment.author.name} ${comment.author.aura}</span>
+                                    <span class="comment-time">${comment.time_ago}</span>
                                 </div>
-                                <div class="comment-text" id="comment-text-${{comment.id}}">${{comment.content}}</div>
+                                <div class="comment-text" id="comment-text-${comment.id}">${comment.content}</div>
                                 <div class="comment-actions">
-                                    <button class="comment-action reply-btn" data-id="${{comment.id}}">↩️ Reply</button>
-                                    <button class="comment-action edit-btn" data-id="${{comment.id}}" data-content="${{comment.content.replace(/"/g, '&quot;')}}">✏️ Edit</button>
-                                    <button class="comment-action delete-btn" data-id="${{comment.id}}">🗑️ Delete</button>
+                                    <button class="comment-action reply-btn" data-id="${comment.id}">↩️ Reply</button>
+                                    <button class="comment-action edit-btn" data-id="${comment.id}" data-content="${comment.content.replace(/"/g, '&quot;')}">✏️ Edit</button>
+                                    <button class="comment-action delete-btn" data-id="${comment.id}">🗑️ Delete</button>
                                 </div>
-                                <div class="inline-reply" id="reply-box-${{comment.id}}">
+                                <div class="inline-reply" id="reply-box-${comment.id}">
                                     <textarea placeholder="Write a reply..."></textarea>
                                     <div class="reply-actions">
-                                        <button class="read-more-btn cancel-reply" data-id="${{comment.id}}">Cancel</button>
-                                        <button class="submit-btn send-reply" data-id="${{comment.id}}" style="padding:6px 12px;">Send</button>
+                                        <button class="read-more-btn cancel-reply" data-id="${comment.id}">Cancel</button>
+                                        <button class="submit-btn send-reply" data-id="${comment.id}" style="padding:6px 12px;">Send</button>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                        ${{comment.children.map(ch => renderComment(ch, depth+1)).join('')}}
+                        ${comment.children.map(ch => renderComment(ch, depth+1)).join('')}
                     `;
-                }}
+                }
                 container.innerHTML = roots.map(r => renderComment(r)).join('');
                 // Attach event listeners
-                document.querySelectorAll('.reply-btn').forEach(btn => {{
+                document.querySelectorAll('.reply-btn').forEach(btn => {
                     btn.onclick = () => document.getElementById(`reply-box-${btn.dataset.id}`).classList.toggle('open');
-                }});
-                document.querySelectorAll('.cancel-reply').forEach(btn => {{
+                });
+                document.querySelectorAll('.cancel-reply').forEach(btn => {
                     btn.onclick = () => document.getElementById(`reply-box-${btn.dataset.id}`).classList.remove('open');
-                }});
-                document.querySelectorAll('.send-reply').forEach(btn => {{
-                    btn.onclick = async () => {{
+                });
+                document.querySelectorAll('.send-reply').forEach(btn => {
+                    btn.onclick = async () => {
                         const cid = btn.dataset.id;
                         const textarea = document.querySelector(`#reply-box-${cid} textarea`);
                         const content = textarea.value.trim();
-                        if (!content) {{ toast('Write a reply', 'error'); return; }}
-                        try {{
-                            const res = await apiFetch(`/api/mini-app/post/${{postId}}/comment`, {{
+                        if (!content) { toast('Write a reply', 'error'); return; }
+                        try {
+                            const res = await apiFetch(`/api/mini-app/post/${postId}/comment`, {
                                 method: 'POST',
-                                body: JSON.stringify({{ user_id: state.userId, content, parent_comment_id: parseInt(cid) }})
-                            }});
-                            if (res.success) {{
+                                body: JSON.stringify({ user_id: state.userId, content, parent_comment_id: parseInt(cid) })
+                            });
+                            if (res.success) {
                                 toast('Reply posted', 'success');
                                 await loadComments(postId);
-                            }}
-                        }} catch(e) {{ toast('Error', 'error'); }}
-                    }};
-                }});
-                document.querySelectorAll('.edit-btn').forEach(btn => {{
-                    btn.onclick = () => {{
+                            }
+                        } catch(e) { toast('Error', 'error'); }
+                    };
+                });
+                document.querySelectorAll('.edit-btn').forEach(btn => {
+                    btn.onclick = () => {
                         const cid = btn.dataset.id;
                         const currentText = btn.dataset.content;
                         const textDiv = document.getElementById(`comment-text-${cid}`);
@@ -7122,129 +7122,129 @@ def mini_app_page():
                         textDiv.innerHTML = '';
                         textDiv.appendChild(textarea);
                         textDiv.appendChild(saveBtn);
-                        saveBtn.onclick = async () => {{
+                        saveBtn.onclick = async () => {
                             const newContent = textarea.value.trim();
                             if (!newContent) return;
-                            try {{
-                                const res = await apiFetch(`/api/mini-app/comment/${{cid}}`, {{
+                            try {
+                                const res = await apiFetch(`/api/mini-app/comment/${cid}`, {
                                     method: 'PUT',
-                                    body: JSON.stringify({{ user_id: state.userId, content: newContent }})
-                                }});
-                                if (res.success) {{
+                                    body: JSON.stringify({ user_id: state.userId, content: newContent })
+                                });
+                                if (res.success) {
                                     toast('Comment updated', 'success');
                                     await loadComments(postId);
-                                }} else toast('Failed', 'error');
-                            }} catch(e) {{ toast('Error', 'error'); }}
-                        }};
-                    }};
-                }});
-                document.querySelectorAll('.delete-btn').forEach(btn => {{
-                    btn.onclick = async () => {{
+                                } else toast('Failed', 'error');
+                            } catch(e) { toast('Error', 'error'); }
+                        };
+                    };
+                });
+                document.querySelectorAll('.delete-btn').forEach(btn => {
+                    btn.onclick = async () => {
                         if (!confirm('Delete this comment?')) return;
                         const cid = btn.dataset.id;
-                        try {{
-                            const res = await apiFetch(`/api/mini-app/comment/${{cid}}?user_id=${{state.userId}}`, {{ method: 'DELETE' }});
-                            if (res.success) {{
+                        try {
+                            const res = await apiFetch(`/api/mini-app/comment/${cid}?user_id=${state.userId}`, { method: 'DELETE' });
+                            if (res.success) {
                                 toast('Deleted', 'success');
                                 await loadComments(postId);
-                            }} else toast('Failed', 'error');
-                        }} catch(e) {{ toast('Error', 'error'); }}
-                    }};
-                }});
-            }} catch(e) {{ console.error(e); container.innerHTML = '<div class="error">Failed to load comments</div>'; }}
-        }}
+                            } else toast('Failed', 'error');
+                        } catch(e) { toast('Error', 'error'); }
+                    };
+                });
+            } catch(e) { console.error(e); container.innerHTML = '<div class="error">Failed to load comments</div>'; }
+        }
 
-        async function postNewComment() {{
+        async function postNewComment() {
             const content = document.getElementById('newComment').value.trim();
             if (!content) return;
             const btn = document.getElementById('postCommentBtn');
             btn.disabled = true;
-            try {{
-                const res = await apiFetch(`/api/mini-app/post/${{state.currentPostId}}/comment`, {{
+            try {
+                const res = await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
                     method: 'POST',
-                    body: JSON.stringify({{ user_id: state.userId, content, parent_comment_id: 0 }})
-                }});
-                if (res.success) {{
+                    body: JSON.stringify({ user_id: state.userId, content, parent_comment_id: 0 })
+                });
+                if (res.success) {
                     toast('Response posted', 'success');
                     document.getElementById('newComment').value = '';
                     await loadComments(state.currentPostId);
-                }}
-            }} catch(e) {{ toast('Error', 'error'); }}
-            finally {{ btn.disabled = false; }}
-        }}
+                }
+            } catch(e) { toast('Error', 'error'); }
+            finally { btn.disabled = false; }
+        }
 
-        async function loadLeaderboard() {{
+        async function loadLeaderboard() {
             const container = document.getElementById('leaderboardContainer');
             container.innerHTML = '<div class="skeleton"></div>';
-            try {{
+            try {
                 const res = await apiFetch('/api/mini-app/leaderboard');
-                if (res.success) {{
+                if (res.success) {
                     container.innerHTML = res.data.map((u,i) => `
                         <div class="lb-item">
-                            <div class="lb-rank">${{i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}}</div>
-                            <div>${{u.avatar || (u.sex==='👩'?'👩':'👨')}}</div>
-                            <div style="flex:1"><b>${{u.name}}</b> ${{u.aura}}</div>
-                            <div><b>${{u.points}}</b></div>
+                            <div class="lb-rank">${i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}</div>
+                            <div>${u.avatar || (u.sex==='👩'?'👩':'👨')}</div>
+                            <div style="flex:1"><b>${u.name}</b> ${u.aura}</div>
+                            <div><b>${u.points}</b></div>
                         </div>
                     `).join('');
-                }}
-            }} catch(e) {{ container.innerHTML = '<div>Failed to load</div>'; }}
-        }}
+                }
+            } catch(e) { container.innerHTML = '<div>Failed to load</div>'; }
+        }
 
-        async function loadProfile() {{
+        async function loadProfile() {
             const container = document.getElementById('profileContainer');
             container.innerHTML = '<div class="skeleton"></div>';
-            try {{
-                const res = await apiFetch(`/api/mini-app/profile/${{state.userId}}`);
-                if (res.success) {{
+            try {
+                const res = await apiFetch(`/api/mini-app/profile/${state.userId}`);
+                if (res.success) {
                     const p = res.data;
                     container.innerHTML = `
                         <div class="profile-header">
-                            <div class="profile-avatar">${{p.avatar || (p.sex==='👩'?'👩':'👨')}}</div>
-                            <div class="author-name">${{p.name}}</div>
-                            <div>${{p.aura}} ${{p.rating}} pts</div>
-                            <div style="margin-top:8px;">${{p.bio || 'No bio yet.'}}</div>
+                            <div class="profile-avatar">${p.avatar || (p.sex==='👩'?'👩':'👨')}</div>
+                            <div class="author-name">${p.name}</div>
+                            <div>${p.aura} ${p.rating} pts</div>
+                            <div style="margin-top:8px;">${p.bio || 'No bio yet.'}</div>
                         </div>
                         <div class="profile-stats">
-                            <div><div class="author-name">${{p.stats.posts}}</div><div>Vents</div></div>
-                            <div><div class="author-name">${{p.stats.comments}}</div><div>Replies</div></div>
-                            <div><div class="author-name">${{p.stats.followers}}</div><div>Followers</div></div>
+                            <div><div class="author-name">${p.stats.posts}</div><div>Vents</div></div>
+                            <div><div class="author-name">${p.stats.comments}</div><div>Replies</div></div>
+                            <div><div class="author-name">${p.stats.followers}</div><div>Followers</div></div>
                         </div>
                     `;
-                }}
-            }} catch(e) {{}}
-        }}
+                }
+            } catch(e) {}
+        }
 
-        async function loadSettings() {{
-            try {{
-                const res = await apiFetch(`/api/mini-app/settings/${{state.userId}}`);
-                if (res.success) {{
+        async function loadSettings() {
+            try {
+                const res = await apiFetch(`/api/mini-app/settings/${state.userId}`);
+                if (res.success) {
                     document.getElementById('notifToggle').checked = res.data.notifications;
                     document.getElementById('privacyToggle').checked = res.data.privacy_public;
-                }}
-            }} catch(e) {{}}
-        }}
-        async function saveSettings() {{
+                }
+            } catch(e) {}
+        }
+        async function saveSettings() {
             const notif = document.getElementById('notifToggle').checked;
             const priv = document.getElementById('privacyToggle').checked;
-            try {{
-                await apiFetch(`/api/mini-app/settings/${{state.userId}}`, {{
+            try {
+                await apiFetch(`/api/mini-app/settings/${state.userId}`, {
                     method: 'POST',
-                    body: JSON.stringify({{ notifications: notif, privacy_public: priv }})
-                }});
+                    body: JSON.stringify({ notifications: notif, privacy_public: priv })
+                });
                 toast('Settings saved', 'success');
-            }} catch(e) {{ toast('Error', 'error'); }}
-        }}
+            } catch(e) { toast('Error', 'error'); }
+        }
 
-        function showEditProfile() {{
+        function showEditProfile() {
             const modal = document.getElementById('editProfileModal');
             modal.style.display = 'flex';
-            fetch(`/api/mini-app/profile/${{state.userId}}`).then(r=>r.json()).then(data => {{
+            fetch(`/api/mini-app/profile/${state.userId}`).then(r=>r.json()).then(data => {
                 document.getElementById('editName').value = data.data.name;
                 document.getElementById('editBio').value = data.data.bio || '';
                 const grid = document.getElementById('emojiGrid');
                 grid.innerHTML = '';
-                CONFIG.emojis.forEach(emo => {{
+                CONFIG.emojis.forEach(emo => {
                     const div = document.createElement('div');
                     div.textContent = emo;
                     div.style.fontSize = '1.5rem';
@@ -7254,130 +7254,124 @@ def mini_app_page():
                     div.style.borderRadius = '12px';
                     div.style.padding = '6px';
                     if (data.data.avatar === emo) div.style.border = '2px solid gold';
-                    div.onclick = () => {{
+                    div.onclick = () => {
                         document.querySelectorAll('#emojiGrid div').forEach(d => d.style.border = 'none');
                         div.style.border = '2px solid gold';
                         window._selectedEmoji = emo;
-                    }};
+                    };
                     grid.appendChild(div);
-                }});
+                });
                 window._selectedEmoji = data.data.avatar;
-            }});
-        }}
-        async function saveProfileChanges() {{
+            });
+        }
+        async function saveProfileChanges() {
             const name = document.getElementById('editName').value.trim();
             const bio = document.getElementById('editBio').value.trim();
             const avatar = window._selectedEmoji || '';
-            if (!name) {{ toast('Name required', 'error'); return; }}
-            try {{
-                const res = await apiFetch(`/api/mini-app/profile/${{state.userId}}`, {{
+            if (!name) { toast('Name required', 'error'); return; }
+            try {
+                const res = await apiFetch(`/api/mini-app/profile/${state.userId}`, {
                     method: 'PUT',
-                    body: JSON.stringify({{ name, bio, avatar }})
-                }});
-                if (res.success) {{
+                    body: JSON.stringify({ name, bio, avatar })
+                });
+                if (res.success) {
                     toast('Profile updated', 'success');
                     document.getElementById('editProfileModal').style.display = 'none';
                     await loadProfile();
-                }} else toast('Failed', 'error');
-            }} catch(e) {{}}
-        }}
+                } else toast('Failed', 'error');
+            } catch(e) {}
+        }
 
         // ==================== NAVIGATION ====================
-        function switchPage(page) {{
+        function switchPage(page) {
             state.currentPage = page;
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-            document.getElementById(`page-${{page}}`).classList.add('active');
-            document.querySelectorAll('.nav-item').forEach(nav => {{
+            document.getElementById(`page-${page}`).classList.add('active');
+            document.querySelectorAll('.nav-item').forEach(nav => {
                 nav.classList.toggle('active', nav.dataset.page === page);
-            }});
+            });
             if (page === 'feed') loadFeed(false);
             else if (page === 'leaderboard') loadLeaderboard();
             else if (page === 'profile') loadProfile();
             else if (page === 'settings') loadSettings();
-        }}
+        }
 
-        function initParticles() {{
+        function initParticles() {
             const canvas = document.getElementById('particleCanvas');
             const ctx = canvas.getContext('2d');
             let w,h, particles=[];
             const rgb = getComputedStyle(document.documentElement).getPropertyValue('--primary-rgb').trim();
-            function resize() {{ w=canvas.width=window.innerWidth; h=canvas.height=window.innerHeight; }}
+            function resize() { w=canvas.width=window.innerWidth; h=canvas.height=window.innerHeight; }
             window.addEventListener('resize', resize);
             resize();
-            for(let i=0;i<60;i++) particles.push({{
+            for(let i=0;i<60;i++) particles.push({
                 x:Math.random()*w, y:Math.random()*h, r:Math.random()*3+1,
                 vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3,
                 color:`rgba(${rgb}, ${Math.random()*0.3+0.1})`
-            }});
-            function animate() {{
+            });
+            function animate() {
                 ctx.clearRect(0,0,w,h);
-                particles.forEach(p => {{
+                particles.forEach(p => {
                     ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
                     ctx.fillStyle = p.color; ctx.fill();
                     p.x += p.vx; p.y += p.vy;
                     if(p.x<0) p.x=w; if(p.x>w) p.x=0; if(p.y<0) p.y=h; if(p.y>h) p.y=0;
-                }});
+                });
                 requestAnimationFrame(animate);
-            }}
+            }
             animate();
-        }}
+        }
 
-        function showApp() {{
+        function showApp() {
             document.body.style.background = 'linear-gradient(135deg, #090909 0%, #151515 100%)';
             renderCategories();
             initParticles();
             document.getElementById('submitVentBtn').onclick = submitVent;
-            document.getElementById('ventContent').addEventListener('input', () => {{
+            document.getElementById('ventContent').addEventListener('input', () => {
                 document.getElementById('charCount').innerText = document.getElementById('ventContent').value.length;
-            }});
-            document.getElementById('refreshFeedBtn')?.addEventListener('click', () => loadFeed(false));
-            document.getElementById('loadMoreBtn')?.addEventListener('click', () => loadFeed(true));
+            });
+            document.getElementById('loadMoreBtn').addEventListener('click', () => loadFeed(true));
             document.getElementById('backToFeedBtn').onclick = () => switchPage('feed');
             document.getElementById('postCommentBtn').onclick = postNewComment;
             document.getElementById('editProfileBtn').onclick = showEditProfile;
             document.getElementById('saveProfileChanges').onclick = saveProfileChanges;
             document.getElementById('closeModal').onclick = () => document.getElementById('editProfileModal').style.display = 'none';
             document.getElementById('saveSettingsBtn').onclick = saveSettings;
-            document.getElementById('searchBtn').onclick = async () => {{
+            document.getElementById('searchBtn').onclick = async () => {
                 const q = document.getElementById('searchInput').value.trim();
                 if (!q) return;
-                const res = await apiFetch(`/api/mini-app/search?q=${{encodeURIComponent(q)}}`);
-                if (res.success) {{
+                const res = await apiFetch(`/api/mini-app/search?q=${encodeURIComponent(q)}`);
+                if (res.success) {
                     const container = document.getElementById('feedContainer');
                     container.innerHTML = res.data.map(p => `
                         <div class="post-card">
-                            <div class="post-header"><div class="author-icon">${{p.author.avatar||'👤'}}</div><div class="author-name">${{p.author.name}} ${{p.author.aura}}</div></div>
-                            <div class="post-content">${{p.content}}</div>
-                            <div class="post-footer"><button class="read-more-btn" data-post-id="${{p.id}}">Read</button></div>
+                            <div class="post-header"><div class="author-icon">${p.author.avatar||'👤'}</div><div class="author-name">${p.author.name} ${p.author.aura}</div></div>
+                            <div class="post-content">${p.content}</div>
+                            <div class="post-footer"><button class="read-more-btn" data-post-id="${p.id}">Read</button></div>
                         </div>
                     `).join('');
                     document.querySelectorAll('[data-post-id]').forEach(btn => btn.onclick = () => openPostDetail(parseInt(btn.dataset.postId)));
-                }}
-            }};
-            document.querySelectorAll('.nav-item').forEach(nav => {{
+                }
+            };
+            document.querySelectorAll('.nav-item').forEach(nav => {
                 nav.addEventListener('click', () => switchPage(nav.dataset.page));
-            }});
+            });
             switchPage('vent');
         }
 
         authenticate();
     </script>
-    <style>
-        .switch {{ position:relative; display:inline-block; width:44px; height:24px; }}
-        .switch input {{ opacity:0; width:0; height:0; }}
-        .slider {{
-            position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0;
-            background-color:#333; transition:.4s; border-radius:24px;
-        }}
-        .slider:before {{
-            position:absolute; content:""; height:16px; width:16px; left:3px; bottom:3px;
-            background-color:white; transition:.4s; border-radius:50%;
-        }}
-        input:checked + .slider {{ background-color: var(--primary); }}
-        input:checked + .slider:before {{ transform:translateX(20px); }}
-    </style>
 </body>
-</html>'''
+</html>
+"""
+    # Replace dynamic values
+    html = html.replace('SLOT_PRIMARY', _primary)
+    html = html.replace('SLOT_SECONDARY', _secondary)
+    html = html.replace('SLOT_CARD_BG', _card_bg)
+    html = html.replace('SLOT_BORDER', _border)
+    html = html.replace('SLOT_TEXT', _text)
+    html = html.replace('SLOT_RGB', _rgb)
+    html = html.replace('SLOT_BOT', _bot)
     return html
     
 
