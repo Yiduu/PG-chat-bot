@@ -6399,16 +6399,20 @@ def mini_app_page():
     }
     .app-title {
       font-family: var(--font-display);
-      font-size: 1.5rem;
+      font-size: 1.8rem;
       color: var(--gold);
       letter-spacing: 0.5px;
+      font-weight: 800;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
     }
     .app-subtitle {
-      font-size: 0.78rem;
-      color: var(--text-muted);
+      font-size: 0.82rem;
+      color: var(--gold-light);
       margin-top: 4px;
-      letter-spacing: 1px;
+      letter-spacing: 1.5px;
       text-transform: uppercase;
+      font-weight: 700;
+      opacity: 0.9;
     }
 
     /* ===== TOGGLE SWITCH ===== */
@@ -6483,16 +6487,8 @@ def mini_app_page():
     }
     .nav-btn.active { color: var(--gold); }
     .nav-btn .nav-icon { font-size: 1.3rem; line-height: 1; }
-    .nav-btn .nav-label { font-size: 0.65rem; font-weight: 500; letter-spacing: 0.5px; }
-    .nav-btn .nav-dot {
-      width: 4px; height: 4px;
-      border-radius: 50%;
-      background: var(--gold);
-      margin-top: 2px;
-      opacity: 0;
-      transition: opacity 0.2s;
-    }
     .nav-btn.active .nav-dot { opacity: 1; }
+    .nav-btn .nav-label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
 
     /* ===== CARDS ===== */
     .card {
@@ -6504,9 +6500,10 @@ def mini_app_page():
     }
     .card-title {
       font-family: var(--font-display);
-      font-size: 1.1rem;
+      font-size: 1.25rem;
       color: var(--gold);
       margin-bottom: 4px;
+      font-weight: 700;
     }
     .card-sub {
       font-size: 0.8rem;
@@ -6622,16 +6619,19 @@ def mini_app_page():
     /* ===== BUTTONS ===== */
     .btn-primary {
       width: 100%;
-      padding: 14px;
+      padding: 16px;
       background: linear-gradient(135deg, var(--gold), var(--gold-light));
       border: none;
       border-radius: var(--radius-pill);
       color: #000;
       font-family: var(--font-body);
-      font-size: 0.9rem;
-      font-weight: 600;
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
       cursor: pointer;
-      transition: opacity 0.2s, transform 0.1s;
+      transition: all 0.2s, transform 0.1s;
+      box-shadow: 0 4px 15px rgba(SLOT_RGB, 0.3);
       -webkit-tap-highlight-color: transparent;
       touch-action: manipulation;
     }
@@ -7018,8 +7018,8 @@ def mini_app_page():
 
   <!-- Header (only shown on vent/feed/leaderboard/profile) -->
   <header class="app-header" id="appHeader">
-    <img src="/static/images/vent%20logo.jpg" class="app-logo" id="main-logo" alt="Christian Vent Logo" onerror="this.style.display='none'; document.getElementById('logo-fallback').style.display='flex';">
-    <div id="logo-fallback" class="app-logo-fallback" style="display:none;">🕊️</div>
+    <img src="/static/images/vent%20logo.jpg" class="app-logo" id="main-logo" alt="Christian Vent Logo" 
+         style="box-shadow: 0 0 20px rgba(SLOT_RGB, 0.4); border: 3px solid var(--gold);">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Safe &amp; Anonymous</div>
   </header>
@@ -7152,8 +7152,8 @@ def mini_app_page():
     </div>
     
     <div class="branding-footer">
-      Designed with ❤️ by <strong>Solomon</strong><br>
-      for the Christian Vent Community
+      Designed by <strong>Yididiya</strong><br>
+      Christian Vent Community
     </div>
   </section>
 
