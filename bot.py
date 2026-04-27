@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone, time
 import time
 import asyncio
 from functools import lru_cache
+import html
 
 # Load environment variables first
 load_dotenv()
@@ -2383,8 +2384,13 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ]
         ])
         
-        preview = post['content'][:200] + '...' if len(post['content']) > 200 else post['content']
-        text = f"📝 *Pending Post* [{post['categories'] or 'Other'}]\n\n{preview}\n\n👤 {post['anonymous_name']}"
+        # Use HTML for more reliable escaping
+        preview = post['content'][:400] + '...' if len(post['content']) > 400 else post['content']
+        safe_preview = html.escape(preview)
+        safe_name = html.escape(post['anonymous_name'] or "Anonymous")
+        safe_cats = html.escape(post['categories'] or 'Other')
+        
+        text = f"📝 <b>Pending Post</b> [{safe_cats}]\n\n{safe_preview}\n\n👤 <b>{safe_name}</b>"
         
         try:
             if post['media_type'] == 'text':
@@ -2392,13 +2398,13 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     await update.callback_query.message.reply_text(
                         text,
                         reply_markup=keyboard,
-                        parse_mode=ParseMode.MARKDOWN
+                        parse_mode=ParseMode.HTML
                     )
                 else:
                     await update.message.reply_text(
                         text,
                         reply_markup=keyboard,
-                        parse_mode=ParseMode.MARKDOWN
+                        parse_mode=ParseMode.HTML
                     )
             elif post['media_type'] == 'photo':
                 if update.callback_query:
@@ -2406,14 +2412,14 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         photo=post['media_id'],
                         caption=text,
                         reply_markup=keyboard,
-                        parse_mode=ParseMode.MARKDOWN
+                        parse_mode=ParseMode.HTML
                     )
                 else:
                     await update.message.reply_photo(
                         photo=post['media_id'],
                         caption=text,
                         reply_markup=keyboard,
-                        parse_mode=ParseMode.MARKDOWN
+                        parse_mode=ParseMode.HTML
                     )
             elif post['media_type'] == 'voice':
                 if update.callback_query:
@@ -2421,14 +2427,14 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         voice=post['media_id'],
                         caption=text,
                         reply_markup=keyboard,
-                        parse_mode=ParseMode.MARKDOWN
+                        parse_mode=ParseMode.HTML
                     )
                 else:
                     await update.message.reply_voice(
                         voice=post['media_id'],
                         caption=text,
                         reply_markup=keyboard,
-                        parse_mode=ParseMode.MARKDOWN
+                        parse_mode=ParseMode.HTML
                     )
         except Exception as e:
             logger.error(f"Error sending pending post {post['post_id']}: {e}")
@@ -2437,13 +2443,13 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await update.callback_query.message.reply_text(
                     f"❌ Error loading media for post {post['post_id']}\n\n{text}",
                     reply_markup=keyboard,
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=ParseMode.HTML
                 )
             else:
                 await update.message.reply_text(
                     f"❌ Error loading media for post {post['post_id']}\n\n{text}",
                     reply_markup=keyboard,
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=ParseMode.HTML
                 )
 
 async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
@@ -2506,20 +2512,31 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
                 reply_to_message_id = original_post['channel_message_id']
         
         # Send post to channel based on media type
+        safe_content = html.escape(post['content'])
+        safe_hashtags = html.escape(hashtags)
+        channel_text = (
+            f"<code>{vent_display}</code>\n\n"
+            f"{safe_content}\n\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"{safe_hashtags}\n"
+            f"<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
+        )
+
         if post['media_type'] == 'text':
             msg = await context.bot.send_message(
                 chat_id=CHANNEL_ID,
-                text=caption_text,
-                parse_mode=ParseMode.MARKDOWN,
+                text=channel_text,
+                parse_mode=ParseMode.HTML,
                 reply_markup=kb,
-                reply_to_message_id=reply_to_message_id
+                reply_to_message_id=reply_to_message_id,
+                disable_web_page_preview=True
             )
         elif post['media_type'] == 'photo':
             msg = await context.bot.send_photo(
                 chat_id=CHANNEL_ID,
                 photo=post['media_id'],
-                caption=caption_text,
-                parse_mode=ParseMode.MARKDOWN,
+                caption=channel_text,
+                parse_mode=ParseMode.HTML,
                 reply_markup=kb,
                 reply_to_message_id=reply_to_message_id
             )
@@ -2527,8 +2544,8 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             msg = await context.bot.send_voice(
                 chat_id=CHANNEL_ID,
                 voice=post['media_id'],
-                caption=caption_text,
-                parse_mode=ParseMode.MARKDOWN,
+                caption=channel_text,
+                parse_mode=ParseMode.HTML,
                 reply_markup=kb,
                 reply_to_message_id=reply_to_message_id
             )
@@ -2568,13 +2585,15 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             categories_display = ', '.join(categories) if categories else 'None'
             
             # Edit the original admin notification message to show it's approved
+            safe_cats_display = html.escape(categories_display)
+            safe_content_preview = html.escape(post['content'][:150])
             await query.edit_message_text(
-                f"✅ **Post Approved and Published!**\n\n"
-                f"**Vent Number:** {vent_display}\n"
-                f"**Categories:** {categories_display}\n"
-                f"**Published to channel:** ✅\n\n"
-                f"**Content Preview:**\n{post['content'][:150]}...",
-                parse_mode=ParseMode.MARKDOWN
+                f"✅ <b>Post Approved and Published!</b>\n\n"
+                f"<b>Vent Number:</b> <code>{vent_display}</code>\n"
+                f"<b>Categories:</b> {safe_cats_display}\n"
+                f"<b>Published to channel:</b> ✅\n\n"
+                f"<b>Content Preview:</b>\n{safe_content_preview}...",
+                parse_mode=ParseMode.HTML
             )
             
             # Alternative: You can also delete the admin notification message entirely
@@ -2652,13 +2671,14 @@ async def finalize_rejection(update: Update, context: ContextTypes.DEFAULT_TYPE,
         # Notify the author
         notification_text = "❌ Your post was not approved by the admin."
         if reason:
-            notification_text += f"\n\n*Reason:* {reason}"
+            safe_reason = html.escape(reason)
+            notification_text += f"\n\n<b>Reason:</b> {safe_reason}"
         
         try:
             await context.bot.send_message(
                 chat_id=post['author_id'],
                 text=notification_text,
-                parse_mode=ParseMode.MARKDOWN if reason else None
+                parse_mode=ParseMode.HTML if reason else None
             )
         except Exception as e:
             logger.error(f"Error notifying author of rejection: {e}")
