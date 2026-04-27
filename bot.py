@@ -6411,6 +6411,47 @@ def mini_app_page():
       text-transform: uppercase;
     }
 
+    /* ===== TOGGLE SWITCH ===== */
+    .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: var(--bg3);
+      border: 1px solid var(--surface2);
+      transition: .4s; border-radius: 24px;
+    }
+    .slider:before {
+      position: absolute; content: "";
+      height: 16px; width: 16px;
+      left: 3px; bottom: 3px;
+      background-color: var(--text-muted);
+      transition: .4s; border-radius: 50%;
+    }
+    input:checked + .slider { background-color: var(--gold-dim); border-color: var(--gold); }
+    input:checked + .slider:before { transform: translateX(20px); background-color: var(--gold); }
+
+    .emoji-item {
+      aspect-ratio: 1;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--surface);
+      border: 1px solid transparent;
+      border-radius: 12px;
+      font-size: 1.5rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .emoji-item:hover { background: var(--surface2); }
+    .emoji-item.selected { border-color: var(--gold); background: var(--gold-dim); }
+
+    .branding-footer {
+      text-align: center;
+      padding: 32px 16px;
+      opacity: 0.5;
+      font-size: 0.75rem;
+    }
+    .branding-footer strong { color: var(--gold); }
+
     /* ===== BOTTOM NAV ===== */
     .bottom-nav {
       position: fixed;
@@ -6820,6 +6861,7 @@ def mini_app_page():
       border: 1px solid var(--surface2);
       border-radius: var(--radius);
       margin-bottom: 14px;
+      position: relative;
     }
     .profile-avatar {
       width: 72px; height: 72px;
@@ -6976,9 +7018,10 @@ def mini_app_page():
 
   <!-- Header (only shown on vent/feed/leaderboard/profile) -->
   <header class="app-header" id="appHeader">
-    <div class="app-logo-fallback">🕊️</div>
+    <img src="/static/images/vent%20logo.jpg" class="app-logo" id="main-logo" alt="Christian Vent Logo" onerror="this.style.display='none'; document.getElementById('logo-fallback').style.display='flex';">
+    <div id="logo-fallback" class="app-logo-fallback" style="display:none;">🕊️</div>
     <div class="app-title">Christian Vent</div>
-    <div class="app-subtitle">Anonymous &amp; Safe</div>
+    <div class="app-subtitle">Safe &amp; Anonymous</div>
   </header>
 
   <!-- ===== VENT PAGE ===== -->
@@ -7049,6 +7092,71 @@ def mini_app_page():
     </div>
   </section>
 
+  <!-- ===== EDIT PROFILE PAGE ===== -->
+  <section id="page-edit-profile" class="page">
+    <button class="back-btn" id="backFromEditBtn">← Back to Profile</button>
+    <div class="card">
+      <div class="card-title">Customize Profile</div>
+      <div class="card-sub">This is how you appear in the community.</div>
+      
+      <div style="margin-bottom: 20px;">
+        <label style="display:block;font-size:0.75rem;color:var(--gold);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Anonymous Name</label>
+        <input type="text" id="edit-name" class="vent-textarea" style="min-height:unset;padding:12px;" placeholder="Name...">
+      </div>
+
+      <div style="margin-bottom: 20px;">
+        <label style="display:block;font-size:0.75rem;color:var(--gold);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Bio</label>
+        <textarea id="edit-bio" class="vent-textarea" style="min-height:80px;" placeholder="Write a short bio..."></textarea>
+      </div>
+
+      <div style="margin-bottom: 24px;">
+        <label style="display:block;font-size:0.75rem;color:var(--gold);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Choose Avatar</label>
+        <div id="emoji-grid" style="display:grid;grid-template-columns:repeat(5, 1fr);gap:10px;">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <button class="btn-primary" id="saveProfileBtn">Save Profile Changes</button>
+    </div>
+  </section>
+
+  <!-- ===== SETTINGS PAGE ===== -->
+  <section id="page-settings" class="page">
+    <div class="section-header">
+      <div class="section-title">Preferences</div>
+    </div>
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+        <div>
+          <div style="font-weight:600;margin-bottom:2px;">Push Notifications</div>
+          <div style="font-size:0.75rem;color:var(--text-dim);">Alerts for replies and mentions.</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="set-notifications">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+        <div>
+          <div style="font-weight:600;margin-bottom:2px;">Public Profile</div>
+          <div style="font-size:0.75rem;color:var(--text-dim);">Others can see your aura and stats.</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="set-privacy">
+          <span class="slider"></span>
+        </label>
+      </div>
+      
+      <button class="btn-primary" id="saveSettingsBtn">Apply Settings</button>
+    </div>
+    
+    <div class="branding-footer">
+      Designed with ❤️ by <strong>Solomon</strong><br>
+      for the Christian Vent Community
+    </div>
+  </section>
+
   <!-- ===== BOTTOM NAV ===== -->
   <nav class="bottom-nav">
     <button class="nav-btn active" data-page="vent">
@@ -7069,6 +7177,11 @@ def mini_app_page():
     <button class="nav-btn" data-page="profile">
       <span class="nav-icon">👤</span>
       <span class="nav-label">Me</span>
+      <span class="nav-dot"></span>
+    </button>
+    <button class="nav-btn" data-page="settings">
+      <span class="nav-icon">⚙️</span>
+      <span class="nav-label">Settings</span>
       <span class="nav-dot"></span>
     </button>
   </nav>
@@ -7104,7 +7217,8 @@ const CONFIG = {
     ['AddictionRecovery',  '💊 Recovery'],
     ['BibleQuestion',      '📖 Bible Q&A'],
     ['Other',              '🔖 Other'],
-  ]
+  ],
+  emojis: ['👨', '👩', '🕊️', '🙏', '✝️', '📖', '❤️', '🌟', '🛡️', '⚔️', '⛪', '🎹', '👶', '🧑', '👴']
 };
 
 // ─────────────────────────────────────────
@@ -7118,6 +7232,8 @@ const state = {
   feedHasMore: true,
   currentPostId: null,
   selectedCategories: new Set(),
+  selectedEmoji: null,
+  profileData: null
 };
 
 // ─────────────────────────────────────────
@@ -7192,6 +7308,7 @@ function switchPage(name) {
   if (name === 'feed' && state.feedPage === 1) loadFeed(false);
   if (name === 'leaderboard') loadLeaderboard();
   if (name === 'profile' && state.userId) loadProfile();
+  if (name === 'settings' && state.userId) loadSettings();
 }
 
 // ─────────────────────────────────────────
@@ -7620,11 +7737,19 @@ async function loadProfile() {
     if (!data.success) throw new Error(data.error);
 
     const p = data.data;
+    state.profileData = p; // Store for editing
+    
     container.innerHTML = `
       <div class="profile-hero">
+        <div style="position:absolute; top:20px; right:20px;">
+          <button class="btn-ghost" style="padding:6px 12px; font-size:0.7rem;" onclick="switchPage('edit-profile')">Edit Profile</button>
+        </div>
         <div class="profile-avatar">${esc(p.avatar || (p.sex === '👩' ? '👩' : '👨'))}</div>
         <div class="profile-name">${esc(p.name || 'Anonymous')}</div>
         <div class="profile-aura">${esc(p.aura || '')} ${esc(String(p.rating || 0))} pts</div>
+        
+        ${p.bio ? `<div style="font-size:0.8rem; color:var(--text-dim); margin-bottom:16px; font-style:italic;">"${esc(p.bio)}"</div>` : ''}
+
         <div class="profile-stats">
           <div class="stat-box">
             <div class="stat-num">${esc(String(p.stats?.posts || 0))}</div>
@@ -7641,9 +7766,114 @@ async function loadProfile() {
         </div>
       </div>
     `;
+    
+    if (state.currentPage === 'edit-profile') populateEditProfile();
   } catch(e) {
     console.error('[CV] loadProfile error:', e);
     container.innerHTML = '<div class="empty-state"><p>Failed to load profile.</p></div>';
+  }
+}
+
+// ─────────────────────────────────────────
+//  EDIT PROFILE
+// ─────────────────────────────────────────
+function populateEditProfile() {
+  const p = state.profileData;
+  if (!p) return;
+  
+  document.getElementById('edit-name').value = p.name || '';
+  document.getElementById('edit-bio').value = p.bio || '';
+  state.selectedEmoji = p.avatar;
+  
+  const grid = document.getElementById('emoji-grid');
+  grid.innerHTML = '';
+  CONFIG.emojis.forEach(emoji => {
+    const item = document.createElement('div');
+    item.className = 'emoji-item' + (state.selectedEmoji === emoji ? ' selected' : '');
+    item.textContent = emoji;
+    item.onclick = () => {
+      document.querySelectorAll('.emoji-item').forEach(el => el.classList.remove('selected'));
+      item.classList.add('selected');
+      state.selectedEmoji = emoji;
+    };
+    grid.appendChild(item);
+  });
+}
+
+async function saveProfile() {
+  const name = document.getElementById('edit-name').value.trim();
+  const bio = document.getElementById('edit-bio').value.trim();
+  const btn = document.getElementById('saveProfileBtn');
+  
+  if (!name) { toast('Name is required.', 'error'); return; }
+  
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  
+  try {
+    const data = await apiFetch(`/api/mini-app/profile/${state.userId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name, bio, avatar: state.selectedEmoji })
+    });
+    
+    if (data.success) {
+      toast('Profile updated!', 'success');
+      await loadProfile();
+      switchPage('profile');
+    } else {
+      toast(data.error || 'Update failed.', 'error');
+    }
+  } catch(e) {
+    toast('Network error.', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Profile Changes';
+  }
+}
+
+// ─────────────────────────────────────────
+//  SETTINGS
+// ─────────────────────────────────────────
+async function loadSettings() {
+  const notifyCheck = document.getElementById('set-notifications');
+  const privacyCheck = document.getElementById('set-privacy');
+  if (!notifyCheck || !privacyCheck) return;
+  
+  try {
+    const data = await apiFetch(`/api/mini-app/settings/${state.userId}`);
+    if (data.success) {
+      notifyCheck.checked = data.data.notifications;
+      privacyCheck.checked = data.data.privacy_public;
+    }
+  } catch(e) {
+    console.error('[CV] loadSettings error:', e);
+  }
+}
+
+async function saveSettings() {
+  const notifications = document.getElementById('set-notifications').checked;
+  const privacy_public = document.getElementById('set-privacy').checked;
+  const btn = document.getElementById('saveSettingsBtn');
+  
+  btn.disabled = true;
+  btn.textContent = 'Applying...';
+  
+  try {
+    const data = await apiFetch(`/api/mini-app/settings/${state.userId}`, {
+      method: 'POST',
+      body: JSON.stringify({ notifications, privacy_public })
+    });
+    
+    if (data.success) {
+      toast('Settings applied!', 'success');
+    } else {
+      toast(data.error || 'Failed.', 'error');
+    }
+  } catch(e) {
+    toast('Network error.', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Apply Settings';
   }
 }
 
@@ -7789,6 +8019,17 @@ function setupEventListeners() {
   // Post comment
   const postCommentBtn = document.getElementById('postCommentBtn');
   if (postCommentBtn) postCommentBtn.addEventListener('click', postTopLevelComment);
+
+  // Profile Edit
+  const saveProfileBtn = document.getElementById('saveProfileBtn');
+  if (saveProfileBtn) saveProfileBtn.addEventListener('click', saveProfile);
+  
+  const backFromEditBtn = document.getElementById('backFromEditBtn');
+  if (backFromEditBtn) backFromEditBtn.addEventListener('click', () => switchPage('profile'));
+
+  // Settings
+  const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+  if (saveSettingsBtn) saveSettingsBtn.addEventListener('click', saveSettings);
 
   console.log('[CV] all listeners attached');
 }
@@ -8502,6 +8743,55 @@ def mini_app_mark_post_viewed(post_id):
     except Exception as e:
         logger.error(f"Error marking post as viewed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+@flask_app.route('/api/mini-app/settings/<user_id>', methods=['GET'])
+def mini_app_get_settings(user_id):
+    """API endpoint for fetching user settings"""
+    try:
+        user = db_fetch_one("SELECT notifications_enabled, privacy_public FROM users WHERE user_id = %s", (user_id,))
+        if not user:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+            
+        return jsonify({
+            'success': True,
+            'data': {
+                'notifications': user['notifications_enabled'],
+                'privacy_public': user['privacy_public']
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error fetching settings: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/settings/<user_id>', methods=['POST'])
+def mini_app_update_settings(user_id):
+    """API endpoint for updating user settings"""
+    try:
+        data = request.get_json()
+        notifications = data.get('notifications')
+        privacy_public = data.get('privacy_public')
+        
+        updates = []
+        params = []
+        
+        if notifications is not None:
+            updates.append("notifications_enabled = %s")
+            params.append(notifications)
+            
+        if privacy_public is not None:
+            updates.append("privacy_public = %s")
+            params.append(privacy_public)
+            
+        if not updates:
+            return jsonify({'success': False, 'error': 'No settings to update'}), 400
+            
+        params.append(user_id)
+        db_execute(f"UPDATE users SET {', '.join(updates)} WHERE user_id = %s", tuple(params))
+        
+        return jsonify({'success': True, 'message': 'Settings updated'})
+    except Exception as e:
+        logger.error(f"Error updating settings: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 if __name__ == "__main__": 
     # The main() function already handles initializing the DB, 
     # starting the Flask server, and running the bot polling.
