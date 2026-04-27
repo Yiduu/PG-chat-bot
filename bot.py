@@ -6320,1766 +6320,1064 @@ def main():
 
 @flask_app.route('/mini_app')
 def mini_app_page():
-    """Complete Mini App - uses globally defined env vars for all branding."""
-
-    # All these are already loaded globally in bot.py via load_dotenv()
+    """Mini App with old glassmorphic UI + all new features (multi-category, edit/delete, search, settings)."""
+    
+    # Environment variables (already defined globally)
     _bot      = BOT_USERNAME
-    _primary  = PRIMARY_COLOR        # e.g. "#c9a84c"
-    _secondary= SECONDARY_COLOR      # e.g. "#e8c97a"
-    _card_bg  = CARD_BG_COLOR        # e.g. "#161410"
-    _border   = BORDER_COLOR         # e.g. "#1e1c18"
-    _text     = TEXT_COLOR           # e.g. "#e8e0d0"
-    _rgb      = PRIMARY_RGB          # e.g. "201, 168, 76"  (already computed by hex_to_rgb)
+    _primary  = PRIMARY_COLOR
+    _secondary= SECONDARY_COLOR
+    _card_bg  = CARD_BG_COLOR
+    _border   = BORDER_COLOR
+    _text     = TEXT_COLOR
+    _rgb      = PRIMARY_RGB
 
-    html = ("""<!DOCTYPE html>
+    html = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Christian Vent</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <style>
-    /* ===== CSS RESET & VARIABLES ===== */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Christian Vent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {{
+            --primary: {_primary};
+            --primary-rgb: {_rgb};
+            --secondary: {_secondary};
+            --card-bg: {_card_bg};
+            --border: {_border};
+            --text: {_text};
+            --glass-bg: rgba(26, 26, 26, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --accent-gold: #FFD700;
+        }}
 
-    :root {
-      --primary:        SLOT_PRIMARY;
-      --primary-light:  SLOT_SECONDARY;
-      --primary-dim:    rgba(SLOT_RGB, 0.15);
-      --primary-border: rgba(SLOT_RGB, 0.25);
-      --bg:   SLOT_CARD_BG;
-      --bg2:  SLOT_BORDER;
-      --bg3:  #1a1814;
-      --surface:  rgba(255,255,255,0.04);
-      --surface2: rgba(255,255,255,0.07);
-      --text:       SLOT_TEXT;
-      --text-dim:   rgba(255,255,255,0.5);
-      --text-muted: rgba(255,255,255,0.3);
-      --danger: #c0392b;
-      --success: #27ae60;
-      --radius: 16px;
-      --radius-sm: 10px;
-      --radius-pill: 999px;
-      --nav-h: 72px;
-      --font-body: 'DM Sans', system-ui, sans-serif;
-      --font-display: 'Lora', Georgia, serif;
-      /* Alias so any --gold references keep working */
-      --gold:        var(--primary);
-      --gold-light:  var(--primary-light);
-      --gold-dim:    var(--primary-dim);
-      --gold-border: var(--primary-border);
-    }
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }}
 
-    body {
-      font-family: var(--font-body);
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      padding-bottom: calc(var(--nav-h) + 24px);
-      font-size: 14px;
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-      overflow-x: hidden;
-    }
+        body {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #090909 0%, #151515 100%);
+            color: var(--text);
+            font-size: 13.5px;
+            line-height: 1.5;
+            min-height: 100vh;
+            padding-bottom: 90px;
+            position: relative;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }}
 
-    /* ===== SCROLLBAR ===== */
-    ::-webkit-scrollbar { width: 4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--gold-border); border-radius: 4px; }
+        /* Particle canvas */
+        #particleCanvas {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            pointer-events: none;
+            opacity: 0.5;
+        }}
 
-    /* ===== LAYOUT ===== */
-    .page { display: none; padding: 16px 16px 8px; max-width: 600px; margin: 0 auto; }
-    .page.active { display: block; }
+        /* Glassmorphism cards */
+        .glass-card {{
+            background: linear-gradient(145deg, rgba(26, 26, 26, 0.7), rgba(15, 15, 15, 0.8));
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-top: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 24px;
+            padding: clamp(18px, 4vw, 28px);
+            margin-bottom: 20px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+            transition: transform 0.3s ease, border-color 0.3s ease;
+        }}
+        .glass-card:hover {{ border-color: rgba(var(--primary-rgb), 0.4); }}
 
-    /* ===== HEADER ===== */
-    .app-header {
-      text-align: center;
-      padding: 28px 16px 20px;
-      max-width: 600px;
-      margin: 0 auto;
-    }
-    .app-logo {
-      width: 64px; height: 64px;
-      border-radius: 18px;
-      border: 2px solid var(--gold-border);
-      margin: 0 auto 12px;
-      display: block;
-      object-fit: cover;
-    }
-    .app-logo-fallback {
-      width: 64px; height: 64px;
-      border-radius: 18px;
-      border: 2px solid var(--gold-border);
-      background: var(--gold-dim);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 28px;
-      margin: 0 auto 12px;
-    }
-    .app-title {
-      font-family: var(--font-display);
-      font-size: 1.8rem;
-      color: var(--gold);
-      letter-spacing: 0.5px;
-      font-weight: 800;
-      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
-    }
-    .app-subtitle {
-      font-size: 0.82rem;
-      color: var(--gold-light);
-      margin-top: 4px;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      font-weight: 700;
-      opacity: 0.9;
-    }
+        /* Bottom navigation */
+        .bottom-nav {{
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 92%;
+            max-width: 500px;
+            background: rgba(15, 15, 15, 0.85);
+            backdrop-filter: blur(25px);
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+            border-radius: 40px;
+            height: 70px;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            z-index: 1000;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.1);
+            padding: 0 10px;
+        }}
+        .nav-item {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            color: var(--text);
+            opacity: 0.5;
+            cursor: pointer;
+            transition: all 0.3s;
+            flex: 1;
+            padding: 8px 0;
+            border-radius: 30px;
+            position: relative;
+        }}
+        .nav-item.active {{
+            opacity: 1;
+            color: var(--primary);
+            transform: translateY(-3px);
+        }}
+        .nav-item.active::after {{
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 5px;
+            height: 5px;
+            background: var(--primary);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--primary);
+        }}
+        .nav-icon {{ font-size: 1.4rem; }}
+        .nav-label {{ font-size: 0.65rem; font-weight: 600; letter-spacing: 0.3px; }}
 
-    /* ===== TOGGLE SWITCH ===== */
-    .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
-    .switch input { opacity: 0; width: 0; height: 0; }
-    .slider {
-      position: absolute; cursor: pointer;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background-color: var(--bg3);
-      border: 1px solid var(--surface2);
-      transition: .4s; border-radius: 24px;
-    }
-    .slider:before {
-      position: absolute; content: "";
-      height: 16px; width: 16px;
-      left: 3px; bottom: 3px;
-      background-color: var(--text-muted);
-      transition: .4s; border-radius: 50%;
-    }
-    input:checked + .slider { background-color: var(--gold-dim); border-color: var(--gold); }
-    input:checked + .slider:before { transform: translateX(20px); background-color: var(--gold); }
+        /* Layout */
+        .app-container {{
+            max-width: 650px;
+            margin: 0 auto;
+            padding: 20px 16px;
+        }}
+        .page {{
+            display: none;
+            animation: fadeIn 0.4s ease-out;
+        }}
+        .page.active {{ display: block; }}
+        @keyframes fadeIn {{
+            from {{ opacity: 0; transform: translateY(10px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
 
-    .emoji-item {
-      aspect-ratio: 1;
-      display: flex; align-items: center; justify-content: center;
-      background: var(--surface);
-      border: 1px solid transparent;
-      border-radius: 12px;
-      font-size: 1.5rem;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .emoji-item:hover { background: var(--surface2); }
-    .emoji-item.selected { border-color: var(--gold); background: var(--gold-dim); }
+        /* Header */
+        .app-header {{
+            text-align: center;
+            margin-bottom: 20px;
+        }}
+        .logo {{
+            width: 70px;
+            height: 70px;
+            object-fit: contain;
+            border-radius: 50%;
+            border: 2px solid var(--primary);
+            background: var(--glass-bg);
+            padding: 6px;
+            box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.3);
+            margin-bottom: 10px;
+        }}
+        .app-title {{
+            font-size: 1.7rem;
+            font-weight: 800;
+            color: var(--primary);
+            letter-spacing: -0.5px;
+        }}
+        .app-subtitle {{
+            opacity: 0.6;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }}
 
-    .branding-footer {
-      text-align: center;
-      padding: 32px 16px;
-      opacity: 0.5;
-      font-size: 0.75rem;
-    }
-    .branding-footer strong { color: var(--gold); }
+        /* Forms & buttons */
+        .categories-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 20px;
+        }}
+        .cat-item {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 40px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }}
+        .cat-item.selected {{
+            background: rgba(var(--primary-rgb), 0.15);
+            border-color: var(--primary);
+        }}
+        .cat-check {{
+            width: 18px;
+            height: 18px;
+            border: 1.5px solid var(--primary);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            color: var(--primary);
+        }}
+        .cat-label {{ font-size: 0.8rem; font-weight: 500; }}
 
-    /* ===== BOTTOM NAV ===== */
-    .bottom-nav {
-      position: fixed;
-      bottom: 0; left: 0; right: 0;
-      height: var(--nav-h);
-      background: rgba(14,13,11,0.95);
-      backdrop-filter: blur(20px);
-      border-top: 1px solid var(--gold-border);
-      display: flex;
-      align-items: center;
-      justify-content: space-around;
-      z-index: 1000;
-      padding: 0 8px;
-    }
-    .nav-btn {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 4px;
-      padding: 8px 4px;
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--text-muted);
-      transition: color 0.2s;
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
-    }
-    .nav-btn.active { color: var(--gold); }
-    .nav-btn .nav-icon { font-size: 1.3rem; line-height: 1; }
-    .nav-btn.active .nav-dot { opacity: 1; }
-    .nav-btn .nav-label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
+        .vent-textarea {{
+            width: 100%;
+            background: rgba(15,15,15,0.7);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--text);
+            border-radius: 20px;
+            padding: 14px 16px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9rem;
+            resize: vertical;
+            min-height: 130px;
+            margin-bottom: 8px;
+        }}
+        .vent-textarea:focus {{ outline: none; border-color: var(--primary); }}
 
-    /* ===== CARDS ===== */
-    .card {
-      background: var(--bg2);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius);
-      padding: 18px;
-      margin-bottom: 14px;
-    }
-    .card-title {
-      font-family: var(--font-display);
-      font-size: 1.25rem;
-      color: var(--gold);
-      margin-bottom: 4px;
-      font-weight: 700;
-    }
-    .card-sub {
-      font-size: 0.8rem;
-      color: var(--text-dim);
-      margin-bottom: 16px;
-    }
+        .submit-btn {{
+            width: 100%;
+            background: linear-gradient(135deg, var(--primary), #d4af37);
+            color: #000;
+            border: none;
+            padding: 14px 20px;
+            border-radius: 50px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 8px 20px rgba(var(--primary-rgb), 0.3);
+        }}
+        .submit-btn:active {{ transform: scale(0.98); }}
 
-    /* ===== SECTION HEADER ===== */
-    .section-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 14px;
-    }
-    .section-title {
-      font-family: var(--font-display);
-      font-size: 1rem;
-      color: var(--gold);
-    }
-    .refresh-btn {
-      background: var(--gold-dim);
-      border: 1px solid var(--gold-border);
-      color: var(--gold);
-      padding: 5px 12px;
-      border-radius: var(--radius-pill);
-      font-size: 0.75rem;
-      cursor: pointer;
-      font-family: var(--font-body);
-      font-weight: 500;
-      transition: background 0.2s;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .refresh-btn:hover { background: var(--primary-dim); }
+        /* Post cards */
+        .post-card {{
+            background: linear-gradient(145deg, rgba(30,30,30,0.4), rgba(15,15,15,0.6));
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(var(--primary-rgb), 0.1);
+            border-radius: 20px;
+            padding: 18px;
+            margin-bottom: 18px;
+            transition: all 0.2s;
+        }}
+        .post-card:hover {{ border-color: rgba(var(--primary-rgb), 0.3); transform: translateY(-2px); }}
+        .post-header {{ display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }}
+        .author-icon {{
+            width: 40px; height: 40px;
+            background: rgba(var(--primary-rgb), 0.1);
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.2rem;
+        }}
+        .author-info {{ flex: 1; }}
+        .author-name {{ font-weight: 600; }}
+        .post-meta {{ display: flex; gap: 8px; font-size: 0.7rem; opacity: 0.6; flex-wrap: wrap; align-items: center; }}
+        .cat-badge {{
+            background: rgba(var(--primary-rgb), 0.15);
+            padding: 2px 10px;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            color: var(--primary);
+        }}
+        .post-content {{ font-size: 0.88rem; line-height: 1.6; margin: 12px 0; word-break: break-word; }}
+        .post-footer {{ display: flex; justify-content: space-between; align-items: center; margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px; }}
+        .comment-count {{ color: var(--primary); font-weight: 500; }}
+        .read-more-btn {{
+            background: transparent;
+            border: 1px solid rgba(var(--primary-rgb), 0.3);
+            color: var(--primary);
+            padding: 6px 14px;
+            border-radius: 30px;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }}
+        .unread-badge {{
+            background: #e67e22;
+            color: #000;
+            border-radius: 30px;
+            padding: 2px 8px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            margin-left: 8px;
+        }}
 
-    /* ===== CATEGORIES GRID ===== */
-    .categories-label {
-      font-size: 0.72rem;
-      color: var(--gold);
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      font-weight: 600;
-      margin-bottom: 10px;
-    }
-    .categories-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
-      margin-bottom: 16px;
-      max-height: 220px;
-      overflow-y: auto;
-      padding: 2px;
-    }
-    .cat-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 9px 11px;
-      background: var(--surface);
-      border: 1px solid transparent;
-      border-radius: var(--radius-sm);
-      cursor: pointer;
-      transition: all 0.15s;
-      user-select: none;
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
-    }
-    .cat-item:hover { background: var(--gold-dim); border-color: var(--gold-border); }
-    .cat-item.selected { background: var(--gold-dim); border-color: var(--gold); }
-    .cat-check {
-      width: 16px; height: 16px;
-      border: 1.5px solid var(--gold-border);
-      border-radius: 4px;
-      flex-shrink: 0;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 10px;
-      color: var(--gold);
-      transition: all 0.15s;
-    }
-    .cat-item.selected .cat-check {
-      background: var(--gold);
-      border-color: var(--gold);
-      color: #000;
-    }
-    .cat-label { font-size: 0.8rem; color: var(--text); line-height: 1.2; }
+        /* Comments */
+        .comment-thread {{ margin-top: 20px; }}
+        .comment-item {{
+            display: flex;
+            gap: 10px;
+            margin-bottom: 12px;
+            position: relative;
+        }}
+        .comment-item.is-reply {{ margin-left: 35px; }}
+        .comment-item.is-reply::before {{
+            content: '';
+            position: absolute;
+            left: -20px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: rgba(var(--primary-rgb), 0.3);
+        }}
+        .comment-avatar {{
+            width: 32px; height: 32px;
+            background: rgba(var(--primary-rgb), 0.1);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+        }}
+        .comment-body {{
+            flex: 1;
+            background: rgba(20,20,20,0.5);
+            border-radius: 16px;
+            padding: 10px 12px;
+        }}
+        .comment-header {{ display: flex; justify-content: space-between; margin-bottom: 4px; }}
+        .comment-author {{ font-weight: 600; color: var(--primary); font-size: 0.8rem; }}
+        .comment-time {{ font-size: 0.65rem; opacity: 0.5; }}
+        .comment-text {{ font-size: 0.85rem; line-height: 1.5; margin-bottom: 6px; }}
+        .comment-actions {{ display: flex; gap: 10px; }}
+        .comment-action {{
+            background: none; border: none;
+            color: var(--text);
+            opacity: 0.6;
+            font-size: 0.7rem;
+            cursor: pointer;
+        }}
+        .inline-reply {{
+            display: none;
+            margin-top: 10px;
+        }}
+        .inline-reply.open {{ display: block; }}
+        .inline-reply textarea {{
+            width: 100%;
+            background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(var(--primary-rgb),0.3);
+            border-radius: 12px;
+            padding: 8px;
+            color: var(--text);
+            font-size: 0.8rem;
+            resize: vertical;
+        }}
+        .reply-actions {{ display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }}
 
-    /* ===== TEXTAREA & INPUTS ===== */
-    .vent-textarea {
-      width: 100%;
-      min-height: 140px;
-      background: var(--bg3);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius);
-      padding: 14px;
-      color: var(--text);
-      font-family: var(--font-body);
-      font-size: 0.9rem;
-      line-height: 1.6;
-      resize: vertical;
-      outline: none;
-      transition: border-color 0.2s;
-      margin-bottom: 8px;
-    }
-    .vent-textarea:focus { border-color: var(--gold-border); }
-    .vent-textarea::placeholder { color: var(--text-muted); }
-    .char-count {
-      text-align: right;
-      font-size: 0.72rem;
-      color: var(--text-muted);
-      margin-bottom: 12px;
-    }
-    .char-count.warn { color: #e67e22; }
+        /* Leaderboard */
+        .lb-item {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }}
+        .lb-rank {{
+            width: 30px;
+            font-weight: 700;
+        }}
 
-    /* ===== BUTTONS ===== */
-    .btn-primary {
-      width: 100%;
-      padding: 16px;
-      background: linear-gradient(135deg, var(--gold), var(--gold-light));
-      border: none;
-      border-radius: var(--radius-pill);
-      color: #000;
-      font-family: var(--font-body);
-      font-size: 1rem;
-      font-weight: 800;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      cursor: pointer;
-      transition: all 0.2s, transform 0.1s;
-      box-shadow: 0 4px 15px rgba(SLOT_RGB, 0.3);
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
-    }
-    .btn-primary:hover { opacity: 0.9; }
-    .btn-primary:active { transform: scale(0.98); }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-ghost {
-      padding: 8px 16px;
-      background: none;
-      border: 1px solid var(--gold-border);
-      border-radius: var(--radius-pill);
-      color: var(--gold);
-      font-family: var(--font-body);
-      font-size: 0.8rem;
-      cursor: pointer;
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
-    }
+        /* Profile */
+        .profile-header {{ text-align: center; }}
+        .profile-avatar {{
+            width: 80px; height: 80px;
+            background: rgba(var(--primary-rgb), 0.15);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            margin: 0 auto 12px;
+        }}
+        .profile-stats {{
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin: 20px 0;
+        }}
 
-    /* ===== POST CARDS ===== */
-    .post-card {
-      background: var(--bg2);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius);
-      padding: 16px;
-      margin-bottom: 14px;
-      transition: border-color 0.2s;
-    }
-    .post-card:hover { border-color: var(--gold-border); }
-    .post-meta {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 10px;
-      flex-wrap: wrap;
-    }
-    .post-avatar {
-      width: 32px; height: 32px;
-      background: var(--gold-dim);
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 14px;
-      flex-shrink: 0;
-    }
-    .post-author { font-size: 0.82rem; color: var(--text-dim); }
-    .post-time { font-size: 0.72rem; color: var(--text-muted); margin-left: auto; }
-    .cat-badges { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }
-    .cat-badge {
-      padding: 2px 9px;
-      background: var(--gold-dim);
-      border: 1px solid var(--gold-border);
-      border-radius: var(--radius-pill);
-      font-size: 0.68rem;
-      color: var(--gold);
-      font-weight: 500;
-    }
-    .post-content {
-      font-size: 0.88rem;
-      color: var(--text);
-      line-height: 1.7;
-      margin-bottom: 12px;
-      word-break: break-word;
-    }
-    .post-content.truncated {
-      display: -webkit-box;
-      -webkit-line-clamp: 4;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-    .post-footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-top: 1px solid var(--surface);
-      padding-top: 10px;
-      gap: 8px;
-    }
-    .post-comment-count { font-size: 0.78rem; color: var(--text-muted); }
-    .btn-read-more {
-      background: var(--gold-dim);
-      border: 1px solid var(--gold-border);
-      color: var(--gold);
-      padding: 6px 14px;
-      border-radius: var(--radius-pill);
-      font-size: 0.75rem;
-      cursor: pointer;
-      font-family: var(--font-body);
-      font-weight: 500;
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
-    }
+        /* Toast */
+        #toast {{
+            position: fixed;
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1e1e1e;
+            color: white;
+            padding: 8px 18px;
+            border-radius: 40px;
+            font-size: 0.8rem;
+            z-index: 2000;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            white-space: nowrap;
+        }}
+        #toast.show {{ opacity: 1; }}
+        #toast.success {{ background: #27ae60; }}
+        #toast.error {{ background: #e74c3c; }}
 
-    /* ===== COMMENTS ===== */
-    .comment-item {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 14px;
-      position: relative;
-    }
-    .comment-item.is-reply { margin-left: 36px; }
-    .comment-item.is-reply::before {
-      content: '';
-      position: absolute;
-      left: -18px; top: 0; bottom: 0;
-      width: 2px;
-      background: var(--gold-border);
-      border-radius: 2px;
-    }
-    .comment-avatar {
-      width: 30px; height: 30px;
-      background: var(--gold-dim);
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 12px;
-      flex-shrink: 0;
-      margin-top: 2px;
-    }
-    .comment-body {
-      flex: 1;
-      background: var(--bg3);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius-sm);
-      padding: 10px 12px;
-    }
-    .comment-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 5px;
-    }
-    .comment-author { font-size: 0.78rem; font-weight: 600; color: var(--gold); }
-    .comment-time { font-size: 0.68rem; color: var(--text-muted); }
-    .comment-text { font-size: 0.85rem; color: var(--text); line-height: 1.55; word-break: break-word; }
-    .comment-actions { display: flex; gap: 8px; margin-top: 7px; }
-    .comment-action-btn {
-      background: none; border: none;
-      font-size: 0.72rem; color: var(--text-muted);
-      cursor: pointer;
-      font-family: var(--font-body);
-      padding: 2px 0;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .comment-action-btn:hover { color: var(--gold); }
-
-    /* Inline reply box */
-    .inline-reply { display: none; margin-top: 10px; }
-    .inline-reply.open { display: block; }
-    .inline-reply textarea {
-      width: 100%;
-      min-height: 65px;
-      background: var(--bg);
-      border: 1px solid var(--gold-border);
-      border-radius: var(--radius-sm);
-      padding: 9px 11px;
-      color: var(--text);
-      font-family: var(--font-body);
-      font-size: 0.82rem;
-      resize: none;
-      outline: none;
-      margin-bottom: 7px;
-    }
-    .inline-reply-btns { display: flex; gap: 8px; justify-content: flex-end; }
-    .inline-cancel {
-      padding: 6px 13px;
-      background: none;
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius-pill);
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      cursor: pointer;
-      font-family: var(--font-body);
-    }
-    .inline-send {
-      padding: 6px 16px;
-      background: var(--gold);
-      border: none;
-      border-radius: var(--radius-pill);
-      color: #000;
-      font-size: 0.75rem;
-      font-weight: 600;
-      cursor: pointer;
-      font-family: var(--font-body);
-    }
-
-    /* ===== LEADERBOARD ===== */
-    .lb-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 0;
-      border-bottom: 1px solid var(--surface);
-    }
-    .lb-item:last-child { border-bottom: none; }
-    .lb-rank {
-      width: 28px;
-      text-align: center;
-      font-family: var(--font-display);
-      font-size: 1rem;
-      color: var(--text-muted);
-      font-weight: 700;
-    }
-    .lb-rank.top1 { color: #FFD700; font-size: 1.3rem; }
-    .lb-rank.top2 { color: #C0C0C0; }
-    .lb-rank.top3 { color: #CD7F32; }
-    .lb-avatar {
-      width: 38px; height: 38px;
-      background: var(--gold-dim);
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 16px;
-    }
-    .lb-info { flex: 1; }
-    .lb-name { font-size: 0.88rem; font-weight: 500; }
-    .lb-aura { font-size: 0.72rem; color: var(--text-dim); }
-    .lb-pts {
-      font-family: var(--font-display);
-      font-size: 1rem;
-      color: var(--gold);
-      font-weight: 700;
-    }
-
-    /* ===== PROFILE ===== */
-    .profile-hero {
-      text-align: center;
-      padding: 24px 16px;
-      background: var(--bg2);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius);
-      margin-bottom: 14px;
-      position: relative;
-    }
-    .profile-avatar {
-      width: 72px; height: 72px;
-      background: var(--gold-dim);
-      border-radius: 50%;
-      border: 2px solid var(--gold-border);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 30px;
-      margin: 0 auto 12px;
-    }
-    .profile-name {
-      font-family: var(--font-display);
-      font-size: 1.2rem;
-      color: var(--gold);
-      margin-bottom: 4px;
-    }
-    .profile-aura { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 16px; }
-    .profile-stats {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-    }
-    .stat-box { text-align: center; }
-    .stat-num {
-      font-family: var(--font-display);
-      font-size: 1.3rem;
-      color: var(--gold);
-      font-weight: 700;
-    }
-    .stat-label { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-
-    /* ===== TOAST MESSAGES ===== */
-    #toast {
-      position: fixed;
-      bottom: calc(var(--nav-h) + 16px);
-      left: 50%;
-      transform: translateX(-50%) translateY(20px);
-      background: var(--bg3);
-      border: 1px solid var(--gold-border);
-      color: var(--text);
-      padding: 10px 20px;
-      border-radius: var(--radius-pill);
-      font-size: 0.82rem;
-      z-index: 2000;
-      opacity: 0;
-      transition: all 0.3s;
-      pointer-events: none;
-      white-space: nowrap;
-      max-width: 90vw;
-    }
-    #toast.show {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
-    #toast.success { border-color: var(--success); color: #6fcf97; }
-    #toast.error { border-color: var(--danger); color: #eb5757; }
-
-    /* ===== LOADING STATES ===== */
-    .skeleton {
-      background: linear-gradient(90deg, var(--bg2) 25%, var(--bg3) 50%, var(--bg2) 75%);
-      background-size: 200% 100%;
-      animation: shimmer 1.5s infinite;
-      border-radius: var(--radius);
-      height: 120px;
-      margin-bottom: 14px;
-    }
-    @keyframes shimmer {
-      0% { background-position: 200% 0; }
-      100% { background-position: -200% 0; }
-    }
-    .empty-state {
-      text-align: center;
-      padding: 40px 20px;
-      color: var(--text-muted);
-    }
-    .empty-state .empty-icon { font-size: 2.5rem; margin-bottom: 12px; }
-    .empty-state p { font-size: 0.88rem; line-height: 1.6; }
-
-    /* ===== DETAIL VIEW ===== */
-    .back-btn {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      background: none;
-      border: none;
-      color: var(--gold);
-      font-size: 0.82rem;
-      cursor: pointer;
-      font-family: var(--font-body);
-      margin-bottom: 14px;
-      padding: 4px 0;
-      -webkit-tap-highlight-color: transparent;
-    }
-
-    /* ===== COMMENT COMPOSE ===== */
-    .compose-box {
-      background: var(--bg2);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius);
-      padding: 14px;
-      margin-top: 16px;
-    }
-    .compose-box textarea {
-      width: 100%;
-      min-height: 80px;
-      background: var(--bg3);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius-sm);
-      padding: 10px 12px;
-      color: var(--text);
-      font-family: var(--font-body);
-      font-size: 0.85rem;
-      resize: none;
-      outline: none;
-      transition: border-color 0.2s;
-      margin-bottom: 10px;
-    }
-    .compose-box textarea:focus { border-color: var(--gold-border); }
-
-    /* ===== AUTH SCREEN ===== */
-    #authScreen {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 32px 20px;
-      text-align: center;
-    }
-    #authScreen h2 { font-family: var(--font-display); color: var(--gold); margin-bottom: 12px; }
-    #authScreen p { color: var(--text-dim); font-size: 0.88rem; line-height: 1.6; }
-    .spinner {
-      width: 32px; height: 32px;
-      border: 3px solid var(--gold-border);
-      border-top-color: var(--gold);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin: 0 auto 20px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  </style>
+        /* Loading skeletons */
+        .skeleton {{
+            background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: 16px;
+            height: 120px;
+            margin-bottom: 16px;
+        }}
+        @keyframes shimmer {{
+            0% {{ background-position: 200% 0; }}
+            100% {{ background-position: -200% 0; }}
+        }}
+    </style>
 </head>
 <body>
-
-<!-- Auth / Loading Screen (shown until userId is confirmed) -->
-<div id="authScreen">
-  <div class="spinner"></div>
-  <h2>Christian Vent</h2>
-  <p>Authenticating your session&hellip;</p>
-</div>
-
-<!-- Main App (hidden until auth succeeds) -->
-<div id="mainApp" style="display:none;">
-
-  <!-- Header (only shown on vent/feed/leaderboard/profile) -->
-  <header class="app-header" id="appHeader">
-    <img src="/static/images/vent%20logo.png" class="app-logo" id="main-logo" alt="Christian Vent Logo" 
-         style="box-shadow: 0 0 20px rgba(SLOT_RGB, 0.4); border: 3px solid var(--gold);">
-    <div class="app-title">Christian Vent</div>
-    <div class="app-subtitle">Safe &amp; Anonymous</div>
-  </header>
-
-  <!-- ===== VENT PAGE ===== -->
-  <section id="page-vent" class="page active">
-    <div class="card">
-      <div class="card-title">Share Your Heart</div>
-      <div class="card-sub">Your identity stays hidden. This is a safe space.</div>
-
-      <div class="categories-label">Select Categories (pick one or more)</div>
-      <div class="categories-grid" id="categoriesGrid">
-        <!-- Populated by JS -->
-      </div>
-
-      <textarea
-        class="vent-textarea"
-        id="ventInput"
-        placeholder="What's on your heart? Share freely…"
-        maxlength="5000"
-      ></textarea>
-      <div class="char-count" id="charCount">0 / 5000</div>
-
-      <button class="btn-primary" id="submitVentBtn">Post Anonymously</button>
-    </div>
-  </section>
-
-  <!-- ===== FEED PAGE ===== -->
-  <section id="page-feed" class="page">
-    <div class="section-header">
-      <div class="section-title">Community Feed</div>
-      <button class="refresh-btn" id="refreshFeedBtn">↻ Refresh</button>
-    </div>
-    <div id="feedContainer">
-      <div class="skeleton"></div>
-      <div class="skeleton"></div>
-      <div class="skeleton"></div>
-    </div>
-    <div id="loadMoreArea" style="text-align:center; padding:16px; display:none;">
-      <button class="btn-ghost" id="loadMoreBtn">Load more</button>
-    </div>
-  </section>
-
-  <!-- ===== POST DETAIL PAGE ===== -->
-  <section id="page-detail" class="page">
-    <button class="back-btn" id="backFromDetailBtn">← Back to Feed</button>
-    <div id="detailPostBox"></div>
-    <div id="detailCommentsBox"></div>
-    <div class="compose-box" id="detailComposeBox" style="display:none;">
-      <textarea id="commentInput" placeholder="Offer a response or prayer…"></textarea>
-      <button class="btn-primary" id="postCommentBtn">Send Response</button>
-    </div>
-  </section>
-
-  <!-- ===== LEADERBOARD PAGE ===== -->
-  <section id="page-leaderboard" class="page">
-    <div class="section-header">
-      <div class="section-title">Top Contributors</div>
-      <button class="refresh-btn" id="refreshLbBtn">↻ Refresh</button>
-    </div>
-    <div class="card" id="leaderboardContainer">
-      <div class="skeleton"></div>
-    </div>
-  </section>
-
-  <!-- ===== PROFILE PAGE ===== -->
-  <section id="page-profile" class="page">
-    <div id="profileContainer">
-      <div class="skeleton" style="height:180px;"></div>
-    </div>
-  </section>
-
-  <!-- ===== EDIT PROFILE PAGE ===== -->
-  <section id="page-edit-profile" class="page">
-    <button class="back-btn" id="backFromEditBtn">← Back to Profile</button>
-    <div class="card">
-      <div class="card-title">Customize Profile</div>
-      <div class="card-sub">This is how you appear in the community.</div>
-      
-      <div style="margin-bottom: 20px;">
-        <label style="display:block;font-size:0.75rem;color:var(--gold);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Anonymous Name</label>
-        <input type="text" id="edit-name" class="vent-textarea" style="min-height:unset;padding:12px;" placeholder="Name...">
-      </div>
-
-      <div style="margin-bottom: 20px;">
-        <label style="display:block;font-size:0.75rem;color:var(--gold);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Bio</label>
-        <textarea id="edit-bio" class="vent-textarea" style="min-height:80px;" placeholder="Write a short bio..."></textarea>
-      </div>
-
-      <div style="margin-bottom: 24px;">
-        <label style="display:block;font-size:0.75rem;color:var(--gold);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Choose Avatar</label>
-        <div id="emoji-grid" style="display:grid;grid-template-columns:repeat(5, 1fr);gap:10px;">
-          <!-- Populated by JS -->
+    <canvas id="particleCanvas"></canvas>
+    <div class="app-container">
+        <div class="app-header">
+            <img src="/static/images/vent%20logo.png" class="logo" alt="Christian Vent">
+            <div class="app-title">Christian Vent</div>
+            <div class="app-subtitle">Safe & Anonymous</div>
         </div>
-      </div>
 
-      <button class="btn-primary" id="saveProfileBtn">Save Profile Changes</button>
+        <!-- Pages -->
+        <div id="page-vent" class="page active">
+            <div class="glass-card">
+                <h3 style="margin-bottom: 12px;">✍️ Share Your Heart</h3>
+                <div class="categories-grid" id="categoriesContainer"></div>
+                <textarea id="ventContent" class="vent-textarea" placeholder="What's on your mind? (max 5000 chars)" maxlength="5000"></textarea>
+                <div style="text-align:right; font-size:0.7rem; opacity:0.6; margin-bottom:12px;"><span id="charCount">0</span>/5000</div>
+                <button class="submit-btn" id="submitVentBtn">Post Anonymously</button>
+            </div>
+        </div>
+
+        <div id="page-feed" class="page">
+            <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+                <input type="text" id="searchInput" placeholder="Search vents..." style="flex:1; background:rgba(0,0,0,0.5); border:1px solid rgba(var(--primary-rgb),0.3); border-radius:30px; padding:10px 15px; color:white;">
+                <button id="searchBtn" class="read-more-btn">🔍</button>
+            </div>
+            <div id="feedContainer"></div>
+            <div id="loadMoreBtn" style="text-align:center; padding:10px; display:none;"><button class="read-more-btn">Load More</button></div>
+        </div>
+
+        <div id="page-detail" class="page">
+            <button id="backToFeedBtn" class="read-more-btn" style="margin-bottom:12px;">← Back to Feed</button>
+            <div id="detailPost"></div>
+            <div id="detailComments"></div>
+            <div class="glass-card" style="margin-top:20px;">
+                <textarea id="newComment" class="vent-textarea" style="min-height:80px;" placeholder="Write a response..."></textarea>
+                <button id="postCommentBtn" class="submit-btn">Send Response</button>
+            </div>
+        </div>
+
+        <div id="page-leaderboard" class="page">
+            <div class="glass-card" id="leaderboardContainer"></div>
+        </div>
+
+        <div id="page-profile" class="page">
+            <div class="glass-card" id="profileContainer"></div>
+            <button id="editProfileBtn" class="read-more-btn" style="width:100%; margin-top:10px;">✏️ Edit Profile</button>
+        </div>
+
+        <div id="page-settings" class="page">
+            <div class="glass-card">
+                <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+                    <span>🔔 Notifications</span>
+                    <label class="switch"><input type="checkbox" id="notifToggle"><span class="slider"></span></label>
+                </div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+                    <span>🌍 Public Profile</span>
+                    <label class="switch"><input type="checkbox" id="privacyToggle"><span class="slider"></span></label>
+                </div>
+                <button id="saveSettingsBtn" class="submit-btn">Save Settings</button>
+            </div>
+        </div>
+
+        <!-- Edit Profile Modal (simple inline) -->
+        <div id="editProfileModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:2000; align-items:center; justify-content:center;">
+            <div class="glass-card" style="width:90%; max-width:400px;">
+                <h3>Edit Profile</h3>
+                <input type="text" id="editName" placeholder="Name" class="vent-textarea" style="min-height:auto; margin-bottom:12px;">
+                <textarea id="editBio" placeholder="Bio (max 200)" class="vent-textarea" style="min-height:80px;"></textarea>
+                <div id="emojiGrid" style="display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin:12px 0;"></div>
+                <button id="saveProfileChanges" class="submit-btn">Save</button>
+                <button id="closeModal" class="read-more-btn" style="margin-top:10px;">Cancel</button>
+            </div>
+        </div>
     </div>
-  </section>
 
-  <!-- ===== SETTINGS PAGE ===== -->
-  <section id="page-settings" class="page">
-    <div class="section-header">
-      <div class="section-title">Preferences</div>
-    </div>
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
-        <div>
-          <div style="font-weight:600;margin-bottom:2px;">Push Notifications</div>
-          <div style="font-size:0.75rem;color:var(--text-dim);">Alerts for replies and mentions.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="set-notifications">
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
-        <div>
-          <div style="font-weight:600;margin-bottom:2px;">Public Profile</div>
-          <div style="font-size:0.75rem;color:var(--text-dim);">Others can see your aura and stats.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="set-privacy">
-          <span class="slider"></span>
-        </label>
-      </div>
-      
-      <button class="btn-primary" id="saveSettingsBtn">Apply Settings</button>
-    </div>
-    
-    <div class="branding-footer">
-      Designed by <strong>Yididiya</strong><br>
-      Christian Vent Community
-    </div>
-  </section>
-
-  <!-- ===== BOTTOM NAV ===== -->
-  <nav class="bottom-nav">
-    <button class="nav-btn active" data-page="vent">
-      <span class="nav-icon">✍️</span>
-      <span class="nav-label">Vent</span>
-      <span class="nav-dot"></span>
-    </button>
-    <button class="nav-btn" data-page="feed">
-      <span class="nav-icon">🌍</span>
-      <span class="nav-label">Feed</span>
-      <span class="nav-dot"></span>
-    </button>
-    <button class="nav-btn" data-page="leaderboard">
-      <span class="nav-icon">🏆</span>
-      <span class="nav-label">Top</span>
-      <span class="nav-dot"></span>
-    </button>
-    <button class="nav-btn" data-page="profile">
-      <span class="nav-icon">👤</span>
-      <span class="nav-label">Me</span>
-      <span class="nav-dot"></span>
-    </button>
-    <button class="nav-btn" data-page="settings">
-      <span class="nav-icon">⚙️</span>
-      <span class="nav-label">Settings</span>
-      <span class="nav-dot"></span>
-    </button>
-  </nav>
-
-</div><!-- /#mainApp -->
-
-<!-- Toast -->
-<div id="toast"></div>
-
-<script>
-'use strict';
-console.log('[CV] Script loaded');
-
-// ─────────────────────────────────────────
-//  CONFIGURATION
-// ─────────────────────────────────────────
-const CONFIG = {
-  botUsername: 'SLOT_BOT',
-  apiBase: window.location.origin,
-  categories: [
-    ['PrayForMe',          '🙏 Pray For Me'],
-    ['Bible',              '📖 Bible Study'],
-    ['WorkLife',           '💼 Work & Life'],
-    ['SpiritualLife',      '🕊 Spiritual Life'],
-    ['ChristianChallenges','⚔️ Challenges'],
-    ['Relationship',       '❤️ Relationship'],
-    ['Marriage',           '💍 Marriage'],
-    ['Youth',              '🧑‍🤝‍🧑 Youth'],
-    ['Finance',            '💰 Finance'],
-    ['WorshipMusic',       '🎶 Worship'],
-    ['Family',             '🏠 Family'],
-    ['Testimony',          '🙌 Testimony'],
-    ['AddictionRecovery',  '💊 Recovery'],
-    ['BibleQuestion',      '📖 Bible Q&A'],
-    ['Other',              '🔖 Other'],
-  ],
-  emojis: ['👨', '👩', '🕊️', '🙏', '✝️', '📖', '❤️', '🌟', '🛡️', '⚔️', '⛪', '🎹', '👶', '🧑', '👴']
-};
-
-// ─────────────────────────────────────────
-//  STATE
-// ─────────────────────────────────────────
-const state = {
-  userId: null,
-  currentPage: 'vent',
-  feedPage: 1,
-  feedLoading: false,
-  feedHasMore: true,
-  currentPostId: null,
-  selectedCategories: new Set(),
-  selectedEmoji: null,
-  profileData: null
-};
-
-// ─────────────────────────────────────────
-//  UTILITIES
-// ─────────────────────────────────────────
-function esc(str) {
-  if (!str) return '';
-  const d = document.createElement('div');
-  d.textContent = str;
-  return d.innerHTML;
-}
-
-function timeAgo(ts) {
-  try {
-    const date = typeof ts === 'string' ? new Date(ts.replace(' ', 'T')) : new Date(ts);
-    const diff = (Date.now() - date.getTime()) / 1000;
-    if (diff < 60)   return 'just now';
-    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-    return Math.floor(diff / 86400) + 'd ago';
-  } catch(e) { return ''; }
-}
-
-function toast(msg, type = 'info') {
-  const el = document.getElementById('toast');
-  if (!el) return;
-  el.textContent = msg;
-  el.className = 'show ' + type;
-  clearTimeout(el._t);
-  el._t = setTimeout(() => { el.className = ''; }, 3000);
-}
-
-async function apiFetch(path, opts = {}) {
-  const url = CONFIG.apiBase + path;
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts
-  });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
-}
-
-function formatAura(pts) {
-  if (pts < 0)   return '🔴';
-  if (pts >= 500) return '👑';
-  if (pts >= 100) return '🟣';
-  if (pts >= 50)  return '🔵';
-  if (pts >= 25)  return '🟢';
-  if (pts >= 10)  return '🟡';
-  return '⚪️';
-}
-
-// ─────────────────────────────────────────
-//  NAVIGATION
-// ─────────────────────────────────────────
-function switchPage(name) {
-  console.log('[CV] switchPage →', name);
-  state.currentPage = name;
-
-  // Hide all pages
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  // Show target
-  const target = document.getElementById('page-' + name);
-  if (target) target.classList.add('active');
-
-  // Update nav buttons
-  document.querySelectorAll('.nav-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.page === name);
-  });
-
-  // Lazy-load data per page
-  if (name === 'feed' && state.feedPage === 1) loadFeed(false);
-  if (name === 'leaderboard') loadLeaderboard();
-  if (name === 'profile' && state.userId) loadProfile();
-  if (name === 'settings' && state.userId) loadSettings();
-}
-
-// ─────────────────────────────────────────
-//  CATEGORY CHECKBOXES
-// ─────────────────────────────────────────
-function renderCategories() {
-  console.log('[CV] renderCategories()');
-  const grid = document.getElementById('categoriesGrid');
-  if (!grid) { console.error('[CV] categoriesGrid not found!'); return; }
-
-  grid.innerHTML = '';
-  CONFIG.categories.forEach(([code, label]) => {
-    const item = document.createElement('div');
-    item.className = 'cat-item';
-    item.dataset.code = code;
-    item.innerHTML = `
-      <div class="cat-check"></div>
-      <div class="cat-label">${esc(label)}</div>
-    `;
-    item.addEventListener('click', () => toggleCategory(code, item));
-    grid.appendChild(item);
-  });
-  console.log('[CV] categories rendered:', CONFIG.categories.length);
-}
-
-function toggleCategory(code, el) {
-  if (state.selectedCategories.has(code)) {
-    state.selectedCategories.delete(code);
-    el.classList.remove('selected');
-    el.querySelector('.cat-check').textContent = '';
-  } else {
-    state.selectedCategories.add(code);
-    el.classList.add('selected');
-    el.querySelector('.cat-check').textContent = '✓';
-  }
-}
-
-// ─────────────────────────────────────────
-//  VENT SUBMISSION
-// ─────────────────────────────────────────
-async function submitVent() {
-  const input = document.getElementById('ventInput');
-  const btn   = document.getElementById('submitVentBtn');
-  if (!input || !btn) return;
-
-  const content = input.value.trim();
-  const categories = Array.from(state.selectedCategories);
-
-  if (!content) { toast('Please write something first.', 'error'); return; }
-  if (categories.length === 0) { toast('Pick at least one category.', 'error'); return; }
-  if (!state.userId) { toast('Not authenticated. Please reopen via the bot.', 'error'); return; }
-
-  btn.disabled = true;
-  btn.textContent = 'Posting…';
-
-  try {
-    const data = await apiFetch('/api/mini-app/submit-vent', {
-      method: 'POST',
-      body: JSON.stringify({ user_id: state.userId, content, categories })
-    });
-
-    if (data.success) {
-      toast('✅ Posted! Awaiting approval.', 'success');
-      input.value = '';
-      document.getElementById('charCount').textContent = '0 / 5000';
-      state.selectedCategories.clear();
-      document.querySelectorAll('.cat-item').forEach(el => {
-        el.classList.remove('selected');
-        el.querySelector('.cat-check').textContent = '';
-      });
-      // Reset feed so next visit refreshes
-      state.feedPage = 1;
-      state.feedHasMore = true;
-    } else {
-      toast(data.error || 'Failed to post.', 'error');
-    }
-  } catch(e) {
-    console.error('[CV] submitVent error:', e);
-    toast('Network error. Try again.', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Post Anonymously';
-  }
-}
-
-// ─────────────────────────────────────────
-//  FEED
-// ─────────────────────────────────────────
-function feedSkeleton() {
-  return '<div class="skeleton"></div>'.repeat(3);
-}
-
-async function loadFeed(append = false) {
-  if (state.feedLoading) return;
-  state.feedLoading = true;
-
-  const container = document.getElementById('feedContainer');
-  const loadMoreArea = document.getElementById('loadMoreArea');
-  if (!container) { state.feedLoading = false; return; }
-
-  if (!append) {
-    container.innerHTML = feedSkeleton();
-    if (loadMoreArea) loadMoreArea.style.display = 'none';
-  }
-
-  try {
-    const data = await apiFetch(
-      `/api/mini-app/get-posts?page=${state.feedPage}&per_page=10&user_id=${state.userId || ''}`
-    );
-
-    if (!data.success) throw new Error(data.error || 'API error');
-
-    const posts = data.data || [];
-    state.feedHasMore = data.has_more === true;
-
-    if (!append) container.innerHTML = '';
-
-    if (posts.length === 0 && !append) {
-      container.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-icon">🕊️</div>
-          <p>No posts yet.<br>Be the first to share!</p>
-        </div>`;
-    } else {
-      posts.forEach(post => {
-        container.insertAdjacentHTML('beforeend', renderPostCard(post));
-      });
-
-      // Attach "Read Full" buttons
-      container.querySelectorAll('[data-open-post]').forEach(btn => {
-        btn.addEventListener('click', () => openPostDetail(parseInt(btn.dataset.openPost)));
-      });
-    }
-
-    if (loadMoreArea) {
-      loadMoreArea.style.display = state.feedHasMore ? 'block' : 'none';
-    }
-    if (state.feedHasMore) state.feedPage++;
-
-  } catch(e) {
-    console.error('[CV] loadFeed error:', e);
-    if (!append) container.innerHTML = `<div class="empty-state"><p>Failed to load posts.<br>Pull down to retry.</p></div>`;
-    toast('Could not load feed.', 'error');
-  } finally {
-    state.feedLoading = false;
-  }
-}
-
-function renderPostCard(post) {
-  const author = post.author || {};
-  const avatar = author.avatar || (author.sex === '👩' ? '👩' : '👨');
-  const cats = (post.categories || []).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
-  const content = esc(post.content || '');
-  const aura = author.aura || formatAura(0);
-
-  return `
-    <div class="post-card">
-      <div class="post-meta">
-        <div class="post-avatar">${esc(avatar)}</div>
-        <div class="post-author">${esc(author.name || 'Anonymous')} ${esc(aura)}</div>
-        <div class="post-time">${esc(post.time_ago || '')}</div>
-      </div>
-      ${cats ? `<div class="cat-badges">${cats}</div>` : ''}
-      <div class="post-content truncated">${content}</div>
-      <div class="post-footer">
-        <div class="post-comment-count">💬 ${post.comments || 0} responses</div>
-        <button class="btn-read-more" data-open-post="${post.id}">Read &amp; Reply →</button>
-      </div>
-    </div>
-  `;
-}
-
-// ─────────────────────────────────────────
-//  POST DETAIL
-// ─────────────────────────────────────────
-async function openPostDetail(postId) {
-  console.log('[CV] openPostDetail:', postId);
-  state.currentPostId = postId;
-
-  // Show detail page
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-detail').classList.add('active');
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-
-  const postBox = document.getElementById('detailPostBox');
-  const commentsBox = document.getElementById('detailCommentsBox');
-  const composeBox = document.getElementById('detailComposeBox');
-
-  postBox.innerHTML = '<div class="skeleton" style="height:160px;"></div>';
-  commentsBox.innerHTML = '<div class="skeleton" style="height:80px;"></div>';
-  if (composeBox) composeBox.style.display = 'none';
-
-  // Load post
-  try {
-    const data = await apiFetch(`/api/mini-app/post/${postId}`);
-    if (data.success) {
-      const post = data.data;
-      const author = post.author || {};
-      const avatar = author.avatar || '👤';
-      const cats = (post.categories || []).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
-
-      postBox.innerHTML = `
-        <div class="card">
-          <div class="post-meta">
-            <div class="post-avatar">${esc(avatar)}</div>
-            <div class="post-author">${esc(author.name || 'Anonymous')} ${esc(author.aura || '')}</div>
-            <div class="post-time">${esc(post.time_ago || '')}</div>
-          </div>
-          ${cats ? `<div class="cat-badges">${cats}</div>` : ''}
-          <div class="post-content">${esc(post.content || '')}</div>
-        </div>
-      `;
-    } else {
-      postBox.innerHTML = '<p style="color:var(--text-muted);text-align:center;">Post not found.</p>';
-    }
-  } catch(e) {
-    console.error('[CV] load post error:', e);
-    postBox.innerHTML = '<p style="color:var(--text-muted);text-align:center;">Failed to load post.</p>';
-  }
-
-  // Load comments
-  await loadComments(postId);
-  if (composeBox) composeBox.style.display = 'block';
-}
-
-async function loadComments(postId) {
-  const box = document.getElementById('detailCommentsBox');
-  if (!box) return;
-
-  try {
-    const data = await apiFetch(`/api/mini-app/post/${postId}/comments`);
-    if (!data.success) throw new Error(data.error);
-
-    const comments = data.data || [];
-    if (comments.length === 0) {
-      box.innerHTML = `<div class="empty-state"><div class="empty-icon">🤍</div><p>No responses yet.<br>Be the first to respond.</p></div>`;
-      return;
-    }
-
-    // Build tree
-    const map = {};
-    const roots = [];
-    comments.forEach(c => { map[c.id] = { ...c, children: [] }; });
-    comments.forEach(c => {
-      if (c.parent_id && map[c.parent_id]) {
-        map[c.parent_id].children.push(map[c.id]);
-      } else {
-        roots.push(map[c.id]);
-      }
-    });
-
-    box.innerHTML = roots.map(c => renderComment(c, 0)).join('');
-
-    // Attach reply buttons
-    box.querySelectorAll('[data-reply-to]').forEach(btn => {
-      btn.addEventListener('click', () => toggleReplyBox(btn.dataset.replyTo));
-    });
-    box.querySelectorAll('[data-send-reply]').forEach(btn => {
-      btn.addEventListener('click', () => sendReply(btn.dataset.sendReply));
-    });
-    box.querySelectorAll('[data-cancel-reply]').forEach(btn => {
-      btn.addEventListener('click', () => toggleReplyBox(btn.dataset.cancelReply, true));
-    });
-
-  } catch(e) {
-    console.error('[CV] loadComments error:', e);
-    box.innerHTML = '<p style="color:var(--text-muted);text-align:center;">Failed to load responses.</p>';
-  }
-}
-
-function renderComment(comment, depth) {
-  const author = comment.author || {};
-  const avatar = author.avatar || '👤';
-  const replyClass = depth > 0 ? 'is-reply' : '';
-  const children = (comment.children || []).map(c => renderComment(c, depth + 1)).join('');
-
-  return `
-    <div class="comment-item ${replyClass}">
-      <div class="comment-avatar">${esc(avatar)}</div>
-      <div class="comment-body">
-        <div class="comment-header">
-          <div class="comment-author">${esc(author.name || 'Anonymous')} ${esc(author.aura || '')}</div>
-          <div class="comment-time">${esc(comment.time_ago || '')}</div>
-        </div>
-        <div class="comment-text">${esc(comment.content || '')}</div>
-        <div class="comment-actions">
-          <button class="comment-action-btn" data-reply-to="${comment.id}">↩ Reply</button>
-        </div>
-        <div class="inline-reply" id="reply-box-${comment.id}">
-          <textarea id="reply-text-${comment.id}" placeholder="Write a reply…"></textarea>
-          <div class="inline-reply-btns">
-            <button class="inline-cancel" data-cancel-reply="${comment.id}">Cancel</button>
-            <button class="inline-send" data-send-reply="${comment.id}">Send</button>
-          </div>
-        </div>
-      </div>
-    </div>
-    ${children}
-  `;
-}
-
-function toggleReplyBox(commentId, forceClose = false) {
-  const box = document.getElementById('reply-box-' + commentId);
-  if (!box) return;
-  const isOpen = box.classList.contains('open');
-  if (forceClose || isOpen) {
-    box.classList.remove('open');
-  } else {
-    box.classList.add('open');
-    const ta = document.getElementById('reply-text-' + commentId);
-    if (ta) ta.focus();
-  }
-}
-
-async function sendReply(parentCommentId) {
-  const ta = document.getElementById('reply-text-' + parentCommentId);
-  if (!ta) return;
-  const content = ta.value.trim();
-  if (!content) { toast('Write something first.', 'error'); return; }
-  if (!state.userId) { toast('Not authenticated.', 'error'); return; }
-
-  try {
-    const data = await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
-      method: 'POST',
-      body: JSON.stringify({
-        user_id: state.userId,
-        content,
-        parent_comment_id: parseInt(parentCommentId)
-      })
-    });
-    if (data.success) {
-      ta.value = '';
-      toggleReplyBox(parentCommentId, true);
-      toast('Reply posted!', 'success');
-      await loadComments(state.currentPostId);
-    } else {
-      toast(data.error || 'Failed to post reply.', 'error');
-    }
-  } catch(e) {
-    console.error('[CV] sendReply error:', e);
-    toast('Network error.', 'error');
-  }
-}
-
-async function postTopLevelComment() {
-  const input = document.getElementById('commentInput');
-  const btn   = document.getElementById('postCommentBtn');
-  if (!input || !btn) return;
-
-  const content = input.value.trim();
-  if (!content) { toast('Write something first.', 'error'); return; }
-  if (!state.userId) { toast('Not authenticated.', 'error'); return; }
-
-  btn.disabled = true;
-  btn.textContent = 'Sending…';
-
-  try {
-    const data = await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
-      method: 'POST',
-      body: JSON.stringify({ user_id: state.userId, content, parent_comment_id: 0 })
-    });
-    if (data.success) {
-      input.value = '';
-      toast('Response posted!', 'success');
-      await loadComments(state.currentPostId);
-    } else {
-      toast(data.error || 'Failed.', 'error');
-    }
-  } catch(e) {
-    console.error('[CV] postComment error:', e);
-    toast('Network error.', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Send Response';
-  }
-}
-
-// ─────────────────────────────────────────
-//  LEADERBOARD
-// ─────────────────────────────────────────
-async function loadLeaderboard() {
-  const container = document.getElementById('leaderboardContainer');
-  if (!container) return;
-  container.innerHTML = '<div class="skeleton"></div>';
-
-  try {
-    const data = await apiFetch('/api/mini-app/leaderboard');
-    if (!data.success) throw new Error(data.error);
-
-    const users = data.data || [];
-    if (users.length === 0) {
-      container.innerHTML = '<div class="empty-state"><p>No data yet.</p></div>';
-      return;
-    }
-
-    const rankClass = i => ['top1','top2','top3'][i] || '';
-    const rankEmoji = i => ['👑','🥈','🥉'][i] || (i + 1);
-
-    container.innerHTML = users.map((u, i) => `
-      <div class="lb-item">
-        <div class="lb-rank ${rankClass(i)}">${rankEmoji(i)}</div>
-        <div class="lb-avatar">${esc(u.avatar || (u.sex === '👩' ? '👩' : '👨'))}</div>
-        <div class="lb-info">
-          <div class="lb-name">${esc(u.name || 'Anonymous')}</div>
-          <div class="lb-aura">${esc(u.aura || '')}</div>
-        </div>
-        <div class="lb-pts">${esc(String(u.points || 0))}</div>
-      </div>
-    `).join('');
-  } catch(e) {
-    console.error('[CV] loadLeaderboard error:', e);
-    container.innerHTML = '<div class="empty-state"><p>Failed to load.</p></div>';
-  }
-}
-
-// ─────────────────────────────────────────
-//  PROFILE
-// ─────────────────────────────────────────
-async function loadProfile() {
-  const container = document.getElementById('profileContainer');
-  if (!container || !state.userId) return;
-  container.innerHTML = '<div class="skeleton" style="height:180px;"></div>';
-
-  try {
-    const data = await apiFetch(`/api/mini-app/profile/${state.userId}`);
-    if (!data.success) throw new Error(data.error);
-
-    const p = data.data;
-    state.profileData = p; // Store for editing
-    
-    container.innerHTML = `
-      <div class="profile-hero">
-        <div style="position:absolute; top:20px; right:20px;">
-          <button class="btn-ghost" style="padding:6px 12px; font-size:0.7rem;" onclick="switchPage('edit-profile')">Edit Profile</button>
-        </div>
-        <div class="profile-avatar">${esc(p.avatar || (p.sex === '👩' ? '👩' : '👨'))}</div>
-        <div class="profile-name">${esc(p.name || 'Anonymous')}</div>
-        <div class="profile-aura">${esc(p.aura || '')} ${esc(String(p.rating || 0))} pts</div>
-        
-        ${p.bio ? `<div style="font-size:0.8rem; color:var(--text-dim); margin-bottom:16px; font-style:italic;">"${esc(p.bio)}"</div>` : ''}
-
-        <div class="profile-stats">
-          <div class="stat-box">
-            <div class="stat-num">${esc(String(p.stats?.posts || 0))}</div>
-            <div class="stat-label">Vents</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-num">${esc(String(p.stats?.comments || 0))}</div>
-            <div class="stat-label">Replies</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-num">${esc(String(p.stats?.followers || 0))}</div>
-            <div class="stat-label">Followers</div>
-          </div>
-        </div>
-      </div>
-    `;
-    
-    if (state.currentPage === 'edit-profile') populateEditProfile();
-  } catch(e) {
-    console.error('[CV] loadProfile error:', e);
-    container.innerHTML = '<div class="empty-state"><p>Failed to load profile.</p></div>';
-  }
-}
-
-// ─────────────────────────────────────────
-//  EDIT PROFILE
-// ─────────────────────────────────────────
-function populateEditProfile() {
-  const p = state.profileData;
-  if (!p) return;
-  
-  document.getElementById('edit-name').value = p.name || '';
-  document.getElementById('edit-bio').value = p.bio || '';
-  state.selectedEmoji = p.avatar;
-  
-  const grid = document.getElementById('emoji-grid');
-  grid.innerHTML = '';
-  CONFIG.emojis.forEach(emoji => {
-    const item = document.createElement('div');
-    item.className = 'emoji-item' + (state.selectedEmoji === emoji ? ' selected' : '');
-    item.textContent = emoji;
-    item.onclick = () => {
-      document.querySelectorAll('.emoji-item').forEach(el => el.classList.remove('selected'));
-      item.classList.add('selected');
-      state.selectedEmoji = emoji;
-    };
-    grid.appendChild(item);
-  });
-}
-
-async function saveProfile() {
-  const name = document.getElementById('edit-name').value.trim();
-  const bio = document.getElementById('edit-bio').value.trim();
-  const btn = document.getElementById('saveProfileBtn');
-  
-  if (!name) { toast('Name is required.', 'error'); return; }
-  
-  btn.disabled = true;
-  btn.textContent = 'Saving...';
-  
-  try {
-    const data = await apiFetch(`/api/mini-app/profile/${state.userId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ name, bio, avatar: state.selectedEmoji })
-    });
-    
-    if (data.success) {
-      toast('Profile updated!', 'success');
-      await loadProfile();
-      switchPage('profile');
-    } else {
-      toast(data.error || 'Update failed.', 'error');
-    }
-  } catch(e) {
-    toast('Network error.', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Save Profile Changes';
-  }
-}
-
-// ─────────────────────────────────────────
-//  SETTINGS
-// ─────────────────────────────────────────
-async function loadSettings() {
-  const notifyCheck = document.getElementById('set-notifications');
-  const privacyCheck = document.getElementById('set-privacy');
-  if (!notifyCheck || !privacyCheck) return;
-  
-  try {
-    const data = await apiFetch(`/api/mini-app/settings/${state.userId}`);
-    if (data.success) {
-      notifyCheck.checked = data.data.notifications;
-      privacyCheck.checked = data.data.privacy_public;
-    }
-  } catch(e) {
-    console.error('[CV] loadSettings error:', e);
-  }
-}
-
-async function saveSettings() {
-  const notifications = document.getElementById('set-notifications').checked;
-  const privacy_public = document.getElementById('set-privacy').checked;
-  const btn = document.getElementById('saveSettingsBtn');
-  
-  btn.disabled = true;
-  btn.textContent = 'Applying...';
-  
-  try {
-    const data = await apiFetch(`/api/mini-app/settings/${state.userId}`, {
-      method: 'POST',
-      body: JSON.stringify({ notifications, privacy_public })
-    });
-    
-    if (data.success) {
-      toast('Settings applied!', 'success');
-    } else {
-      toast(data.error || 'Failed.', 'error');
-    }
-  } catch(e) {
-    toast('Network error.', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Apply Settings';
-  }
-}
-
-// ─────────────────────────────────────────
-//  AUTH
-// ─────────────────────────────────────────
-async function authenticate() {
-  console.log('[CV] authenticate()');
-
-  // Path 1: Telegram WebApp native (no token needed)
-  const tg = window.Telegram && window.Telegram.WebApp;
-  if (tg) {
-    console.log('[CV] Telegram.WebApp found');
-    try {
-      tg.expand();
-      tg.ready();
-    } catch(e) { console.warn('[CV] tg init warning:', e); }
-
-    const user = tg.initDataUnsafe && tg.initDataUnsafe.user;
-    if (user && user.id) {
-      console.log('[CV] TG user id:', user.id);
-      state.userId = String(user.id);
-
-      // Auto-generate token via API
-      try {
-        const res = await fetch(`${CONFIG.apiBase}/api/generate-token/${state.userId}`);
-        const d = await res.json();
-        if (d.success) console.log('[CV] token generated for TG user');
-      } catch(e) { console.warn('[CV] token generation warning (non-fatal):', e); }
-
-      showApp();
-      return;
-    }
-  } else {
-    console.warn('[CV] Telegram.WebApp not available');
-  }
-
-  // Path 2: JWT token in URL
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get('token');
-  if (token) {
-    console.log('[CV] found token in URL, verifying…');
-    try {
-      const res = await fetch(`${CONFIG.apiBase}/api/verify-token/${token}`);
-      const d = await res.json();
-      if (d.success && d.user_id) {
-        state.userId = String(d.user_id);
-        console.log('[CV] token valid, userId:', state.userId);
-        showApp();
-        return;
-      } else {
-        console.warn('[CV] token invalid:', d.error);
-      }
-    } catch(e) {
-      console.error('[CV] token verify error:', e);
-    }
-  }
-
-  // Auth failed
-  console.warn('[CV] authentication failed – showing login message');
-  document.getElementById('authScreen').innerHTML = `
-    <div style="font-size:2rem;margin-bottom:16px;">🔒</div>
-    <h2 style="font-family:var(--font-display);color:var(--gold);margin-bottom:12px;">Access Required</h2>
-    <p style="color:var(--text-dim);font-size:0.88rem;line-height:1.7;margin-bottom:24px;">
-      Please open this app through the Telegram bot.<br>
-      Use <strong>/webapp</strong> in the bot to get a fresh link.
-    </p>
-    <a href="https://t.me/${CONFIG.botUsername}" 
-       style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,var(--primary),var(--primary-light));
-              color:#000;border-radius:999px;font-weight:600;text-decoration:none;font-size:0.9rem;">
-      Open Bot
-    </a>
-  `;
-}
-
-function showApp() {
-  console.log('[CV] showApp(), userId:', state.userId);
-  document.getElementById('authScreen').style.display = 'none';
-  document.getElementById('mainApp').style.display = 'block';
-
-  // Wire up all events now that DOM is visible
-  setupEventListeners();
-
-  // Render categories
-  renderCategories();
-
-  // Load initial feed
-  loadFeed(false);
-}
-
-// ─────────────────────────────────────────
-//  EVENT LISTENERS (called once after auth)
-// ─────────────────────────────────────────
-function setupEventListeners() {
-  console.log('[CV] setupEventListeners()');
-
-  // Bottom nav
-  document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const page = btn.dataset.page;
-      console.log('[CV] nav click →', page);
-      switchPage(page);
-    });
-  });
-
-  // Vent submit
-  const submitBtn = document.getElementById('submitVentBtn');
-  if (submitBtn) submitBtn.addEventListener('click', submitVent);
-  else console.error('[CV] submitVentBtn not found!');
-
-  // Char counter
-  const ventInput = document.getElementById('ventInput');
-  if (ventInput) {
-    ventInput.addEventListener('input', () => {
-      const len = ventInput.value.length;
-      const el = document.getElementById('charCount');
-      if (el) {
-        el.textContent = `${len} / 5000`;
-        el.className = 'char-count' + (len > 4500 ? ' warn' : '');
-      }
-    });
-  }
-
-  // Feed refresh
-  const refreshFeedBtn = document.getElementById('refreshFeedBtn');
-  if (refreshFeedBtn) refreshFeedBtn.addEventListener('click', () => {
-    state.feedPage = 1; state.feedHasMore = true;
-    loadFeed(false);
-  });
-
-  // Load more
-  const loadMoreBtn = document.getElementById('loadMoreBtn');
-  if (loadMoreBtn) loadMoreBtn.addEventListener('click', () => loadFeed(true));
-
-  // Leaderboard refresh
-  const refreshLbBtn = document.getElementById('refreshLbBtn');
-  if (refreshLbBtn) refreshLbBtn.addEventListener('click', loadLeaderboard);
-
-  // Back from detail
-  const backBtn = document.getElementById('backFromDetailBtn');
-  if (backBtn) backBtn.addEventListener('click', () => switchPage('feed'));
-
-  // Post comment
-  const postCommentBtn = document.getElementById('postCommentBtn');
-  if (postCommentBtn) postCommentBtn.addEventListener('click', postTopLevelComment);
-
-  // Profile Edit
-  const saveProfileBtn = document.getElementById('saveProfileBtn');
-  if (saveProfileBtn) saveProfileBtn.addEventListener('click', saveProfile);
-  
-  const backFromEditBtn = document.getElementById('backFromEditBtn');
-  if (backFromEditBtn) backFromEditBtn.addEventListener('click', () => switchPage('profile'));
-
-  // Settings
-  const saveSettingsBtn = document.getElementById('saveSettingsBtn');
-  if (saveSettingsBtn) saveSettingsBtn.addEventListener('click', saveSettings);
-
-  console.log('[CV] all listeners attached');
-}
-
-// ─────────────────────────────────────────
-//  BOOT
-// ─────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  console.log('[CV] DOMContentLoaded');
-  authenticate().catch(e => {
-    console.error('[CV] authenticate() threw:', e);
-    document.getElementById('authScreen').innerHTML = `
-      <div style="font-size:2rem;margin-bottom:16px;">⚠️</div>
-      <h2 style="font-family:var(--font-display);color:var(--gold);margin-bottom:12px;">Something went wrong</h2>
-      <p style="color:var(--text-dim);font-size:0.88rem;">Please reopen via the bot using /webapp.</p>
-    `;
-  });
-});
-</script>
+    <div id="toast"></div>
+
+    <script>
+        // ==================== GLOBALS ====================
+        const CONFIG = {{
+            apiBase: window.location.origin,
+            botUsername: '{_bot}',
+            categories: [
+                ["PrayForMe","🙏 Pray For Me"],["Bible","📖 Bible"],["WorkLife","💼 Work and Life"],
+                ["SpiritualLife","🕊 Spiritual Life"],["ChristianChallenges","⚔️ Christian Challenges"],
+                ["Relationship","❤️ Relationship"],["Marriage","💍 Marriage"],["Youth","🧑‍🤝‍🧑 Youth"],
+                ["Finance","💰 Finance"],["WorshipMusic","🎶 Worship & Music"],["Family","🏠 Family Issues"],
+                ["Testimony","🙌 Testimony"],["AddictionRecovery","💊 Addiction & Recovery"],
+                ["BibleQuestion","📖 Bible Question"],["Other","🔖 Other"]
+            ],
+            emojis: ['🦁','🦊','🐉','🐼','🦄','🌈','✨','🔥','💎','🛡','🦅','🦉','🦋','🌸','🌙','🍎','🍀','⛪️','🎗','🎖']
+        }};
+        let state = {{
+            userId: null,
+            currentPage: 'vent',
+            feedPage: 1,
+            feedHasMore: true,
+            feedLoading: false,
+            currentPostId: null,
+            selectedCategories: new Set(),
+            editCommentId: null
+        }};
+
+        // ==================== UTILS ====================
+        function toast(msg, type='info') {{
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'show ' + type;
+            setTimeout(() => t.className = '', 3000);
+        }}
+        async function apiFetch(path, opts={{}}) {{
+            const res = await fetch(CONFIG.apiBase + path, {{
+                headers: {{'Content-Type':'application/json'}},
+                ...opts
+            }});
+            if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
+            return res.json();
+        }}
+        function timeAgo(dateStr) {{
+            const d = new Date(dateStr.replace(' ', 'T'));
+            const diff = (Date.now() - d) / 1000;
+            if (diff < 60) return 'just now';
+            if (diff < 3600) return Math.floor(diff/60)+'m ago';
+            if (diff < 86400) return Math.floor(diff/3600)+'h ago';
+            return Math.floor(diff/86400)+'d ago';
+        }}
+        function formatAura(p) {{
+            if (p<0) return '🔴';
+            if (p>=500) return '👑';
+            if (p>=100) return '🟣';
+            if (p>=50) return '🔵';
+            if (p>=25) return '🟢';
+            if (p>=10) return '🟡';
+            return '⚪️';
+        }}
+
+        // ==================== AUTH ====================
+        async function authenticate() {{
+            const tg = window.Telegram?.WebApp;
+            if (tg && tg.initDataUnsafe?.user?.id) {{
+                state.userId = String(tg.initDataUnsafe.user.id);
+                tg.expand();
+                await fetch(`/api/generate-token/${{state.userId}}`);
+                showApp();
+                return;
+            }}
+            const params = new URLSearchParams(window.location.search);
+            const token = params.get('token');
+            if (token) {{
+                try {{
+                    const res = await apiFetch(`/api/verify-token/${{token}}`);
+                    if (res.success && res.user_id) {{
+                        state.userId = String(res.user_id);
+                        showApp();
+                        return;
+                    }}
+                }} catch(e) {{}}
+            }}
+            document.body.innerHTML = '<div style="text-align:center; margin-top:50px;">❌ Authentication failed. Please open via Telegram bot using /webapp</div>';
+        }}
+
+        // ==================== UI RENDERING ====================
+        function renderCategories() {{
+            const container = document.getElementById('categoriesContainer');
+            container.innerHTML = '';
+            CONFIG.categories.forEach(([code, label]) => {{
+                const div = document.createElement('div');
+                div.className = 'cat-item';
+                div.innerHTML = `<div class="cat-check"></div><span class="cat-label">${{label}}</span>`;
+                div.onclick = () => {{
+                    if (state.selectedCategories.has(code)) {{
+                        state.selectedCategories.delete(code);
+                        div.classList.remove('selected');
+                        div.querySelector('.cat-check').textContent = '';
+                    }} else {{
+                        state.selectedCategories.add(code);
+                        div.classList.add('selected');
+                        div.querySelector('.cat-check').textContent = '✓';
+                    }}
+                }};
+                container.appendChild(div);
+            }});
+        }}
+
+        async function submitVent() {{
+            const content = document.getElementById('ventContent').value.trim();
+            const categories = Array.from(state.selectedCategories);
+            if (!content) {{ toast('Write something', 'error'); return; }}
+            if (categories.length === 0) {{ toast('Select at least one category', 'error'); return; }}
+            const btn = document.getElementById('submitVentBtn');
+            btn.disabled = true; btn.textContent = 'Posting...';
+            try {{
+                const res = await apiFetch('/api/mini-app/submit-vent', {{
+                    method: 'POST',
+                    body: JSON.stringify({{ user_id: state.userId, content, categories }})
+                }});
+                if (res.success) {{
+                    toast('Posted! Awaiting approval', 'success');
+                    document.getElementById('ventContent').value = '';
+                    document.getElementById('charCount').innerText = '0';
+                    state.selectedCategories.clear();
+                    document.querySelectorAll('.cat-item').forEach(el => {{
+                        el.classList.remove('selected');
+                        el.querySelector('.cat-check').textContent = '';
+                    }});
+                }} else toast(res.error || 'Failed', 'error');
+            }} catch(e) {{ toast('Network error', 'error'); }}
+            finally {{ btn.disabled = false; btn.textContent = 'Post Anonymously'; }}
+        }}
+
+        async function loadFeed(append=false) {{
+            if (state.feedLoading) return;
+            state.feedLoading = true;
+            const container = document.getElementById('feedContainer');
+            if (!append) container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
+            try {{
+                const data = await apiFetch(`/api/mini-app/get-posts?user_id=${{state.userId}}&page=${{state.feedPage}}&per_page=10`);
+                if (!data.success) throw new Error(data.error);
+                const posts = data.data;
+                state.feedHasMore = data.has_more;
+                if (!append) container.innerHTML = '';
+                posts.forEach(post => {{
+                    const card = document.createElement('div');
+                    card.className = 'post-card';
+                    const categoriesHtml = (post.categories || []).map(c => `<span class="cat-badge">#${{c}}</span>`).join('');
+                    const unreadBadge = (post.unread_comments > 0) ? `<span class="unread-badge">${{post.unread_comments}} new</span>` : '';
+                    card.innerHTML = `
+                        <div class="post-header">
+                            <div class="author-icon">${{post.author.avatar || (post.author.sex==='👩'?'👩':'👨')}}</div>
+                            <div class="author-info">
+                                <div class="author-name">${{post.author.name}} ${{post.author.aura}}</div>
+                                <div class="post-meta">
+                                    <span>${{post.time_ago}}</span>
+                                    ${categoriesHtml}
+                                    ${unreadBadge}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="post-content">${{post.content}}</div>
+                        <div class="post-footer">
+                            <span class="comment-count">💬 ${{post.comments}} responses</span>
+                            <button class="read-more-btn" data-post-id="${{post.id}}">Read & Reply</button>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                }});
+                document.getElementById('loadMoreBtn').style.display = state.feedHasMore ? 'block' : 'none';
+                if (state.feedHasMore) state.feedPage++;
+                document.querySelectorAll('[data-post-id]').forEach(btn => {{
+                    btn.addEventListener('click', () => openPostDetail(parseInt(btn.dataset.postId)));
+                }});
+            }} catch(e) {{ console.error(e); toast('Failed to load feed', 'error'); }}
+            finally {{ state.feedLoading = false; }}
+        }}
+
+        async function openPostDetail(postId) {{
+            state.currentPostId = postId;
+            switchPage('detail');
+            document.getElementById('detailPost').innerHTML = '<div class="skeleton"></div>';
+            document.getElementById('detailComments').innerHTML = '';
+            // Load post
+            try {{
+                const postRes = await apiFetch(`/api/mini-app/post/${{postId}}`);
+                if (postRes.success) {{
+                    const p = postRes.data;
+                    const categoriesHtml = (p.categories || []).map(c => `<span class="cat-badge">#${{c}}</span>`).join('');
+                    document.getElementById('detailPost').innerHTML = `
+                        <div class="post-card">
+                            <div class="post-header">
+                                <div class="author-icon">${{p.author.avatar || '👤'}}</div>
+                                <div class="author-info">
+                                    <div class="author-name">${{p.author.name}} ${{p.author.aura}}</div>
+                                    <div class="post-meta"><span>${{p.time_ago}}</span> ${categoriesHtml}</div>
+                                </div>
+                            </div>
+                            <div class="post-content">${{p.content}}</div>
+                        </div>
+                    `;
+                }}
+            }} catch(e) {{}}
+            await loadComments(postId);
+        }}
+
+        async function loadComments(postId) {{
+            const container = document.getElementById('detailComments');
+            container.innerHTML = '<div class="skeleton" style="height:80px;"></div>';
+            try {{
+                const res = await apiFetch(`/api/mini-app/post/${{postId}}/comments`);
+                if (!res.success) throw new Error();
+                const comments = res.data;
+                if (comments.length === 0) {{
+                    container.innerHTML = '<div style="text-align:center; opacity:0.6;">No responses yet. Be the first.</div>';
+                    return;
+                }}
+                // Build tree
+                const map = {{}};
+                const roots = [];
+                comments.forEach(c => {{ map[c.id] = {{ ...c, children: [] }}; }});
+                comments.forEach(c => {{
+                    if (c.parent_id && map[c.parent_id]) map[c.parent_id].children.push(map[c.id]);
+                    else roots.push(map[c.id]);
+                }});
+                function renderComment(comment, depth=0) {{
+                    const isReply = depth > 0;
+                    const canEdit = (comment.author.name !== 'Anonymous'); // If logged in user owns it – we rely on backend, but frontend can show buttons based on author_id? We'll just always show edit/delete for demo, but token ensures only owner can modify.
+                    return `
+                        <div class="comment-item ${isReply ? 'is-reply' : ''}" data-cid="${{comment.id}}">
+                            <div class="comment-avatar">${{comment.author.avatar || '👤'}}</div>
+                            <div class="comment-body">
+                                <div class="comment-header">
+                                    <span class="comment-author">${{comment.author.name}} ${{comment.author.aura}}</span>
+                                    <span class="comment-time">${{comment.time_ago}}</span>
+                                </div>
+                                <div class="comment-text" id="comment-text-${{comment.id}}">${{comment.content}}</div>
+                                <div class="comment-actions">
+                                    <button class="comment-action reply-btn" data-id="${{comment.id}}">↩️ Reply</button>
+                                    <button class="comment-action edit-btn" data-id="${{comment.id}}" data-content="${{comment.content.replace(/"/g, '&quot;')}}">✏️ Edit</button>
+                                    <button class="comment-action delete-btn" data-id="${{comment.id}}">🗑️ Delete</button>
+                                </div>
+                                <div class="inline-reply" id="reply-box-${{comment.id}}">
+                                    <textarea placeholder="Write a reply..."></textarea>
+                                    <div class="reply-actions">
+                                        <button class="read-more-btn cancel-reply" data-id="${{comment.id}}">Cancel</button>
+                                        <button class="submit-btn send-reply" data-id="${{comment.id}}" style="padding:6px 12px;">Send</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        ${{comment.children.map(ch => renderComment(ch, depth+1)).join('')}}
+                    `;
+                }}
+                container.innerHTML = roots.map(r => renderComment(r)).join('');
+                // Attach event listeners
+                document.querySelectorAll('.reply-btn').forEach(btn => {{
+                    btn.onclick = () => document.getElementById(`reply-box-${btn.dataset.id}`).classList.toggle('open');
+                }});
+                document.querySelectorAll('.cancel-reply').forEach(btn => {{
+                    btn.onclick = () => document.getElementById(`reply-box-${btn.dataset.id}`).classList.remove('open');
+                }});
+                document.querySelectorAll('.send-reply').forEach(btn => {{
+                    btn.onclick = async () => {{
+                        const cid = btn.dataset.id;
+                        const textarea = document.querySelector(`#reply-box-${cid} textarea`);
+                        const content = textarea.value.trim();
+                        if (!content) {{ toast('Write a reply', 'error'); return; }}
+                        try {{
+                            const res = await apiFetch(`/api/mini-app/post/${{postId}}/comment`, {{
+                                method: 'POST',
+                                body: JSON.stringify({{ user_id: state.userId, content, parent_comment_id: parseInt(cid) }})
+                            }});
+                            if (res.success) {{
+                                toast('Reply posted', 'success');
+                                await loadComments(postId);
+                            }}
+                        }} catch(e) {{ toast('Error', 'error'); }}
+                    }};
+                }});
+                document.querySelectorAll('.edit-btn').forEach(btn => {{
+                    btn.onclick = () => {{
+                        const cid = btn.dataset.id;
+                        const currentText = btn.dataset.content;
+                        const textDiv = document.getElementById(`comment-text-${cid}`);
+                        const textarea = document.createElement('textarea');
+                        textarea.value = currentText;
+                        textarea.style.width = '100%';
+                        textarea.style.background = '#1e1e1e';
+                        textarea.style.color = 'white';
+                        textarea.style.borderRadius = '12px';
+                        textarea.style.padding = '8px';
+                        const saveBtn = document.createElement('button');
+                        saveBtn.textContent = 'Save';
+                        saveBtn.className = 'read-more-btn';
+                        saveBtn.style.marginTop = '5px';
+                        textDiv.innerHTML = '';
+                        textDiv.appendChild(textarea);
+                        textDiv.appendChild(saveBtn);
+                        saveBtn.onclick = async () => {{
+                            const newContent = textarea.value.trim();
+                            if (!newContent) return;
+                            try {{
+                                const res = await apiFetch(`/api/mini-app/comment/${{cid}}`, {{
+                                    method: 'PUT',
+                                    body: JSON.stringify({{ user_id: state.userId, content: newContent }})
+                                }});
+                                if (res.success) {{
+                                    toast('Comment updated', 'success');
+                                    await loadComments(postId);
+                                }} else toast('Failed', 'error');
+                            }} catch(e) {{ toast('Error', 'error'); }}
+                        }};
+                    }};
+                }});
+                document.querySelectorAll('.delete-btn').forEach(btn => {{
+                    btn.onclick = async () => {{
+                        if (!confirm('Delete this comment?')) return;
+                        const cid = btn.dataset.id;
+                        try {{
+                            const res = await apiFetch(`/api/mini-app/comment/${{cid}}?user_id=${{state.userId}}`, {{ method: 'DELETE' }});
+                            if (res.success) {{
+                                toast('Deleted', 'success');
+                                await loadComments(postId);
+                            }} else toast('Failed', 'error');
+                        }} catch(e) {{ toast('Error', 'error'); }}
+                    }};
+                }});
+            }} catch(e) {{ console.error(e); container.innerHTML = '<div class="error">Failed to load comments</div>'; }}
+        }}
+
+        async function postNewComment() {{
+            const content = document.getElementById('newComment').value.trim();
+            if (!content) return;
+            const btn = document.getElementById('postCommentBtn');
+            btn.disabled = true;
+            try {{
+                const res = await apiFetch(`/api/mini-app/post/${{state.currentPostId}}/comment`, {{
+                    method: 'POST',
+                    body: JSON.stringify({{ user_id: state.userId, content, parent_comment_id: 0 }})
+                }});
+                if (res.success) {{
+                    toast('Response posted', 'success');
+                    document.getElementById('newComment').value = '';
+                    await loadComments(state.currentPostId);
+                }}
+            }} catch(e) {{ toast('Error', 'error'); }}
+            finally {{ btn.disabled = false; }}
+        }}
+
+        async function loadLeaderboard() {{
+            const container = document.getElementById('leaderboardContainer');
+            container.innerHTML = '<div class="skeleton"></div>';
+            try {{
+                const res = await apiFetch('/api/mini-app/leaderboard');
+                if (res.success) {{
+                    container.innerHTML = res.data.map((u,i) => `
+                        <div class="lb-item">
+                            <div class="lb-rank">${{i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}}</div>
+                            <div>${{u.avatar || (u.sex==='👩'?'👩':'👨')}}</div>
+                            <div style="flex:1"><b>${{u.name}}</b> ${{u.aura}}</div>
+                            <div><b>${{u.points}}</b></div>
+                        </div>
+                    `).join('');
+                }}
+            }} catch(e) {{ container.innerHTML = '<div>Failed to load</div>'; }}
+        }}
+
+        async function loadProfile() {{
+            const container = document.getElementById('profileContainer');
+            container.innerHTML = '<div class="skeleton"></div>';
+            try {{
+                const res = await apiFetch(`/api/mini-app/profile/${{state.userId}}`);
+                if (res.success) {{
+                    const p = res.data;
+                    container.innerHTML = `
+                        <div class="profile-header">
+                            <div class="profile-avatar">${{p.avatar || (p.sex==='👩'?'👩':'👨')}}</div>
+                            <div class="author-name">${{p.name}}</div>
+                            <div>${{p.aura}} ${{p.rating}} pts</div>
+                            <div style="margin-top:8px;">${{p.bio || 'No bio yet.'}}</div>
+                        </div>
+                        <div class="profile-stats">
+                            <div><div class="author-name">${{p.stats.posts}}</div><div>Vents</div></div>
+                            <div><div class="author-name">${{p.stats.comments}}</div><div>Replies</div></div>
+                            <div><div class="author-name">${{p.stats.followers}}</div><div>Followers</div></div>
+                        </div>
+                    `;
+                }}
+            }} catch(e) {{}}
+        }}
+
+        async function loadSettings() {{
+            try {{
+                const res = await apiFetch(`/api/mini-app/settings/${{state.userId}}`);
+                if (res.success) {{
+                    document.getElementById('notifToggle').checked = res.data.notifications;
+                    document.getElementById('privacyToggle').checked = res.data.privacy_public;
+                }}
+            }} catch(e) {{}}
+        }}
+        async function saveSettings() {{
+            const notif = document.getElementById('notifToggle').checked;
+            const priv = document.getElementById('privacyToggle').checked;
+            try {{
+                await apiFetch(`/api/mini-app/settings/${{state.userId}}`, {{
+                    method: 'POST',
+                    body: JSON.stringify({{ notifications: notif, privacy_public: priv }})
+                }});
+                toast('Settings saved', 'success');
+            }} catch(e) {{ toast('Error', 'error'); }}
+        }}
+
+        function showEditProfile() {{
+            const modal = document.getElementById('editProfileModal');
+            modal.style.display = 'flex';
+            fetch(`/api/mini-app/profile/${{state.userId}}`).then(r=>r.json()).then(data => {{
+                document.getElementById('editName').value = data.data.name;
+                document.getElementById('editBio').value = data.data.bio || '';
+                const grid = document.getElementById('emojiGrid');
+                grid.innerHTML = '';
+                CONFIG.emojis.forEach(emo => {{
+                    const div = document.createElement('div');
+                    div.textContent = emo;
+                    div.style.fontSize = '1.5rem';
+                    div.style.textAlign = 'center';
+                    div.style.cursor = 'pointer';
+                    div.style.background = 'rgba(255,255,255,0.1)';
+                    div.style.borderRadius = '12px';
+                    div.style.padding = '6px';
+                    if (data.data.avatar === emo) div.style.border = '2px solid gold';
+                    div.onclick = () => {{
+                        document.querySelectorAll('#emojiGrid div').forEach(d => d.style.border = 'none');
+                        div.style.border = '2px solid gold';
+                        window._selectedEmoji = emo;
+                    }};
+                    grid.appendChild(div);
+                }});
+                window._selectedEmoji = data.data.avatar;
+            }});
+        }}
+        async function saveProfileChanges() {{
+            const name = document.getElementById('editName').value.trim();
+            const bio = document.getElementById('editBio').value.trim();
+            const avatar = window._selectedEmoji || '';
+            if (!name) {{ toast('Name required', 'error'); return; }}
+            try {{
+                const res = await apiFetch(`/api/mini-app/profile/${{state.userId}}`, {{
+                    method: 'PUT',
+                    body: JSON.stringify({{ name, bio, avatar }})
+                }});
+                if (res.success) {{
+                    toast('Profile updated', 'success');
+                    document.getElementById('editProfileModal').style.display = 'none';
+                    await loadProfile();
+                }} else toast('Failed', 'error');
+            }} catch(e) {{}}
+        }}
+
+        // ==================== NAVIGATION ====================
+        function switchPage(page) {{
+            state.currentPage = page;
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById(`page-${{page}}`).classList.add('active');
+            document.querySelectorAll('.nav-item').forEach(nav => {{
+                nav.classList.toggle('active', nav.dataset.page === page);
+            }});
+            if (page === 'feed') loadFeed(false);
+            else if (page === 'leaderboard') loadLeaderboard();
+            else if (page === 'profile') loadProfile();
+            else if (page === 'settings') loadSettings();
+        }}
+
+        function initParticles() {{
+            const canvas = document.getElementById('particleCanvas');
+            const ctx = canvas.getContext('2d');
+            let w,h, particles=[];
+            const rgb = getComputedStyle(document.documentElement).getPropertyValue('--primary-rgb').trim();
+            function resize() {{ w=canvas.width=window.innerWidth; h=canvas.height=window.innerHeight; }}
+            window.addEventListener('resize', resize);
+            resize();
+            for(let i=0;i<60;i++) particles.push({{
+                x:Math.random()*w, y:Math.random()*h, r:Math.random()*3+1,
+                vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3,
+                color:`rgba(${rgb}, ${Math.random()*0.3+0.1})`
+            }});
+            function animate() {{
+                ctx.clearRect(0,0,w,h);
+                particles.forEach(p => {{
+                    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+                    ctx.fillStyle = p.color; ctx.fill();
+                    p.x += p.vx; p.y += p.vy;
+                    if(p.x<0) p.x=w; if(p.x>w) p.x=0; if(p.y<0) p.y=h; if(p.y>h) p.y=0;
+                }});
+                requestAnimationFrame(animate);
+            }}
+            animate();
+        }}
+
+        function showApp() {{
+            document.body.style.background = 'linear-gradient(135deg, #090909 0%, #151515 100%)';
+            renderCategories();
+            initParticles();
+            document.getElementById('submitVentBtn').onclick = submitVent;
+            document.getElementById('ventContent').addEventListener('input', () => {{
+                document.getElementById('charCount').innerText = document.getElementById('ventContent').value.length;
+            }});
+            document.getElementById('refreshFeedBtn')?.addEventListener('click', () => loadFeed(false));
+            document.getElementById('loadMoreBtn')?.addEventListener('click', () => loadFeed(true));
+            document.getElementById('backToFeedBtn').onclick = () => switchPage('feed');
+            document.getElementById('postCommentBtn').onclick = postNewComment;
+            document.getElementById('editProfileBtn').onclick = showEditProfile;
+            document.getElementById('saveProfileChanges').onclick = saveProfileChanges;
+            document.getElementById('closeModal').onclick = () => document.getElementById('editProfileModal').style.display = 'none';
+            document.getElementById('saveSettingsBtn').onclick = saveSettings;
+            document.getElementById('searchBtn').onclick = async () => {{
+                const q = document.getElementById('searchInput').value.trim();
+                if (!q) return;
+                const res = await apiFetch(`/api/mini-app/search?q=${{encodeURIComponent(q)}}`);
+                if (res.success) {{
+                    const container = document.getElementById('feedContainer');
+                    container.innerHTML = res.data.map(p => `
+                        <div class="post-card">
+                            <div class="post-header"><div class="author-icon">${{p.author.avatar||'👤'}}</div><div class="author-name">${{p.author.name}} ${{p.author.aura}}</div></div>
+                            <div class="post-content">${{p.content}}</div>
+                            <div class="post-footer"><button class="read-more-btn" data-post-id="${{p.id}}">Read</button></div>
+                        </div>
+                    `).join('');
+                    document.querySelectorAll('[data-post-id]').forEach(btn => btn.onclick = () => openPostDetail(parseInt(btn.dataset.postId)));
+                }}
+            }};
+            document.querySelectorAll('.nav-item').forEach(nav => {{
+                nav.addEventListener('click', () => switchPage(nav.dataset.page));
+            }});
+            switchPage('vent');
+        }
+
+        authenticate();
+    </script>
+    <style>
+        .switch {{ position:relative; display:inline-block; width:44px; height:24px; }}
+        .switch input {{ opacity:0; width:0; height:0; }}
+        .slider {{
+            position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0;
+            background-color:#333; transition:.4s; border-radius:24px;
+        }}
+        .slider:before {{
+            position:absolute; content:""; height:16px; width:16px; left:3px; bottom:3px;
+            background-color:white; transition:.4s; border-radius:50%;
+        }}
+        input:checked + .slider {{ background-color: var(--primary); }}
+        input:checked + .slider:before {{ transform:translateX(20px); }}
+    </style>
 </body>
-</html>"""
-        .replace('SLOT_PRIMARY',   _primary)
-        .replace('SLOT_SECONDARY', _secondary)
-        .replace('SLOT_CARD_BG',   _card_bg)
-        .replace('SLOT_BORDER',    _border)
-        .replace('SLOT_TEXT',      _text)
-        .replace('SLOT_RGB',       _rgb)
-        .replace('SLOT_BOT',       _bot)
-    )
-
+</html>'''
     return html
     
 
