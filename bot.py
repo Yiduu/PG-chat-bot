@@ -931,7 +931,7 @@ def login_page():
 <body>
     <div class="login-container">
         <div class="brand">
-            <img src="/static/images/vent%20logo.jpg" class="logo" alt="Christian Vent Logo">
+            <img src="/static/images/vent%20logo.png" class="logo" alt="Christian Vent Logo">
             <h1 class="title">Christian Vent</h1>
             <p class="subtitle">Share your thoughts anonymously</p>
         </div>
