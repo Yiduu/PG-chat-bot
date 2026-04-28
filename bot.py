@@ -1372,6 +1372,9 @@ def get_display_name(user_data):
     """Helper to get user's display name with sex emoji"""
     if not user_data:
         return "Anonymous"
+        
+    if user_data.get('is_admin'):
+        return "👑 Admin"
     
     emoji = user_data.get('avatar_emoji') or ""
     name = user_data.get('anonymous_name') or "Anonymous"
@@ -7902,7 +7905,7 @@ def mini_app_get_posts():
                 'comments': post['comment_count'] or 0,
                 'unread_comments': post['unread_comments'],
                 'author': {
-                    'name': post['author_name'] if str(post['author_id']) == str(user_id) else 'Anonymous',
+                    'name': 'Anonymous',
                     'sex': post['author_sex'] or '👤',
                     'avatar': post['author_avatar'] or "",
                     'aura': aura_sticker,
@@ -8000,7 +8003,8 @@ def mini_app_get_post_comments(post_id):
                 u.user_id as author_id,
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
-                u.anonymous_name as author_name
+                u.anonymous_name as author_name,
+                u.is_admin
             FROM comments c
             JOIN users u ON c.author_id = u.user_id
             WHERE c.post_id = %s
@@ -8033,10 +8037,10 @@ def mini_app_get_post_comments(post_id):
                 'content': c['content'],
                 'time_ago': calc_time,
                 'author': {
-                    'name': c['author_name'] or 'Anonymous',
+                    'name': '👑 Admin' if c.get('is_admin') else (c['author_name'] or 'Anonymous'),
                     'sex': c['author_sex'] or '👤',
                     'avatar': c['author_avatar'] or "",
-                    'aura': format_aura(rating)
+                    'aura': format_aura(rating) if not c.get('is_admin') else ""
                 }
             })
 
