@@ -297,6 +297,31 @@ def init_db():
                     )
                 """)
 
+                # ---------------- Reports Table ----------------
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS reports (
+                        report_id SERIAL PRIMARY KEY,
+                        reporter_id TEXT REFERENCES users(user_id),
+                        target_type TEXT NOT NULL,
+                        target_id INTEGER NOT NULL,
+                        reason TEXT NOT NULL,
+                        status TEXT DEFAULT 'pending',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        reviewed_by TEXT,
+                        reviewed_at TIMESTAMP,
+                        action_taken TEXT
+                    )
+                ''')
+
+                # ---------------- warning_count column migration ----------------
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name='users' AND column_name='warning_count'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: warning_count to users table")
+                    c.execute("ALTER TABLE users ADD COLUMN warning_count INTEGER DEFAULT 0")
+
                 # ---------------- Create admin user if specified ----------------
                 if ADMIN_ID:
                     c.execute('''
@@ -527,7 +552,7 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
     if context:
         context_keys = ['editing_comment', 'editing_post', 'thread_from_post_id', 
                        'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type',
-                       'rejecting_post', 'awaiting_rejection_reason']
+                       'rejecting_post', 'awaiting_rejection_reason', 'reporting']
         for key in context_keys:
             if key in context.user_data:
                 del context.user_data[key]
@@ -1921,7 +1946,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(f"📝 Pending Posts ({pending_count})", callback_data='admin_pending')],
         [InlineKeyboardButton(f"👥 Users: {users_count}", callback_data='admin_users')],
         [InlineKeyboardButton("📊 Statistics", callback_data='admin_stats')],
-        [InlineKeyboardButton("📢 Send Broadcast", callback_data='admin_broadcast')],  # This is the broadcast button
+        [InlineKeyboardButton("📢 Send Broadcast", callback_data='admin_broadcast')],
+        [InlineKeyboardButton("📋 Pending Reports", callback_data='admin_reports')],
         [InlineKeyboardButton("🔙 Back to Menu", callback_data='menu')]
     ]
     
@@ -3426,7 +3452,8 @@ async def show_comments_menu(update, context, post_id, page=1):
     comment_count = count_all_comments(post_id)
     keyboard = [
         [InlineKeyboardButton(f"👁 View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_{page}")],
-        [InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")]
+        [InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")],
+        [InlineKeyboardButton("🚨 Report Post", callback_data=f"report_post_{post_id}")]
     ]
 
     post_text = post['content']
@@ -3486,7 +3513,8 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likecomment_{comment_id}"),
             InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikecomment_{comment_id}"),
             InlineKeyboardButton("Reply", callback_data=f"reply_{comment['post_id']}_{comment_id}")
-        ]
+        ],
+        [InlineKeyboardButton("🚨 Report", callback_data=f"report_comment_{comment_id}")]
     ]
     
     # Add edit/delete buttons only for comment author and only for text comments
@@ -4426,6 +4454,193 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         logger.error(f"Error showing my comments: {e}")
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("❌ Error loading your comments. Please try again.")
+
+
+# ==================== REPORTING FEATURE ====================
+
+def create_report(reporter_id: str, target_type: str, target_id: int, reason: str):
+    """Insert a new report. Returns report_id, None (duplicate), or -1 (rate limited)."""
+    # Prevent duplicate reports from the same user on the same content
+    existing = db_fetch_one(
+        "SELECT report_id FROM reports WHERE reporter_id = %s AND target_type = %s AND target_id = %s",
+        (reporter_id, target_type, target_id)
+    )
+    if existing:
+        return None
+
+    # Rate limit: max 5 reports per 24 hours
+    today_count = db_fetch_one(
+        "SELECT COUNT(*) as cnt FROM reports WHERE reporter_id = %s AND created_at >= NOW() - INTERVAL '1 day'",
+        (reporter_id,)
+    )
+    if today_count and today_count['cnt'] >= 5:
+        return -1
+
+    result = db_execute(
+        "INSERT INTO reports (reporter_id, target_type, target_id, reason) VALUES (%s, %s, %s, %s) RETURNING report_id",
+        (reporter_id, target_type, target_id, reason),
+        fetchone=True
+    )
+    return result['report_id'] if result else None
+
+
+def get_pending_reports(offset: int = 0, limit: int = 5):
+    """Fetch paginated pending reports with reporter name."""
+    return db_fetch_all(
+        """SELECT r.*, u.anonymous_name as reporter_name
+           FROM reports r
+           LEFT JOIN users u ON r.reporter_id = u.user_id
+           WHERE r.status = 'pending'
+           ORDER BY r.created_at ASC
+           LIMIT %s OFFSET %s""",
+        (limit, offset)
+    )
+
+
+def get_report_content_preview(target_type: str, target_id: int):
+    """Return (preview_text, author_id) for a reported post or comment."""
+    if target_type == 'post':
+        row = db_fetch_one("SELECT content, author_id FROM posts WHERE post_id = %s", (target_id,))
+        if row:
+            return row['content'][:100], row['author_id']
+    elif target_type == 'comment':
+        row = db_fetch_one("SELECT content, author_id FROM comments WHERE comment_id = %s", (target_id,))
+        if row:
+            return (row['content'] or '[media]')[:100], row['author_id']
+    return None, None
+
+
+def resolve_report(report_id: int, admin_id: str, status: str, action_taken: str = None):
+    """Mark a report as resolved with the given status and optional action."""
+    db_execute(
+        """UPDATE reports SET status = %s, reviewed_by = %s, reviewed_at = NOW(), action_taken = %s
+           WHERE report_id = %s""",
+        (status, admin_id, action_taken, report_id)
+    )
+
+
+async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
+    """Show paginated pending reports to admin."""
+    query = update.callback_query
+    user_id = str(update.effective_user.id)
+
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']:
+        if query:
+            await query.answer("❌ No permission.", show_alert=True)
+        return
+
+    per_page = 5
+    offset = (page - 1) * per_page
+    reports = get_pending_reports(offset=offset, limit=per_page)
+
+    total_row = db_fetch_one("SELECT COUNT(*) as cnt FROM reports WHERE status = 'pending'")
+    total = total_row['cnt'] if total_row else 0
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    nav_keyboard = []
+
+    if not reports:
+        text = "📋 *Pending Reports*\n\n✅ No pending reports at this time."
+        nav_keyboard = [[InlineKeyboardButton("🔙 Admin Panel", callback_data='admin_panel')]]
+        try:
+            if query:
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(nav_keyboard), parse_mode=ParseMode.MARKDOWN)
+            else:
+                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(nav_keyboard), parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            logger.error(f"Error showing empty reports: {e}")
+        return
+
+    lines = [f"📋 *Pending Reports* (Page {page}/{total_pages})\n"]
+    keyboard = []
+
+    for rep in reports:
+        preview, _ = get_report_content_preview(rep['target_type'], rep['target_id'])
+        preview = (preview or '[deleted]')[:60]
+        type_label = "Post" if rep['target_type'] == 'post' else "Comment"
+        reporter_name = rep.get('reporter_name') or 'Anonymous'
+        safe_preview = escape_markdown(preview, version=2)
+        safe_reporter = escape_markdown(reporter_name, version=2)
+        safe_reason = escape_markdown(rep['reason'], version=2)
+
+        lines.append(
+            f"🆔 *Report \\#{rep['report_id']}* – {type_label}\n"
+            f"📝 _{safe_preview}_\n"
+            f"👤 By: {safe_reporter}\n"
+            f"💬 Reason: {safe_reason}\n"
+        )
+        keyboard.append([
+            InlineKeyboardButton("👁 View", callback_data=f"report_view_{rep['report_id']}"),
+            InlineKeyboardButton("✅ Dismiss", callback_data=f"report_dismiss_{rep['report_id']}"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("❌ Delete Content", callback_data=f"report_delete_{rep['report_id']}"),
+            InlineKeyboardButton("⚠️ Warn User", callback_data=f"report_warn_{rep['report_id']}"),
+        ])
+
+    # Pagination row
+    pag_row = []
+    if page > 1:
+        pag_row.append(InlineKeyboardButton("◀️ Prev", callback_data=f"admin_reports_{page - 1}"))
+    pag_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        pag_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"admin_reports_{page + 1}"))
+    if pag_row:
+        keyboard.append(pag_row)
+    keyboard.append([InlineKeyboardButton("🔙 Admin Panel", callback_data='admin_panel')])
+
+    text = "\n".join(lines)
+    try:
+        if query:
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN_V2)
+        else:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN_V2)
+    except Exception as e:
+        logger.error(f"Error showing admin reports: {e}")
+        try:
+            back = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='admin_panel')]])
+            if query:
+                await query.message.reply_text("❌ Error loading reports.", reply_markup=back)
+        except Exception:
+            pass
+
+
+async def notify_admin_of_new_report(
+    context: ContextTypes.DEFAULT_TYPE,
+    report_id: int,
+    reporter_id: str,
+    target_type: str,
+    reason: str
+):
+    """DM the admin when a new report is created."""
+    if not ADMIN_ID:
+        return
+    try:
+        reporter = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (reporter_id,))
+        reporter_name = reporter['anonymous_name'] if reporter else 'Anonymous'
+        type_label = "Post" if target_type == 'post' else "Comment"
+        safe_reason = escape_markdown(reason, version=2)
+        safe_name = escape_markdown(reporter_name, version=2)
+        text = (
+            f"🚨 *New Report \\#{report_id}*\n"
+            f"Type: {type_label}\n"
+            f"Reason: {safe_reason}\n"
+            f"By: {safe_name}"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("👁 Review Reports", callback_data='admin_reports')]
+        ])
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+    except Exception as e:
+        logger.error(f"Error notifying admin of report: {e}")
+
+# ==================== END REPORTING HELPERS ====================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -5666,6 +5881,184 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             except psycopg2.IntegrityError:
                 await query.message.reply_text("❌ User is already blocked.")
+
+        # ==================== REPORTING CALLBACKS ====================
+
+        elif query.data.startswith('report_post_'):
+            try:
+                post_id = int(query.data.split('_')[2])
+                post = db_fetch_one("SELECT post_id FROM posts WHERE post_id = %s", (post_id,))
+                if not post:
+                    await query.answer("❌ Post not found.", show_alert=True)
+                    return
+                context.user_data['reporting'] = {'type': 'post', 'id': post_id}
+                await query.answer()
+                await query.message.reply_text(
+                    "🚨 *Report Post*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap ❌ Cancel to go back.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=cancel_menu
+                )
+            except Exception as e:
+                logger.error(f"Error in report_post handler: {e}")
+                await query.answer("❌ Error processing request", show_alert=True)
+
+        elif query.data.startswith('report_comment_'):
+            try:
+                comment_id = int(query.data.split('_')[2])
+                comment = db_fetch_one("SELECT comment_id FROM comments WHERE comment_id = %s", (comment_id,))
+                if not comment:
+                    await query.answer("❌ Comment not found.", show_alert=True)
+                    return
+                context.user_data['reporting'] = {'type': 'comment', 'id': comment_id}
+                await query.answer()
+                await query.message.reply_text(
+                    "🚨 *Report Comment*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap ❌ Cancel to go back.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=cancel_menu
+                )
+            except Exception as e:
+                logger.error(f"Error in report_comment handler: {e}")
+                await query.answer("❌ Error processing request", show_alert=True)
+
+        elif query.data == 'admin_reports':
+            await query.answer("📋 Loading reports...", show_alert=False)
+            await show_admin_reports(update, context, page=1)
+
+        elif query.data.startswith('admin_reports_'):
+            try:
+                page = int(query.data.split('_')[2])
+                await show_admin_reports(update, context, page=page)
+            except (IndexError, ValueError):
+                await show_admin_reports(update, context, page=1)
+
+        elif query.data.startswith('report_view_'):
+            try:
+                report_id = int(query.data.split('_')[2])
+                report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+                if not report:
+                    await query.answer("❌ Report not found.", show_alert=True)
+                    return
+                preview, author_id = get_report_content_preview(report['target_type'], report['target_id'])
+                type_label = "Post" if report['target_type'] == 'post' else "Comment"
+                preview_text = html.escape(preview or '[Content deleted]')
+                safe_reason = html.escape(report['reason'])
+                reporter = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (report['reporter_id'],))
+                reporter_name = html.escape(reporter['anonymous_name'] if reporter else 'Anonymous')
+                view_text = (
+                    f"🔍 <b>Report #{report_id}</b>\n"
+                    f"Type: {type_label}\n"
+                    f"Reporter: {reporter_name}\n"
+                    f"Reason: {safe_reason}\n\n"
+                    f"<b>Content Preview:</b>\n{preview_text}"
+                )
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Dismiss", callback_data=f"report_dismiss_{report_id}"),
+                        InlineKeyboardButton("❌ Delete Content", callback_data=f"report_delete_{report_id}"),
+                    ],
+                    [InlineKeyboardButton("⚠️ Warn User", callback_data=f"report_warn_{report_id}")],
+                    [InlineKeyboardButton("🔙 Back to Reports", callback_data='admin_reports')]
+                ]
+                try:
+                    await query.edit_message_text(view_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+                except Exception:
+                    await query.message.reply_text(view_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Error in report_view handler: {e}")
+                await query.answer("❌ Error loading report", show_alert=True)
+
+        elif query.data.startswith('report_dismiss_'):
+            try:
+                report_id = int(query.data.split('_')[2])
+                resolve_report(report_id, user_id, 'dismissed', None)
+                await query.answer("✅ Report dismissed.", show_alert=False)
+                await show_admin_reports(update, context, page=1)
+            except Exception as e:
+                logger.error(f"Error in report_dismiss handler: {e}")
+                await query.answer("❌ Error dismissing report", show_alert=True)
+
+        elif query.data.startswith('report_delete_'):
+            try:
+                report_id = int(query.data.split('_')[2])
+                report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+                if not report:
+                    await query.answer("❌ Report not found.", show_alert=True)
+                    return
+                preview, author_id = get_report_content_preview(report['target_type'], report['target_id'])
+                # Delete the reported content
+                if report['target_type'] == 'post':
+                    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (report['target_id'],))
+                    if post:
+                        if post['channel_message_id']:
+                            try:
+                                await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=post['channel_message_id'])
+                            except Exception:
+                                pass
+                        comments_list = db_fetch_all("SELECT comment_id FROM comments WHERE post_id = %s", (report['target_id'],))
+                        for c in comments_list:
+                            db_execute("DELETE FROM reactions WHERE comment_id = %s", (c['comment_id'],))
+                        db_execute("DELETE FROM comments WHERE post_id = %s", (report['target_id'],))
+                        db_execute("DELETE FROM post_categories WHERE post_id = %s", (report['target_id'],))
+                        db_execute("DELETE FROM posts WHERE post_id = %s", (report['target_id'],))
+                elif report['target_type'] == 'comment':
+                    comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (report['target_id'],))
+                    if comment:
+                        post_id_for_count = comment['post_id']
+                        db_execute("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (report['target_id'],))
+                        db_execute("DELETE FROM reactions WHERE comment_id = %s", (report['target_id'],))
+                        db_execute("DELETE FROM comments WHERE comment_id = %s", (report['target_id'],))
+                        await adopt_orphaned_replies(context, post_id_for_count)
+                resolve_report(report_id, user_id, 'action_taken', 'deleted')
+                # Notify the content author (without revealing the reporter)
+                if author_id:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=author_id,
+                            text="⚠️ Your content was reviewed and removed by an admin due to a community report. Please ensure your posts follow our community guidelines."
+                        )
+                    except Exception:
+                        pass
+                await query.answer("✅ Content deleted.", show_alert=False)
+                await show_admin_reports(update, context, page=1)
+            except Exception as e:
+                logger.error(f"Error in report_delete handler: {e}")
+                await query.answer("❌ Error deleting content", show_alert=True)
+
+        elif query.data.startswith('report_warn_'):
+            try:
+                report_id = int(query.data.split('_')[2])
+                report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+                if not report:
+                    await query.answer("❌ Report not found.", show_alert=True)
+                    return
+                _, author_id = get_report_content_preview(report['target_type'], report['target_id'])
+                resolve_report(report_id, user_id, 'action_taken', 'warned')
+                if author_id:
+                    # Increment warning count
+                    db_execute(
+                        "UPDATE users SET warning_count = COALESCE(warning_count, 0) + 1 WHERE user_id = %s",
+                        (author_id,)
+                    )
+                    try:
+                        await context.bot.send_message(
+                            chat_id=author_id,
+                            text=(
+                                "⚠️ *Warning from Admin*\n\n"
+                                "Your content has been reported and reviewed by an admin. "
+                                "Please ensure your posts and comments follow our community guidelines.\n\n"
+                                "Repeated violations may result in content removal or other actions."
+                            ),
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                    except Exception:
+                        pass
+                await query.answer("✅ Warning sent to user.", show_alert=False)
+                await show_admin_reports(update, context, page=1)
+            except Exception as e:
+                logger.error(f"Error in report_warn handler: {e}")
+                await query.answer("❌ Error sending warning", show_alert=True)
+
+        # ==================== END REPORTING CALLBACKS ====================
             
     except Exception as e:
         logger.error(f"Error in button_handler: {e}")
@@ -5746,7 +6139,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.get('broadcasting') or
             context.user_data.get('editing_comment') or
             context.user_data.get('editing_post') or
-            context.user_data.get('awaiting_rejection_reason')
+            context.user_data.get('awaiting_rejection_reason') or
+            context.user_data.get('reporting')
         )
         
         if in_waiting_state:
@@ -5759,7 +6153,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Clear any context data
             context_keys = ['editing_comment', 'editing_post', 'thread_from_post_id', 
-                           'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type']
+                           'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type', 'reporting']
             for key in context_keys:
                 if key in context.user_data:
                     del context.user_data[key]
@@ -5788,6 +6182,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Admin {user_id} providing reason for post {post_id}")
             await finalize_rejection(update, context, post_id, reason=text)
             return
+
+    # NEW: Handle report reason capture from user
+    if context.user_data.get('reporting'):
+        reporting = context.user_data.get('reporting')
+        reason = text.strip() if text else ""
+
+        if not reason:
+            await update.message.reply_text("❌ Please provide a reason (at least 1 character).")
+            return
+
+        if len(reason) > 200:
+            await update.message.reply_text(
+                "❌ Reason is too long (max 200 characters). Please shorten it and try again."
+            )
+            return
+
+        target_type = reporting['type']
+        target_id = reporting['id']
+
+        report_id = create_report(user_id, target_type, target_id, reason)
+
+        if report_id is None:
+            await update.message.reply_text(
+                "⚠️ You have already reported this content. An admin will review it.",
+                reply_markup=get_main_menu(user_id)
+            )
+        elif report_id == -1:
+            await update.message.reply_text(
+                "⚠️ You've reached the daily report limit (5 per day). Please try again tomorrow.",
+                reply_markup=get_main_menu(user_id)
+            )
+        else:
+            await update.message.reply_text(
+                "✅ Thank you. An admin will review your report.",
+                reply_markup=get_main_menu(user_id)
+            )
+            # Notify admin of new report
+            await notify_admin_of_new_report(context, report_id, user_id, target_type, reason)
+
+        # Clear reporting state regardless of outcome
+        if 'reporting' in context.user_data:
+            del context.user_data['reporting']
+        return
 
     
     # Rest of your handle_message code...
@@ -6320,7 +6757,7 @@ def main():
 
 @flask_app.route('/mini_app')
 def mini_app_page():
-    """Complete Mini App - uses globally defined env vars for all branding."""
+    """Complete Mini App - returns the old UI style with new features integrated."""
 
     # All these are already loaded globally in bot.py via load_dotenv()
     _bot      = BOT_USERNAME
@@ -6329,7 +6766,7 @@ def mini_app_page():
     _card_bg  = CARD_BG_COLOR        # e.g. "#161410"
     _border   = BORDER_COLOR         # e.g. "#1e1c18"
     _text     = TEXT_COLOR           # e.g. "#e8e0d0"
-    _rgb      = PRIMARY_RGB          # e.g. "201, 168, 76"  (already computed by hex_to_rgb)
+    _rgb      = PRIMARY_RGB          # e.g. "201, 168, 76"
 
     html = ("""<!DOCTYPE html>
 <html lang="en">
@@ -6338,1750 +6775,931 @@ def mini_app_page():
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Christian Vent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     /* ===== CSS RESET & VARIABLES ===== */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --primary:        SLOT_PRIMARY;
-      --primary-light:  SLOT_SECONDARY;
-      --primary-dim:    rgba(SLOT_RGB, 0.15);
-      --primary-border: rgba(SLOT_RGB, 0.25);
-      --bg:   SLOT_CARD_BG;
-      --bg2:  SLOT_BORDER;
-      --bg3:  #1a1814;
-      --surface:  rgba(255,255,255,0.04);
-      --surface2: rgba(255,255,255,0.07);
-      --text:       SLOT_TEXT;
-      --text-dim:   rgba(255,255,255,0.5);
-      --text-muted: rgba(255,255,255,0.3);
-      --danger: #c0392b;
-      --success: #27ae60;
-      --radius: 16px;
-      --radius-sm: 10px;
-      --radius-pill: 999px;
-      --nav-h: 72px;
-      --font-body: 'DM Sans', system-ui, sans-serif;
-      --font-display: 'Lora', Georgia, serif;
-      /* Alias so any --gold references keep working */
-      --gold:        var(--primary);
-      --gold-light:  var(--primary-light);
-      --gold-dim:    var(--primary-dim);
-      --gold-border: var(--primary-border);
+      --primary: SLOT_PRIMARY;
+      --primary-dim: rgba(SLOT_RGB, 0.15);
+      --bg-color: #0b0a08;
+      --card-bg: rgba(22, 20, 16, 0.6);
+      --border: SLOT_BORDER;
+      --text: SLOT_TEXT;
+      --text-dim: rgba(255, 255, 255, 0.5);
+      --font-family: 'Inter', sans-serif;
+      --radius: 12px;
+      --nav-h: 65px;
     }
-
     body {
-      font-family: var(--font-body);
-      background: var(--bg);
+      font-family: var(--font-family);
+      background-color: var(--bg-color);
       color: var(--text);
       min-height: 100vh;
-      padding-bottom: calc(var(--nav-h) + 24px);
-      font-size: 14px;
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
       overflow-x: hidden;
+      padding-bottom: calc(var(--nav-h) + 20px);
+    }
+    canvas#particleCanvas {
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      z-index: -1;
+      pointer-events: none;
     }
 
     /* ===== SCROLLBAR ===== */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--gold-border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
     /* ===== LAYOUT ===== */
-    .page { display: none; padding: 16px 16px 8px; max-width: 600px; margin: 0 auto; }
+    .page { display: none; padding: 16px; max-width: 600px; margin: 0 auto; }
     .page.active { display: block; }
 
     /* ===== HEADER ===== */
     .app-header {
       text-align: center;
-      padding: 28px 16px 20px;
-      max-width: 600px;
-      margin: 0 auto;
-    }
-    .app-logo {
-      width: 64px; height: 64px;
-      border-radius: 18px;
-      border: 2px solid var(--gold-border);
-      margin: 0 auto 12px;
-      display: block;
-      object-fit: cover;
-    }
-    .app-logo-fallback {
-      width: 64px; height: 64px;
-      border-radius: 18px;
-      border: 2px solid var(--gold-border);
-      background: var(--gold-dim);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 28px;
-      margin: 0 auto 12px;
+      padding: 20px 16px;
     }
     .app-title {
-      font-family: var(--font-display);
-      font-size: 1.8rem;
-      color: var(--gold);
-      letter-spacing: 0.5px;
-      font-weight: 800;
-      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      font-size: 1.6rem;
+      color: var(--primary);
+      font-weight: 700;
+      letter-spacing: -0.5px;
     }
     .app-subtitle {
-      font-size: 0.82rem;
-      color: var(--gold-light);
+      font-size: 0.85rem;
+      color: var(--text-dim);
       margin-top: 4px;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      font-weight: 700;
-      opacity: 0.9;
     }
-
-    /* ===== TOGGLE SWITCH ===== */
-    .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
-    .switch input { opacity: 0; width: 0; height: 0; }
-    .slider {
-      position: absolute; cursor: pointer;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background-color: var(--bg3);
-      border: 1px solid var(--surface2);
-      transition: .4s; border-radius: 24px;
-    }
-    .slider:before {
-      position: absolute; content: "";
-      height: 16px; width: 16px;
-      left: 3px; bottom: 3px;
-      background-color: var(--text-muted);
-      transition: .4s; border-radius: 50%;
-    }
-    input:checked + .slider { background-color: var(--gold-dim); border-color: var(--gold); }
-    input:checked + .slider:before { transform: translateX(20px); background-color: var(--gold); }
-
-    .emoji-item {
-      aspect-ratio: 1;
-      display: flex; align-items: center; justify-content: center;
-      background: var(--surface);
-      border: 1px solid transparent;
-      border-radius: 12px;
-      font-size: 1.5rem;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .emoji-item:hover { background: var(--surface2); }
-    .emoji-item.selected { border-color: var(--gold); background: var(--gold-dim); }
-
-    .branding-footer {
-      text-align: center;
-      padding: 32px 16px;
-      opacity: 0.5;
-      font-size: 0.75rem;
-    }
-    .branding-footer strong { color: var(--gold); }
 
     /* ===== BOTTOM NAV ===== */
     .bottom-nav {
       position: fixed;
       bottom: 0; left: 0; right: 0;
       height: var(--nav-h);
-      background: rgba(14,13,11,0.95);
-      backdrop-filter: blur(20px);
-      border-top: 1px solid var(--gold-border);
+      background: rgba(11, 10, 8, 0.85);
+      backdrop-filter: blur(15px);
+      border-top: 1px solid var(--border);
       display: flex;
-      align-items: center;
       justify-content: space-around;
+      align-items: center;
       z-index: 1000;
-      padding: 0 8px;
+      padding-bottom: env(safe-area-inset-bottom, 0);
     }
     .nav-btn {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 4px;
-      padding: 8px 4px;
-      background: none;
-      border: none;
+      background: none; border: none;
+      color: var(--text-dim);
+      font-family: var(--font-family);
+      font-size: 0.75rem;
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
       cursor: pointer;
-      color: var(--text-muted);
+      flex: 1;
+      padding: 8px 0;
       transition: color 0.2s;
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
     }
-    .nav-btn.active { color: var(--gold); }
-    .nav-btn .nav-icon { font-size: 1.3rem; line-height: 1; }
-    .nav-btn.active .nav-dot { opacity: 1; }
-    .nav-btn .nav-label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
+    .nav-btn.active { color: var(--primary); }
+    .nav-icon { font-size: 1.4rem; }
 
-    /* ===== CARDS ===== */
+    /* ===== CARDS & GLASSMORPHISM ===== */
     .card {
-      background: var(--bg2);
-      border: 1px solid var(--surface2);
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 18px;
-      margin-bottom: 14px;
+      padding: 16px;
+      margin-bottom: 16px;
     }
     .card-title {
-      font-family: var(--font-display);
-      font-size: 1.25rem;
-      color: var(--gold);
-      margin-bottom: 4px;
-      font-weight: 700;
-    }
-    .card-sub {
-      font-size: 0.8rem;
-      color: var(--text-dim);
-      margin-bottom: 16px;
-    }
-
-    /* ===== SECTION HEADER ===== */
-    .section-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 14px;
-    }
-    .section-title {
-      font-family: var(--font-display);
-      font-size: 1rem;
-      color: var(--gold);
-    }
-    .refresh-btn {
-      background: var(--gold-dim);
-      border: 1px solid var(--gold-border);
-      color: var(--gold);
-      padding: 5px 12px;
-      border-radius: var(--radius-pill);
-      font-size: 0.75rem;
-      cursor: pointer;
-      font-family: var(--font-body);
-      font-weight: 500;
-      transition: background 0.2s;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .refresh-btn:hover { background: var(--primary-dim); }
-
-    /* ===== CATEGORIES GRID ===== */
-    .categories-label {
-      font-size: 0.72rem;
-      color: var(--gold);
-      letter-spacing: 1px;
-      text-transform: uppercase;
+      font-size: 1.1rem;
+      color: var(--primary);
       font-weight: 600;
-      margin-bottom: 10px;
+      margin-bottom: 6px;
     }
-    .categories-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
-      margin-bottom: 16px;
-      max-height: 220px;
-      overflow-y: auto;
-      padding: 2px;
-    }
-    .cat-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 9px 11px;
-      background: var(--surface);
-      border: 1px solid transparent;
-      border-radius: var(--radius-sm);
-      cursor: pointer;
-      transition: all 0.15s;
-      user-select: none;
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
-    }
-    .cat-item:hover { background: var(--gold-dim); border-color: var(--gold-border); }
-    .cat-item.selected { background: var(--gold-dim); border-color: var(--gold); }
-    .cat-check {
-      width: 16px; height: 16px;
-      border: 1.5px solid var(--gold-border);
-      border-radius: 4px;
-      flex-shrink: 0;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 10px;
-      color: var(--gold);
-      transition: all 0.15s;
-    }
-    .cat-item.selected .cat-check {
-      background: var(--gold);
-      border-color: var(--gold);
-      color: #000;
-    }
-    .cat-label { font-size: 0.8rem; color: var(--text); line-height: 1.2; }
+    .card-sub { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 12px; }
 
-    /* ===== TEXTAREA & INPUTS ===== */
+    /* ===== FORM ELEMENTS ===== */
     .vent-textarea {
       width: 100%;
-      min-height: 140px;
-      background: var(--bg3);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius);
-      padding: 14px;
+      min-height: 120px;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
       color: var(--text);
-      font-family: var(--font-body);
+      font-family: var(--font-family);
       font-size: 0.9rem;
-      line-height: 1.6;
       resize: vertical;
       outline: none;
       transition: border-color 0.2s;
       margin-bottom: 8px;
     }
-    .vent-textarea:focus { border-color: var(--gold-border); }
-    .vent-textarea::placeholder { color: var(--text-muted); }
-    .char-count {
-      text-align: right;
-      font-size: 0.72rem;
-      color: var(--text-muted);
-      margin-bottom: 12px;
-    }
-    .char-count.warn { color: #e67e22; }
-
-    /* ===== BUTTONS ===== */
+    .vent-textarea:focus { border-color: var(--primary); }
+    
     .btn-primary {
       width: 100%;
-      padding: 16px;
-      background: linear-gradient(135deg, var(--gold), var(--gold-light));
-      border: none;
-      border-radius: var(--radius-pill);
+      padding: 14px;
+      background: var(--primary);
       color: #000;
-      font-family: var(--font-body);
-      font-size: 1rem;
-      font-weight: 800;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      font-family: var(--font-family);
       cursor: pointer;
-      transition: all 0.2s, transform 0.1s;
-      box-shadow: 0 4px 15px rgba(SLOT_RGB, 0.3);
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
+      transition: opacity 0.2s;
     }
-    .btn-primary:hover { opacity: 0.9; }
-    .btn-primary:active { transform: scale(0.98); }
+    .btn-primary:active { opacity: 0.8; }
     .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
     .btn-ghost {
-      padding: 8px 16px;
-      background: none;
-      border: 1px solid var(--gold-border);
-      border-radius: var(--radius-pill);
-      color: var(--gold);
-      font-family: var(--font-body);
+      background: transparent;
+      border: 1px solid var(--primary);
+      color: var(--primary);
+      padding: 6px 12px;
+      border-radius: 6px;
       font-size: 0.8rem;
       cursor: pointer;
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
     }
 
-    /* ===== POST CARDS ===== */
-    .post-card {
-      background: var(--bg2);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius);
-      padding: 16px;
-      margin-bottom: 14px;
-      transition: border-color 0.2s;
-    }
-    .post-card:hover { border-color: var(--gold-border); }
-    .post-meta {
-      display: flex;
-      align-items: center;
+    /* ===== CATEGORY GRID ===== */
+    .categories-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
       gap: 8px;
-      margin-bottom: 10px;
-      flex-wrap: wrap;
+      margin-bottom: 16px;
+      max-height: 200px;
+      overflow-y: auto;
     }
-    .post-avatar {
-      width: 32px; height: 32px;
-      background: var(--gold-dim);
-      border-radius: 50%;
+    .cat-btn {
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(0,0,0,0.2);
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.8rem;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.2s;
+    }
+    .cat-btn.selected {
+      background: var(--primary-dim);
+      border-color: var(--primary);
+    }
+    .cat-icon-check {
+      width: 14px; height: 14px;
+      border: 1px solid var(--text-dim);
+      border-radius: 3px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 14px;
+      font-size: 10px;
       flex-shrink: 0;
     }
-    .post-author { font-size: 0.82rem; color: var(--text-dim); }
-    .post-time { font-size: 0.72rem; color: var(--text-muted); margin-left: auto; }
-    .cat-badges { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }
-    .cat-badge {
-      padding: 2px 9px;
-      background: var(--gold-dim);
-      border: 1px solid var(--gold-border);
-      border-radius: var(--radius-pill);
-      font-size: 0.68rem;
-      color: var(--gold);
-      font-weight: 500;
+    .cat-btn.selected .cat-icon-check {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #000;
     }
-    .post-content {
-      font-size: 0.88rem;
+
+    /* ===== FEED POSTS ===== */
+    .search-bar {
+      width: 100%;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
       color: var(--text);
-      line-height: 1.7;
-      margin-bottom: 12px;
-      word-break: break-word;
+      font-family: var(--font-family);
+      margin-bottom: 16px;
+      outline: none;
+    }
+    .search-bar:focus { border-color: var(--primary); }
+
+    .post-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    }
+    .avatar {
+      width: 36px; height: 36px;
+      background: var(--primary-dim);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    .post-author { font-weight: 600; font-size: 0.9rem; }
+    .post-time { font-size: 0.75rem; color: var(--text-dim); margin-left: auto; }
+    
+    .cat-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .cat-badge {
+      background: rgba(0,0,0,0.4);
+      border: 1px solid var(--border);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+    }
+    
+    .post-content {
+      font-size: 0.9rem; line-height: 1.5; margin-bottom: 12px; word-break: break-word;
     }
     .post-content.truncated {
-      display: -webkit-box;
-      -webkit-line-clamp: 4;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
+      display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
     }
+    
     .post-footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-top: 1px solid var(--surface);
-      padding-top: 10px;
-      gap: 8px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-top: 1px solid rgba(255,255,255,0.05);
+      padding-top: 12px;
     }
-    .post-comment-count { font-size: 0.78rem; color: var(--text-muted); }
-    .btn-read-more {
-      background: var(--gold-dim);
-      border: 1px solid var(--gold-border);
-      color: var(--gold);
-      padding: 6px 14px;
-      border-radius: var(--radius-pill);
-      font-size: 0.75rem;
-      cursor: pointer;
-      font-family: var(--font-body);
-      font-weight: 500;
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
+    .unread-badge {
+      background: var(--primary); color: #000; font-size: 0.65rem; font-weight: 700;
+      padding: 2px 6px; border-radius: 10px; margin-left: 6px;
     }
-
+    
     /* ===== COMMENTS ===== */
+    .comment-list { margin-top: 16px; }
     .comment-item {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 14px;
-      position: relative;
+      display: flex; gap: 10px; margin-bottom: 16px; position: relative;
     }
-    .comment-item.is-reply { margin-left: 36px; }
+    .comment-item.is-reply { margin-left: 32px; }
     .comment-item.is-reply::before {
-      content: '';
-      position: absolute;
-      left: -18px; top: 0; bottom: 0;
-      width: 2px;
-      background: var(--gold-border);
-      border-radius: 2px;
-    }
-    .comment-avatar {
-      width: 30px; height: 30px;
-      background: var(--gold-dim);
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 12px;
-      flex-shrink: 0;
-      margin-top: 2px;
+      content: ''; position: absolute; left: -16px; top: 0; bottom: 0;
+      width: 2px; background: var(--border); border-radius: 2px;
     }
     .comment-body {
-      flex: 1;
-      background: var(--bg3);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius-sm);
-      padding: 10px 12px;
+      flex: 1; background: rgba(0,0,0,0.2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px;
     }
-    .comment-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 5px;
+    .comment-actions {
+      display: flex; gap: 12px; margin-top: 8px; font-size: 0.75rem; color: var(--text-dim);
     }
-    .comment-author { font-size: 0.78rem; font-weight: 600; color: var(--gold); }
-    .comment-time { font-size: 0.68rem; color: var(--text-muted); }
-    .comment-text { font-size: 0.85rem; color: var(--text); line-height: 1.55; word-break: break-word; }
-    .comment-actions { display: flex; gap: 8px; margin-top: 7px; }
-    .comment-action-btn {
-      background: none; border: none;
-      font-size: 0.72rem; color: var(--text-muted);
-      cursor: pointer;
-      font-family: var(--font-body);
-      padding: 2px 0;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .comment-action-btn:hover { color: var(--gold); }
+    .action-btn { background: none; border: none; color: inherit; cursor: pointer; padding: 0; }
+    .action-btn:hover { color: var(--primary); }
 
-    /* Inline reply box */
-    .inline-reply { display: none; margin-top: 10px; }
-    .inline-reply.open { display: block; }
-    .inline-reply textarea {
-      width: 100%;
-      min-height: 65px;
-      background: var(--bg);
-      border: 1px solid var(--gold-border);
-      border-radius: var(--radius-sm);
-      padding: 9px 11px;
-      color: var(--text);
-      font-family: var(--font-body);
-      font-size: 0.82rem;
-      resize: none;
-      outline: none;
-      margin-bottom: 7px;
-    }
-    .inline-reply-btns { display: flex; gap: 8px; justify-content: flex-end; }
-    .inline-cancel {
-      padding: 6px 13px;
-      background: none;
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius-pill);
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      cursor: pointer;
-      font-family: var(--font-body);
-    }
-    .inline-send {
-      padding: 6px 16px;
-      background: var(--gold);
-      border: none;
-      border-radius: var(--radius-pill);
-      color: #000;
-      font-size: 0.75rem;
-      font-weight: 600;
-      cursor: pointer;
-      font-family: var(--font-body);
-    }
-
-    /* ===== LEADERBOARD ===== */
-    .lb-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 0;
-      border-bottom: 1px solid var(--surface);
-    }
-    .lb-item:last-child { border-bottom: none; }
-    .lb-rank {
-      width: 28px;
-      text-align: center;
-      font-family: var(--font-display);
-      font-size: 1rem;
-      color: var(--text-muted);
-      font-weight: 700;
-    }
-    .lb-rank.top1 { color: #FFD700; font-size: 1.3rem; }
-    .lb-rank.top2 { color: #C0C0C0; }
-    .lb-rank.top3 { color: #CD7F32; }
-    .lb-avatar {
-      width: 38px; height: 38px;
-      background: var(--gold-dim);
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 16px;
-    }
-    .lb-info { flex: 1; }
-    .lb-name { font-size: 0.88rem; font-weight: 500; }
-    .lb-aura { font-size: 0.72rem; color: var(--text-dim); }
-    .lb-pts {
-      font-family: var(--font-display);
-      font-size: 1rem;
-      color: var(--gold);
-      font-weight: 700;
-    }
-
-    /* ===== PROFILE ===== */
-    .profile-hero {
-      text-align: center;
-      padding: 24px 16px;
-      background: var(--bg2);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius);
-      margin-bottom: 14px;
-      position: relative;
-    }
-    .profile-avatar {
-      width: 72px; height: 72px;
-      background: var(--gold-dim);
-      border-radius: 50%;
-      border: 2px solid var(--gold-border);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 30px;
-      margin: 0 auto 12px;
-    }
-    .profile-name {
-      font-family: var(--font-display);
-      font-size: 1.2rem;
-      color: var(--gold);
-      margin-bottom: 4px;
-    }
-    .profile-aura { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 16px; }
-    .profile-stats {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-    }
-    .stat-box { text-align: center; }
-    .stat-num {
-      font-family: var(--font-display);
-      font-size: 1.3rem;
-      color: var(--gold);
-      font-weight: 700;
-    }
-    .stat-label { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-
-    /* ===== TOAST MESSAGES ===== */
-    #toast {
-      position: fixed;
-      bottom: calc(var(--nav-h) + 16px);
-      left: 50%;
-      transform: translateX(-50%) translateY(20px);
-      background: var(--bg3);
-      border: 1px solid var(--gold-border);
-      color: var(--text);
-      padding: 10px 20px;
-      border-radius: var(--radius-pill);
-      font-size: 0.82rem;
-      z-index: 2000;
-      opacity: 0;
-      transition: all 0.3s;
-      pointer-events: none;
-      white-space: nowrap;
-      max-width: 90vw;
-    }
-    #toast.show {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
-    #toast.success { border-color: var(--success); color: #6fcf97; }
-    #toast.error { border-color: var(--danger); color: #eb5757; }
-
-    /* ===== LOADING STATES ===== */
+    .inline-reply-box { display: none; margin-top: 8px; }
+    .inline-reply-box.open { display: block; }
+    
+    /* ===== MISC ===== */
     .skeleton {
-      background: linear-gradient(90deg, var(--bg2) 25%, var(--bg3) 50%, var(--bg2) 75%);
-      background-size: 200% 100%;
-      animation: shimmer 1.5s infinite;
-      border-radius: var(--radius);
-      height: 120px;
-      margin-bottom: 14px;
+      height: 100px; background: rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 12px;
+      animation: pulse 1.5s infinite;
     }
-    @keyframes shimmer {
-      0% { background-position: 200% 0; }
-      100% { background-position: -200% 0; }
+    @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+    
+    .toast {
+      position: fixed; bottom: 85px; left: 50%; transform: translateX(-50%);
+      background: var(--primary); color: #000; padding: 10px 20px; border-radius: 20px;
+      font-size: 0.85rem; font-weight: 600; opacity: 0; pointer-events: none; transition: opacity 0.3s;
+      z-index: 2000;
     }
-    .empty-state {
-      text-align: center;
-      padding: 40px 20px;
-      color: var(--text-muted);
+    .toast.show { opacity: 1; }
+    
+    .toggle-switch {
+      position: relative; display: inline-block; width: 40px; height: 22px;
     }
-    .empty-state .empty-icon { font-size: 2.5rem; margin-bottom: 12px; }
-    .empty-state p { font-size: 0.88rem; line-height: 1.6; }
-
-    /* ===== DETAIL VIEW ===== */
-    .back-btn {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      background: none;
-      border: none;
-      color: var(--gold);
-      font-size: 0.82rem;
-      cursor: pointer;
-      font-family: var(--font-body);
-      margin-bottom: 14px;
-      padding: 4px 0;
-      -webkit-tap-highlight-color: transparent;
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(255,255,255,0.1); transition: .4s; border-radius: 22px;
     }
-
-    /* ===== COMMENT COMPOSE ===== */
-    .compose-box {
-      background: var(--bg2);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius);
-      padding: 14px;
-      margin-top: 16px;
+    .toggle-slider:before {
+      position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px;
+      background-color: var(--text-dim); transition: .4s; border-radius: 50%;
     }
-    .compose-box textarea {
-      width: 100%;
-      min-height: 80px;
-      background: var(--bg3);
-      border: 1px solid var(--surface2);
-      border-radius: var(--radius-sm);
-      padding: 10px 12px;
-      color: var(--text);
-      font-family: var(--font-body);
-      font-size: 0.85rem;
-      resize: none;
-      outline: none;
-      transition: border-color 0.2s;
-      margin-bottom: 10px;
+    input:checked + .toggle-slider { background-color: var(--primary-dim); }
+    input:checked + .toggle-slider:before { transform: translateX(18px); background-color: var(--primary); }
+    
+    .emoji-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+    .emoji-item {
+      font-size: 1.5rem; text-align: center; padding: 8px; background: rgba(0,0,0,0.2);
+      border-radius: 8px; cursor: pointer; border: 1px solid transparent;
     }
-    .compose-box textarea:focus { border-color: var(--gold-border); }
-
-    /* ===== AUTH SCREEN ===== */
+    .emoji-item.selected { border-color: var(--primary); background: var(--primary-dim); }
+    
     #authScreen {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 32px 20px;
-      text-align: center;
+      position: fixed; top:0; left:0; width:100%; height:100%;
+      background: var(--bg-color); z-index: 9999;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
     }
-    #authScreen h2 { font-family: var(--font-display); color: var(--gold); margin-bottom: 12px; }
-    #authScreen p { color: var(--text-dim); font-size: 0.88rem; line-height: 1.6; }
     .spinner {
-      width: 32px; height: 32px;
-      border: 3px solid var(--gold-border);
-      border-top-color: var(--gold);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin: 0 auto 20px;
+      width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
 
-<!-- Auth / Loading Screen (shown until userId is confirmed) -->
+<canvas id="particleCanvas"></canvas>
+
 <div id="authScreen">
   <div class="spinner"></div>
-  <h2>Christian Vent</h2>
-  <p>Authenticating your session&hellip;</p>
+  <h2 style="margin-top: 20px; color: var(--primary);">Authenticating...</h2>
 </div>
 
-<!-- Main App (hidden until auth succeeds) -->
 <div id="mainApp" style="display:none;">
 
-  <!-- Header (only shown on vent/feed/leaderboard/profile) -->
-  <header class="app-header" id="appHeader">
-    <img src="/static/images/vent%20logo.png" class="app-logo" id="main-logo" alt="Christian Vent Logo" 
-         style="box-shadow: 0 0 20px rgba(SLOT_RGB, 0.4); border: 3px solid var(--gold);">
+  <header class="app-header">
     <div class="app-title">Christian Vent</div>
-    <div class="app-subtitle">Safe &amp; Anonymous</div>
+    <div class="app-subtitle">Share securely & anonymously</div>
   </header>
 
-  <!-- ===== VENT PAGE ===== -->
+  <!-- VENT PAGE -->
   <section id="page-vent" class="page active">
     <div class="card">
       <div class="card-title">Share Your Heart</div>
-      <div class="card-sub">Your identity stays hidden. This is a safe space.</div>
-
-      <div class="categories-label">Select Categories (pick one or more)</div>
-      <div class="categories-grid" id="categoriesGrid">
-        <!-- Populated by JS -->
-      </div>
-
-      <textarea
-        class="vent-textarea"
-        id="ventInput"
-        placeholder="What's on your heart? Share freely…"
-        maxlength="5000"
-      ></textarea>
-      <div class="char-count" id="charCount">0 / 5000</div>
-
+      <div class="card-sub">Pick categories that match your vent:</div>
+      <div class="categories-grid" id="categoriesGrid"></div>
+      
+      <textarea id="ventInput" class="vent-textarea" placeholder="What's on your heart?" maxlength="5000"></textarea>
+      <div style="text-align:right; font-size:0.75rem; color:var(--text-dim); margin-bottom:12px;" id="charCount">0/5000</div>
+      
       <button class="btn-primary" id="submitVentBtn">Post Anonymously</button>
     </div>
   </section>
 
-  <!-- ===== FEED PAGE ===== -->
+  <!-- FEED PAGE -->
   <section id="page-feed" class="page">
-    <div class="section-header">
-      <div class="section-title">Community Feed</div>
-      <button class="refresh-btn" id="refreshFeedBtn">↻ Refresh</button>
-    </div>
-    <div id="feedContainer">
-      <div class="skeleton"></div>
-      <div class="skeleton"></div>
-      <div class="skeleton"></div>
-    </div>
-    <div id="loadMoreArea" style="text-align:center; padding:16px; display:none;">
-      <button class="btn-ghost" id="loadMoreBtn">Load more</button>
+    <input type="text" id="searchInput" class="search-bar" placeholder="Search vents...">
+    <div id="feedContainer"></div>
+    <div id="loadMoreArea" style="text-align:center; display:none; padding: 10px;">
+      <button class="btn-ghost" id="loadMoreBtn">Load More</button>
     </div>
   </section>
 
-  <!-- ===== POST DETAIL PAGE ===== -->
+  <!-- POST DETAIL PAGE -->
   <section id="page-detail" class="page">
-    <button class="back-btn" id="backFromDetailBtn">← Back to Feed</button>
+    <button class="btn-ghost" onclick="switchPage('feed')" style="margin-bottom:16px; border:none; padding:0;">← Back</button>
     <div id="detailPostBox"></div>
-    <div id="detailCommentsBox"></div>
-    <div class="compose-box" id="detailComposeBox" style="display:none;">
-      <textarea id="commentInput" placeholder="Offer a response or prayer…"></textarea>
-      <button class="btn-primary" id="postCommentBtn">Send Response</button>
-    </div>
-  </section>
-
-  <!-- ===== LEADERBOARD PAGE ===== -->
-  <section id="page-leaderboard" class="page">
-    <div class="section-header">
-      <div class="section-title">Top Contributors</div>
-      <button class="refresh-btn" id="refreshLbBtn">↻ Refresh</button>
-    </div>
-    <div class="card" id="leaderboardContainer">
-      <div class="skeleton"></div>
-    </div>
-  </section>
-
-  <!-- ===== PROFILE PAGE ===== -->
-  <section id="page-profile" class="page">
-    <div id="profileContainer">
-      <div class="skeleton" style="height:180px;"></div>
-    </div>
-  </section>
-
-  <!-- ===== EDIT PROFILE PAGE ===== -->
-  <section id="page-edit-profile" class="page">
-    <button class="back-btn" id="backFromEditBtn">← Back to Profile</button>
-    <div class="card">
-      <div class="card-title">Customize Profile</div>
-      <div class="card-sub">This is how you appear in the community.</div>
-      
-      <div style="margin-bottom: 20px;">
-        <label style="display:block;font-size:0.75rem;color:var(--gold);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Anonymous Name</label>
-        <input type="text" id="edit-name" class="vent-textarea" style="min-height:unset;padding:12px;" placeholder="Name...">
-      </div>
-
-      <div style="margin-bottom: 20px;">
-        <label style="display:block;font-size:0.75rem;color:var(--gold);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Bio</label>
-        <textarea id="edit-bio" class="vent-textarea" style="min-height:80px;" placeholder="Write a short bio..."></textarea>
-      </div>
-
-      <div style="margin-bottom: 24px;">
-        <label style="display:block;font-size:0.75rem;color:var(--gold);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Choose Avatar</label>
-        <div id="emoji-grid" style="display:grid;grid-template-columns:repeat(5, 1fr);gap:10px;">
-          <!-- Populated by JS -->
-        </div>
-      </div>
-
-      <button class="btn-primary" id="saveProfileBtn">Save Profile Changes</button>
-    </div>
-  </section>
-
-  <!-- ===== SETTINGS PAGE ===== -->
-  <section id="page-settings" class="page">
-    <div class="section-header">
-      <div class="section-title">Preferences</div>
-    </div>
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
-        <div>
-          <div style="font-weight:600;margin-bottom:2px;">Push Notifications</div>
-          <div style="font-size:0.75rem;color:var(--text-dim);">Alerts for replies and mentions.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="set-notifications">
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
-        <div>
-          <div style="font-weight:600;margin-bottom:2px;">Public Profile</div>
-          <div style="font-size:0.75rem;color:var(--text-dim);">Others can see your aura and stats.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="set-privacy">
-          <span class="slider"></span>
-        </label>
-      </div>
-      
-      <button class="btn-primary" id="saveSettingsBtn">Apply Settings</button>
+    
+    <div class="card" style="margin-top:16px; padding: 12px;">
+      <textarea id="commentInput" class="vent-textarea" style="min-height:70px; margin-bottom:8px;" placeholder="Offer a response..."></textarea>
+      <button class="btn-primary" id="postCommentBtn" style="padding: 10px;">Send Response</button>
     </div>
     
-    <div class="branding-footer">
-      Designed by <strong>Yididiya</strong><br>
-      Christian Vent Community
+    <div id="detailCommentsBox" class="comment-list"></div>
+  </section>
+
+  <!-- LEADERBOARD PAGE -->
+  <section id="page-leaderboard" class="page">
+    <div class="card">
+      <div class="card-title">Top Contributors</div>
+      <div id="leaderboardContainer" style="margin-top: 16px;"></div>
     </div>
   </section>
 
-  <!-- ===== BOTTOM NAV ===== -->
+  <!-- PROFILE PAGE -->
+  <section id="page-profile" class="page">
+    <div id="profileContainer"></div>
+  </section>
+
+  <!-- EDIT PROFILE PAGE -->
+  <section id="page-edit-profile" class="page">
+    <button class="btn-ghost" onclick="switchPage('profile')" style="margin-bottom:16px; border:none; padding:0;">← Back</button>
+    <div class="card">
+      <div class="card-title">Edit Profile</div>
+      
+      <label style="font-size:0.8rem; color:var(--primary); margin-bottom:4px; display:block;">Anonymous Name</label>
+      <input type="text" id="edit-name" class="vent-textarea" style="min-height:40px; margin-bottom:16px;">
+      
+      <label style="font-size:0.8rem; color:var(--primary); margin-bottom:4px; display:block;">Bio</label>
+      <textarea id="edit-bio" class="vent-textarea" style="min-height:80px; margin-bottom:16px;"></textarea>
+      
+      <label style="font-size:0.8rem; color:var(--primary); margin-bottom:8px; display:block;">Avatar</label>
+      <div id="emoji-grid" class="emoji-grid" style="margin-bottom:20px;"></div>
+      
+      <button class="btn-primary" id="saveProfileBtn">Save Profile</button>
+    </div>
+  </section>
+
+  <!-- SETTINGS PAGE -->
+  <section id="page-settings" class="page">
+    <div class="card">
+      <div class="card-title">Settings</div>
+      
+      <div style="display:flex; justify-content:space-between; align-items:center; margin: 20px 0;">
+        <div>
+          <div style="font-weight:500;">Push Notifications</div>
+          <div style="font-size:0.75rem; color:var(--text-dim);">Alerts for replies</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="set-notifications">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      
+      <div style="display:flex; justify-content:space-between; align-items:center; margin: 20px 0;">
+        <div>
+          <div style="font-weight:500;">Public Profile</div>
+          <div style="font-size:0.75rem; color:var(--text-dim);">Others see your stats</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="set-privacy">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      
+      <button class="btn-primary" id="saveSettingsBtn">Apply</button>
+    </div>
+  </section>
+
+  <!-- BOTTOM NAV -->
   <nav class="bottom-nav">
-    <button class="nav-btn active" data-page="vent">
-      <span class="nav-icon">✍️</span>
-      <span class="nav-label">Vent</span>
-      <span class="nav-dot"></span>
-    </button>
-    <button class="nav-btn" data-page="feed">
-      <span class="nav-icon">🌍</span>
-      <span class="nav-label">Feed</span>
-      <span class="nav-dot"></span>
-    </button>
-    <button class="nav-btn" data-page="leaderboard">
-      <span class="nav-icon">🏆</span>
-      <span class="nav-label">Top</span>
-      <span class="nav-dot"></span>
-    </button>
-    <button class="nav-btn" data-page="profile">
-      <span class="nav-icon">👤</span>
-      <span class="nav-label">Me</span>
-      <span class="nav-dot"></span>
-    </button>
-    <button class="nav-btn" data-page="settings">
-      <span class="nav-icon">⚙️</span>
-      <span class="nav-label">Settings</span>
-      <span class="nav-dot"></span>
-    </button>
+    <button class="nav-btn active" data-page="vent"><span class="nav-icon">✍️</span>Vent</button>
+    <button class="nav-btn" data-page="feed"><span class="nav-icon">🌍</span>Feed</button>
+    <button class="nav-btn" data-page="leaderboard"><span class="nav-icon">🏆</span>Top</button>
+    <button class="nav-btn" data-page="profile"><span class="nav-icon">👤</span>Me</button>
+    <button class="nav-btn" data-page="settings"><span class="nav-icon">⚙️</span>Settings</button>
   </nav>
 
-</div><!-- /#mainApp -->
+</div>
 
-<!-- Toast -->
-<div id="toast"></div>
+<div id="toast" class="toast"></div>
 
 <script>
 'use strict';
-console.log('[CV] Script loaded');
 
-// ─────────────────────────────────────────
-//  CONFIGURATION
-// ─────────────────────────────────────────
 const CONFIG = {
   botUsername: 'SLOT_BOT',
   apiBase: window.location.origin,
   categories: [
-    ['PrayForMe',          '🙏 Pray For Me'],
-    ['Bible',              '📖 Bible Study'],
-    ['WorkLife',           '💼 Work & Life'],
-    ['SpiritualLife',      '🕊 Spiritual Life'],
-    ['ChristianChallenges','⚔️ Challenges'],
-    ['Relationship',       '❤️ Relationship'],
-    ['Marriage',           '💍 Marriage'],
-    ['Youth',              '🧑‍🤝‍🧑 Youth'],
-    ['Finance',            '💰 Finance'],
-    ['WorshipMusic',       '🎶 Worship'],
-    ['Family',             '🏠 Family'],
-    ['Testimony',          '🙌 Testimony'],
-    ['AddictionRecovery',  '💊 Recovery'],
-    ['BibleQuestion',      '📖 Bible Q&A'],
-    ['Other',              '🔖 Other'],
+    ['PrayForMe', '🙏 Pray For Me'], ['Bible', '📖 Bible Study'], ['WorkLife', '💼 Work & Life'],
+    ['SpiritualLife', '🕊 Spiritual Life'], ['ChristianChallenges', '⚔️ Challenges'], 
+    ['Relationship', '❤️ Relationship'], ['Marriage', '💍 Marriage'], ['Youth', '🧑‍🤝‍🧑 Youth'],
+    ['Finance', '💰 Finance'], ['WorshipMusic', '🎶 Worship'], ['Family', '🏠 Family'],
+    ['Testimony', '🙌 Testimony'], ['AddictionRecovery', '💊 Recovery'], ['BibleQuestion', '📖 Bible Q&A'],
+    ['Other', '🔖 Other']
   ],
   emojis: ['👨', '👩', '🕊️', '🙏', '✝️', '📖', '❤️', '🌟', '🛡️', '⚔️', '⛪', '🎹', '👶', '🧑', '👴']
 };
 
-// ─────────────────────────────────────────
-//  STATE
-// ─────────────────────────────────────────
 const state = {
-  userId: null,
-  currentPage: 'vent',
-  feedPage: 1,
-  feedLoading: false,
-  feedHasMore: true,
-  currentPostId: null,
-  selectedCategories: new Set(),
-  selectedEmoji: null,
-  profileData: null
+  userId: null, currentPage: 'vent', feedPage: 1, feedHasMore: true, feedLoading: false,
+  searchQuery: '', currentPostId: null, selectedCategories: new Set(),
+  profileData: null, selectedEmoji: null
 };
 
-// ─────────────────────────────────────────
-//  UTILITIES
-// ─────────────────────────────────────────
 function esc(str) {
-  if (!str) return '';
   const d = document.createElement('div');
-  d.textContent = str;
+  d.textContent = str || '';
   return d.innerHTML;
 }
-
-function timeAgo(ts) {
-  try {
-    const date = typeof ts === 'string' ? new Date(ts.replace(' ', 'T')) : new Date(ts);
-    const diff = (Date.now() - date.getTime()) / 1000;
-    if (diff < 60)   return 'just now';
-    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-    return Math.floor(diff / 86400) + 'd ago';
-  } catch(e) { return ''; }
-}
-
-function toast(msg, type = 'info') {
+function toast(msg) {
   const el = document.getElementById('toast');
-  if (!el) return;
-  el.textContent = msg;
-  el.className = 'show ' + type;
-  clearTimeout(el._t);
-  el._t = setTimeout(() => { el.className = ''; }, 3000);
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 3000);
 }
-
 async function apiFetch(path, opts = {}) {
-  const url = CONFIG.apiBase + path;
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts
-  });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
+  const res = await fetch(CONFIG.apiBase + path, { headers: {'Content-Type': 'application/json'}, ...opts });
+  const data = await res.json();
+  if(!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+  return data;
 }
 
-function formatAura(pts) {
-  if (pts < 0)   return '🔴';
-  if (pts >= 500) return '👑';
-  if (pts >= 100) return '🟣';
-  if (pts >= 50)  return '🔵';
-  if (pts >= 25)  return '🟢';
-  if (pts >= 10)  return '🟡';
-  return '⚪️';
-}
-
-// ─────────────────────────────────────────
-//  NAVIGATION
-// ─────────────────────────────────────────
+// NAVIGATION
 function switchPage(name) {
-  console.log('[CV] switchPage →', name);
   state.currentPage = name;
-
-  // Hide all pages
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  // Show target
-  const target = document.getElementById('page-' + name);
-  if (target) target.classList.add('active');
-
-  // Update nav buttons
-  document.querySelectorAll('.nav-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.page === name);
-  });
-
-  // Lazy-load data per page
-  if (name === 'feed' && state.feedPage === 1) loadFeed(false);
-  if (name === 'leaderboard') loadLeaderboard();
-  if (name === 'profile' && state.userId) loadProfile();
-  if (name === 'settings' && state.userId) loadSettings();
+  const t = document.getElementById('page-' + name);
+  if(t) t.classList.add('active');
+  
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === name));
+  
+  if(name === 'feed' && state.feedPage === 1) loadFeed();
+  if(name === 'leaderboard') loadLeaderboard();
+  if(name === 'profile' && state.userId) loadProfile();
+  if(name === 'settings' && state.userId) loadSettings();
+  window.scrollTo(0,0);
 }
 
-// ─────────────────────────────────────────
-//  CATEGORY CHECKBOXES
-// ─────────────────────────────────────────
+// VENT PAGE
 function renderCategories() {
-  console.log('[CV] renderCategories()');
   const grid = document.getElementById('categoriesGrid');
-  if (!grid) { console.error('[CV] categoriesGrid not found!'); return; }
-
-  grid.innerHTML = '';
-  CONFIG.categories.forEach(([code, label]) => {
-    const item = document.createElement('div');
-    item.className = 'cat-item';
-    item.dataset.code = code;
-    item.innerHTML = `
-      <div class="cat-check"></div>
-      <div class="cat-label">${esc(label)}</div>
-    `;
-    item.addEventListener('click', () => toggleCategory(code, item));
-    grid.appendChild(item);
-  });
-  console.log('[CV] categories rendered:', CONFIG.categories.length);
-}
-
-function toggleCategory(code, el) {
-  if (state.selectedCategories.has(code)) {
-    state.selectedCategories.delete(code);
-    el.classList.remove('selected');
-    el.querySelector('.cat-check').textContent = '';
-  } else {
-    state.selectedCategories.add(code);
-    el.classList.add('selected');
-    el.querySelector('.cat-check').textContent = '✓';
-  }
-}
-
-// ─────────────────────────────────────────
-//  VENT SUBMISSION
-// ─────────────────────────────────────────
-async function submitVent() {
-  const input = document.getElementById('ventInput');
-  const btn   = document.getElementById('submitVentBtn');
-  if (!input || !btn) return;
-
-  const content = input.value.trim();
-  const categories = Array.from(state.selectedCategories);
-
-  if (!content) { toast('Please write something first.', 'error'); return; }
-  if (categories.length === 0) { toast('Pick at least one category.', 'error'); return; }
-  if (!state.userId) { toast('Not authenticated. Please reopen via the bot.', 'error'); return; }
-
-  btn.disabled = true;
-  btn.textContent = 'Posting…';
-
-  try {
-    const data = await apiFetch('/api/mini-app/submit-vent', {
-      method: 'POST',
-      body: JSON.stringify({ user_id: state.userId, content, categories })
-    });
-
-    if (data.success) {
-      toast('✅ Posted! Awaiting approval.', 'success');
-      input.value = '';
-      document.getElementById('charCount').textContent = '0 / 5000';
-      state.selectedCategories.clear();
-      document.querySelectorAll('.cat-item').forEach(el => {
-        el.classList.remove('selected');
-        el.querySelector('.cat-check').textContent = '';
-      });
-      // Reset feed so next visit refreshes
-      state.feedPage = 1;
-      state.feedHasMore = true;
-    } else {
-      toast(data.error || 'Failed to post.', 'error');
-    }
-  } catch(e) {
-    console.error('[CV] submitVent error:', e);
-    toast('Network error. Try again.', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Post Anonymously';
-  }
-}
-
-// ─────────────────────────────────────────
-//  FEED
-// ─────────────────────────────────────────
-function feedSkeleton() {
-  return '<div class="skeleton"></div>'.repeat(3);
-}
-
-async function loadFeed(append = false) {
-  if (state.feedLoading) return;
-  state.feedLoading = true;
-
-  const container = document.getElementById('feedContainer');
-  const loadMoreArea = document.getElementById('loadMoreArea');
-  if (!container) { state.feedLoading = false; return; }
-
-  if (!append) {
-    container.innerHTML = feedSkeleton();
-    if (loadMoreArea) loadMoreArea.style.display = 'none';
-  }
-
-  try {
-    const data = await apiFetch(
-      `/api/mini-app/get-posts?page=${state.feedPage}&per_page=10&user_id=${state.userId || ''}`
-    );
-
-    if (!data.success) throw new Error(data.error || 'API error');
-
-    const posts = data.data || [];
-    state.feedHasMore = data.has_more === true;
-
-    if (!append) container.innerHTML = '';
-
-    if (posts.length === 0 && !append) {
-      container.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-icon">🕊️</div>
-          <p>No posts yet.<br>Be the first to share!</p>
-        </div>`;
-    } else {
-      posts.forEach(post => {
-        container.insertAdjacentHTML('beforeend', renderPostCard(post));
-      });
-
-      // Attach "Read Full" buttons
-      container.querySelectorAll('[data-open-post]').forEach(btn => {
-        btn.addEventListener('click', () => openPostDetail(parseInt(btn.dataset.openPost)));
-      });
-    }
-
-    if (loadMoreArea) {
-      loadMoreArea.style.display = state.feedHasMore ? 'block' : 'none';
-    }
-    if (state.feedHasMore) state.feedPage++;
-
-  } catch(e) {
-    console.error('[CV] loadFeed error:', e);
-    if (!append) container.innerHTML = `<div class="empty-state"><p>Failed to load posts.<br>Pull down to retry.</p></div>`;
-    toast('Could not load feed.', 'error');
-  } finally {
-    state.feedLoading = false;
-  }
-}
-
-function renderPostCard(post) {
-  const author = post.author || {};
-  const avatar = author.avatar || (author.sex === '👩' ? '👩' : '👨');
-  const cats = (post.categories || []).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
-  const content = esc(post.content || '');
-  const aura = author.aura || formatAura(0);
-
-  return `
-    <div class="post-card">
-      <div class="post-meta">
-        <div class="post-avatar">${esc(avatar)}</div>
-        <div class="post-author">${esc(author.name || 'Anonymous')} ${esc(aura)}</div>
-        <div class="post-time">${esc(post.time_ago || '')}</div>
-      </div>
-      ${cats ? `<div class="cat-badges">${cats}</div>` : ''}
-      <div class="post-content truncated">${content}</div>
-      <div class="post-footer">
-        <div class="post-comment-count">💬 ${post.comments || 0} responses</div>
-        <button class="btn-read-more" data-open-post="${post.id}">Read &amp; Reply →</button>
-      </div>
+  grid.innerHTML = CONFIG.categories.map(([code, label]) => `
+    <div class="cat-btn" data-code="${code}">
+      <div class="cat-icon-check"></div>
+      ${esc(label)}
     </div>
-  `;
-}
-
-// ─────────────────────────────────────────
-//  POST DETAIL
-// ─────────────────────────────────────────
-async function openPostDetail(postId) {
-  console.log('[CV] openPostDetail:', postId);
-  state.currentPostId = postId;
-
-  // Show detail page
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-detail').classList.add('active');
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-
-  const postBox = document.getElementById('detailPostBox');
-  const commentsBox = document.getElementById('detailCommentsBox');
-  const composeBox = document.getElementById('detailComposeBox');
-
-  postBox.innerHTML = '<div class="skeleton" style="height:160px;"></div>';
-  commentsBox.innerHTML = '<div class="skeleton" style="height:80px;"></div>';
-  if (composeBox) composeBox.style.display = 'none';
-
-  // Load post
-  try {
-    const data = await apiFetch(`/api/mini-app/post/${postId}`);
-    if (data.success) {
-      const post = data.data;
-      const author = post.author || {};
-      const avatar = author.avatar || '👤';
-      const cats = (post.categories || []).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
-
-      postBox.innerHTML = `
-        <div class="card">
-          <div class="post-meta">
-            <div class="post-avatar">${esc(avatar)}</div>
-            <div class="post-author">${esc(author.name || 'Anonymous')} ${esc(author.aura || '')}</div>
-            <div class="post-time">${esc(post.time_ago || '')}</div>
-          </div>
-          ${cats ? `<div class="cat-badges">${cats}</div>` : ''}
-          <div class="post-content">${esc(post.content || '')}</div>
-        </div>
-      `;
-    } else {
-      postBox.innerHTML = '<p style="color:var(--text-muted);text-align:center;">Post not found.</p>';
-    }
-  } catch(e) {
-    console.error('[CV] load post error:', e);
-    postBox.innerHTML = '<p style="color:var(--text-muted);text-align:center;">Failed to load post.</p>';
-  }
-
-  // Load comments
-  await loadComments(postId);
-  if (composeBox) composeBox.style.display = 'block';
-}
-
-async function loadComments(postId) {
-  const box = document.getElementById('detailCommentsBox');
-  if (!box) return;
-
-  try {
-    const data = await apiFetch(`/api/mini-app/post/${postId}/comments`);
-    if (!data.success) throw new Error(data.error);
-
-    const comments = data.data || [];
-    if (comments.length === 0) {
-      box.innerHTML = `<div class="empty-state"><div class="empty-icon">🤍</div><p>No responses yet.<br>Be the first to respond.</p></div>`;
-      return;
-    }
-
-    // Build tree
-    const map = {};
-    const roots = [];
-    comments.forEach(c => { map[c.id] = { ...c, children: [] }; });
-    comments.forEach(c => {
-      if (c.parent_id && map[c.parent_id]) {
-        map[c.parent_id].children.push(map[c.id]);
+  `).join('');
+  
+  grid.querySelectorAll('.cat-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const c = btn.dataset.code;
+      if(state.selectedCategories.has(c)) {
+        state.selectedCategories.delete(c); btn.classList.remove('selected');
       } else {
-        roots.push(map[c.id]);
+        state.selectedCategories.add(c); btn.classList.add('selected');
       }
+      btn.querySelector('.cat-icon-check').textContent = state.selectedCategories.has(c) ? '✓' : '';
     });
-
-    box.innerHTML = roots.map(c => renderComment(c, 0)).join('');
-
-    // Attach reply buttons
-    box.querySelectorAll('[data-reply-to]').forEach(btn => {
-      btn.addEventListener('click', () => toggleReplyBox(btn.dataset.replyTo));
-    });
-    box.querySelectorAll('[data-send-reply]').forEach(btn => {
-      btn.addEventListener('click', () => sendReply(btn.dataset.sendReply));
-    });
-    box.querySelectorAll('[data-cancel-reply]').forEach(btn => {
-      btn.addEventListener('click', () => toggleReplyBox(btn.dataset.cancelReply, true));
-    });
-
-  } catch(e) {
-    console.error('[CV] loadComments error:', e);
-    box.innerHTML = '<p style="color:var(--text-muted);text-align:center;">Failed to load responses.</p>';
-  }
+  });
 }
 
-function renderComment(comment, depth) {
-  const author = comment.author || {};
-  const avatar = author.avatar || '👤';
-  const replyClass = depth > 0 ? 'is-reply' : '';
-  const children = (comment.children || []).map(c => renderComment(c, depth + 1)).join('');
+async function submitVent() {
+  const text = document.getElementById('ventInput').value.trim();
+  const cats = Array.from(state.selectedCategories);
+  if(!text) return toast('Please write something');
+  if(!cats.length) return toast('Select at least one category');
+  
+  const btn = document.getElementById('submitVentBtn');
+  btn.disabled = true; btn.textContent = 'Posting...';
+  
+  try {
+    await apiFetch('/api/mini-app/submit-vent', {
+      method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, categories: cats })
+    });
+    toast('✅ Vent submitted for approval!');
+    document.getElementById('ventInput').value = '';
+    state.selectedCategories.clear();
+    document.querySelectorAll('.cat-btn').forEach(b => { b.classList.remove('selected'); b.querySelector('.cat-icon-check').textContent=''; });
+    document.getElementById('charCount').textContent = '0/5000';
+    state.feedPage = 1;
+  } catch(e) { toast(e.message); }
+  finally { btn.disabled = false; btn.textContent = 'Post Anonymously'; }
+}
 
-  return `
-    <div class="comment-item ${replyClass}">
-      <div class="comment-avatar">${esc(avatar)}</div>
-      <div class="comment-body">
-        <div class="comment-header">
-          <div class="comment-author">${esc(author.name || 'Anonymous')} ${esc(author.aura || '')}</div>
-          <div class="comment-time">${esc(comment.time_ago || '')}</div>
-        </div>
-        <div class="comment-text">${esc(comment.content || '')}</div>
-        <div class="comment-actions">
-          <button class="comment-action-btn" data-reply-to="${comment.id}">↩ Reply</button>
-        </div>
-        <div class="inline-reply" id="reply-box-${comment.id}">
-          <textarea id="reply-text-${comment.id}" placeholder="Write a reply…"></textarea>
-          <div class="inline-reply-btns">
-            <button class="inline-cancel" data-cancel-reply="${comment.id}">Cancel</button>
-            <button class="inline-send" data-send-reply="${comment.id}">Send</button>
+// FEED PAGE
+async function loadFeed(append = false) {
+  if(state.feedLoading) return;
+  state.feedLoading = true;
+  const container = document.getElementById('feedContainer');
+  const loadMore = document.getElementById('loadMoreArea');
+  
+  if(!append) { container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>'; loadMore.style.display='none'; }
+  
+  try {
+    let url = `/api/mini-app/get-posts?page=${state.feedPage}&user_id=${state.userId}`;
+    if(state.searchQuery) url = `/api/mini-app/search?q=${encodeURIComponent(state.searchQuery)}&page=${state.feedPage}&user_id=${state.userId}`;
+    
+    const data = await apiFetch(url);
+    const posts = data.data || [];
+    state.feedHasMore = data.has_more;
+    
+    if(!append) container.innerHTML = '';
+    if(posts.length === 0 && !append) container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-dim);">No posts found.</div>';
+    
+    posts.forEach(p => {
+      const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
+      const unread = p.unread_comments > 0 ? `<span class="unread-badge">${p.unread_comments} new</span>` : '';
+      
+      container.insertAdjacentHTML('beforeend', `
+        <div class="card" style="cursor:pointer;" onclick="openPost(${p.id})">
+          <div class="post-header">
+            <div class="avatar">${esc(p.author?.avatar || p.author?.sex || '👤')}</div>
+            <div>
+              <div class="post-author">${esc(p.author?.name || 'Anonymous')} ${esc(p.author?.aura||'')}</div>
+              <div class="post-time">${esc(p.time_ago)}</div>
+            </div>
+          </div>
+          <div class="cat-badges">${cats}</div>
+          <div class="post-content truncated">${esc(p.content)}</div>
+          <div class="post-footer">
+            <span style="font-size:0.8rem; color:var(--text-dim);">💬 ${p.comments} replies ${unread}</span>
+            <span style="font-size:0.8rem; color:var(--primary);">Read →</span>
           </div>
         </div>
+      `);
+    });
+    
+    loadMore.style.display = state.feedHasMore ? 'block' : 'none';
+    if(state.feedHasMore) state.feedPage++;
+  } catch(e) {
+    if(!append) container.innerHTML = '<div style="text-align:center; color:var(--text-dim);">Failed to load.</div>';
+    toast('Error loading feed');
+  } finally { state.feedLoading = false; }
+}
+
+// POST DETAIL
+async function openPost(id) {
+  state.currentPostId = id;
+  switchPage('detail');
+  const box = document.getElementById('detailPostBox');
+  const commBox = document.getElementById('detailCommentsBox');
+  box.innerHTML = '<div class="skeleton"></div>'; commBox.innerHTML = '';
+  
+  try {
+    const data = await apiFetch(`/api/mini-app/post/${id}`);
+    const p = data.data;
+    const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
+    
+    box.innerHTML = `
+      <div class="card">
+        <div class="post-header">
+          <div class="avatar">${esc(p.author?.avatar || p.author?.sex || '👤')}</div>
+          <div>
+            <div class="post-author">${esc(p.author?.name || 'Anonymous')} ${esc(p.author?.aura||'')}</div>
+            <div class="post-time">${esc(p.time_ago)}</div>
+          </div>
+        </div>
+        <div class="cat-badges">${cats}</div>
+        <div class="post-content">${esc(p.content)}</div>
       </div>
-    </div>
-    ${children}
-  `;
+    `;
+    await loadComments(id);
+  } catch(e) { box.innerHTML = 'Error loading post.'; }
 }
 
-function toggleReplyBox(commentId, forceClose = false) {
-  const box = document.getElementById('reply-box-' + commentId);
-  if (!box) return;
-  const isOpen = box.classList.contains('open');
-  if (forceClose || isOpen) {
-    box.classList.remove('open');
-  } else {
-    box.classList.add('open');
-    const ta = document.getElementById('reply-text-' + commentId);
-    if (ta) ta.focus();
-  }
-}
-
-async function sendReply(parentCommentId) {
-  const ta = document.getElementById('reply-text-' + parentCommentId);
-  if (!ta) return;
-  const content = ta.value.trim();
-  if (!content) { toast('Write something first.', 'error'); return; }
-  if (!state.userId) { toast('Not authenticated.', 'error'); return; }
-
+async function loadComments(id) {
+  const box = document.getElementById('detailCommentsBox');
+  box.innerHTML = '<div class="skeleton"></div>';
   try {
-    const data = await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
-      method: 'POST',
-      body: JSON.stringify({
-        user_id: state.userId,
-        content,
-        parent_comment_id: parseInt(parentCommentId)
-      })
+    const data = await apiFetch(`/api/mini-app/post/${id}/comments`);
+    const comments = data.data || [];
+    
+    if(!comments.length) { box.innerHTML = '<div style="text-align:center; color:var(--text-dim);">No replies yet.</div>'; return; }
+    
+    const map = {}; const roots = [];
+    comments.forEach(c => map[c.id] = {...c, children: []});
+    comments.forEach(c => {
+      if(c.parent_id && map[c.parent_id]) map[c.parent_id].children.push(map[c.id]);
+      else roots.push(map[c.id]);
     });
-    if (data.success) {
-      ta.value = '';
-      toggleReplyBox(parentCommentId, true);
-      toast('Reply posted!', 'success');
-      await loadComments(state.currentPostId);
-    } else {
-      toast(data.error || 'Failed to post reply.', 'error');
-    }
-  } catch(e) {
-    console.error('[CV] sendReply error:', e);
-    toast('Network error.', 'error');
-  }
+    
+    const renderC = (c, depth) => {
+      const isReply = depth > 0 ? 'is-reply' : '';
+      const isMine = String(c.author?.id || c.author_id) === String(state.userId) || c.author?.is_me;
+      
+      let actions = `<button class="action-btn" onclick="toggleReply(${c.id})">Reply</button>`;
+      if(isMine) {
+        actions += `
+          <button class="action-btn" onclick="editComment(${c.id}, '${esc(c.content.replace(/'/g, "\\'"))}')">Edit</button>
+          <button class="action-btn" style="color:#e74c3c;" onclick="deleteComment(${c.id})">Delete</button>
+        `;
+      }
+      
+      const children = c.children.map(ch => renderC(ch, depth+1)).join('');
+      return `
+        <div class="comment-item ${isReply}">
+          <div class="avatar" style="width:28px; height:28px; font-size:14px;">${esc(c.author?.avatar || '👤')}</div>
+          <div class="comment-body">
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+              <span style="font-size:0.8rem; font-weight:600; color:var(--primary);">${esc(c.author?.name)} ${esc(c.author?.aura)}</span>
+              <span style="font-size:0.7rem; color:var(--text-dim);">${esc(c.time_ago)}</span>
+            </div>
+            <div style="font-size:0.85rem; line-height:1.4;" id="comment-content-${c.id}">${esc(c.content)}</div>
+            <div class="comment-actions">${actions}</div>
+            
+            <div class="inline-reply-box" id="reply-box-${c.id}">
+              <textarea class="vent-textarea" style="min-height:50px; margin-bottom:4px;" id="reply-text-${c.id}"></textarea>
+              <div style="text-align:right;">
+                <button class="btn-ghost" style="padding:4px 8px; font-size:0.7rem;" onclick="toggleReply(${c.id})">Cancel</button>
+                <button class="btn-primary" style="padding:4px 12px; width:auto; font-size:0.7rem; display:inline-block;" onclick="sendReply(${c.id})">Send</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        ${children}
+      `;
+    };
+    box.innerHTML = roots.map(c => renderC(c, 0)).join('');
+  } catch(e) { box.innerHTML = 'Error loading comments.'; }
 }
 
-async function postTopLevelComment() {
-  const input = document.getElementById('commentInput');
-  const btn   = document.getElementById('postCommentBtn');
-  if (!input || !btn) return;
-
-  const content = input.value.trim();
-  if (!content) { toast('Write something first.', 'error'); return; }
-  if (!state.userId) { toast('Not authenticated.', 'error'); return; }
-
+async function postComment() {
+  const text = document.getElementById('commentInput').value.trim();
+  if(!text) return toast('Write something');
+  const btn = document.getElementById('postCommentBtn');
   btn.disabled = true;
-  btn.textContent = 'Sending…';
-
   try {
-    const data = await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
-      method: 'POST',
-      body: JSON.stringify({ user_id: state.userId, content, parent_comment_id: 0 })
+    await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
+      method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: 0 })
     });
-    if (data.success) {
-      input.value = '';
-      toast('Response posted!', 'success');
-      await loadComments(state.currentPostId);
-    } else {
-      toast(data.error || 'Failed.', 'error');
-    }
-  } catch(e) {
-    console.error('[CV] postComment error:', e);
-    toast('Network error.', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Send Response';
-  }
+    document.getElementById('commentInput').value = '';
+    toast('Reply posted');
+    await loadComments(state.currentPostId);
+  } catch(e) { toast(e.message); }
+  finally { btn.disabled = false; }
 }
 
-// ─────────────────────────────────────────
-//  LEADERBOARD
-// ─────────────────────────────────────────
-async function loadLeaderboard() {
-  const container = document.getElementById('leaderboardContainer');
-  if (!container) return;
-  container.innerHTML = '<div class="skeleton"></div>';
+function toggleReply(id) {
+  const box = document.getElementById('reply-box-'+id);
+  box.classList.toggle('open');
+}
 
+async function sendReply(parentId) {
+  const text = document.getElementById('reply-text-'+parentId).value.trim();
+  if(!text) return toast('Write something');
+  try {
+    await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
+      method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: parentId })
+    });
+    toast('Reply posted');
+    await loadComments(state.currentPostId);
+  } catch(e) { toast(e.message); }
+}
+
+async function editComment(id, oldText) {
+  const newText = prompt("Edit comment:", oldText);
+  if(newText === null || newText.trim() === '' || newText.trim() === oldText) return;
+  try {
+    await apiFetch(`/api/mini-app/comment/${id}`, {
+      method: 'PUT', body: JSON.stringify({ user_id: state.userId, content: newText.trim() })
+    });
+    toast('Comment edited');
+    await loadComments(state.currentPostId);
+  } catch(e) { toast(e.message); }
+}
+
+async function deleteComment(id) {
+  if(!confirm("Delete this comment?")) return;
+  try {
+    await apiFetch(`/api/mini-app/comment/${id}`, {
+      method: 'DELETE', body: JSON.stringify({ user_id: state.userId })
+    });
+    toast('Comment deleted');
+    await loadComments(state.currentPostId);
+  } catch(e) { toast(e.message); }
+}
+
+// LEADERBOARD
+async function loadLeaderboard() {
+  const box = document.getElementById('leaderboardContainer');
+  box.innerHTML = '<div class="skeleton"></div>';
   try {
     const data = await apiFetch('/api/mini-app/leaderboard');
-    if (!data.success) throw new Error(data.error);
-
-    const users = data.data || [];
-    if (users.length === 0) {
-      container.innerHTML = '<div class="empty-state"><p>No data yet.</p></div>';
-      return;
-    }
-
-    const rankClass = i => ['top1','top2','top3'][i] || '';
-    const rankEmoji = i => ['👑','🥈','🥉'][i] || (i + 1);
-
-    container.innerHTML = users.map((u, i) => `
-      <div class="lb-item">
-        <div class="lb-rank ${rankClass(i)}">${rankEmoji(i)}</div>
-        <div class="lb-avatar">${esc(u.avatar || (u.sex === '👩' ? '👩' : '👨'))}</div>
-        <div class="lb-info">
-          <div class="lb-name">${esc(u.name || 'Anonymous')}</div>
-          <div class="lb-aura">${esc(u.aura || '')}</div>
+    box.innerHTML = (data.data||[]).map((u,i) => `
+      <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
+        <div style="width:24px; font-weight:700; color:${i===0?'#FFD700':i===1?'#C0C0C0':i===2?'#CD7F32':'var(--text-dim)'};">${i<3?['👑','🥈','🥉'][i]:i+1}</div>
+        <div class="avatar">${esc(u.avatar||'👤')}</div>
+        <div style="flex:1;">
+          <div style="font-weight:600; font-size:0.9rem;">${esc(u.name)}</div>
+          <div style="font-size:0.75rem; color:var(--text-dim);">${esc(u.aura)}</div>
         </div>
-        <div class="lb-pts">${esc(String(u.points || 0))}</div>
+        <div style="font-weight:700; color:var(--primary);">${u.points} pts</div>
       </div>
     `).join('');
-  } catch(e) {
-    console.error('[CV] loadLeaderboard error:', e);
-    container.innerHTML = '<div class="empty-state"><p>Failed to load.</p></div>';
-  }
+  } catch(e) { box.innerHTML = 'Error loading leaderboard.'; }
 }
 
-// ─────────────────────────────────────────
-//  PROFILE
-// ─────────────────────────────────────────
+// PROFILE
 async function loadProfile() {
-  const container = document.getElementById('profileContainer');
-  if (!container || !state.userId) return;
-  container.innerHTML = '<div class="skeleton" style="height:180px;"></div>';
-
+  const box = document.getElementById('profileContainer');
+  box.innerHTML = '<div class="skeleton" style="height:200px;"></div>';
   try {
     const data = await apiFetch(`/api/mini-app/profile/${state.userId}`);
-    if (!data.success) throw new Error(data.error);
-
-    const p = data.data;
-    state.profileData = p; // Store for editing
+    const p = data.data; state.profileData = p;
     
-    container.innerHTML = `
-      <div class="profile-hero">
-        <div style="position:absolute; top:20px; right:20px;">
-          <button class="btn-ghost" style="padding:6px 12px; font-size:0.7rem;" onclick="switchPage('edit-profile')">Edit Profile</button>
-        </div>
-        <div class="profile-avatar">${esc(p.avatar || (p.sex === '👩' ? '👩' : '👨'))}</div>
-        <div class="profile-name">${esc(p.name || 'Anonymous')}</div>
-        <div class="profile-aura">${esc(p.aura || '')} ${esc(String(p.rating || 0))} pts</div>
+    box.innerHTML = `
+      <div class="card" style="text-align:center;">
+        <button class="btn-ghost" onclick="setupEditProfile()" style="position:absolute; right:16px; top:16px;">Edit</button>
+        <div class="avatar" style="width:80px; height:80px; font-size:32px; margin:0 auto 12px; border:2px solid var(--primary);">${esc(p.avatar||'👤')}</div>
+        <div style="font-size:1.3rem; font-weight:700; color:var(--primary);">${esc(p.name)}</div>
+        <div style="font-size:0.85rem; color:var(--text-dim); margin-bottom:16px;">${esc(p.aura)} ${p.rating} pts</div>
+        ${p.bio ? `<div style="font-style:italic; font-size:0.9rem; margin-bottom:20px;">"${esc(p.bio)}"</div>` : ''}
         
-        ${p.bio ? `<div style="font-size:0.8rem; color:var(--text-dim); margin-bottom:16px; font-style:italic;">"${esc(p.bio)}"</div>` : ''}
-
-        <div class="profile-stats">
-          <div class="stat-box">
-            <div class="stat-num">${esc(String(p.stats?.posts || 0))}</div>
-            <div class="stat-label">Vents</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-num">${esc(String(p.stats?.comments || 0))}</div>
-            <div class="stat-label">Replies</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-num">${esc(String(p.stats?.followers || 0))}</div>
-            <div class="stat-label">Followers</div>
-          </div>
+        <div style="display:flex; justify-content:space-around; border-top:1px solid var(--border); padding-top:16px;">
+          <div><div style="font-size:1.2rem; font-weight:700; color:var(--primary);">${p.stats?.posts||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Vents</div></div>
+          <div><div style="font-size:1.2rem; font-weight:700; color:var(--primary);">${p.stats?.comments||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Replies</div></div>
+          <div><div style="font-size:1.2rem; font-weight:700; color:var(--primary);">${p.stats?.followers||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Followers</div></div>
         </div>
       </div>
     `;
-    
-    if (state.currentPage === 'edit-profile') populateEditProfile();
-  } catch(e) {
-    console.error('[CV] loadProfile error:', e);
-    container.innerHTML = '<div class="empty-state"><p>Failed to load profile.</p></div>';
-  }
+  } catch(e) { box.innerHTML = 'Error loading profile.'; }
 }
 
-// ─────────────────────────────────────────
-//  EDIT PROFILE
-// ─────────────────────────────────────────
-function populateEditProfile() {
-  const p = state.profileData;
-  if (!p) return;
-  
+function setupEditProfile() {
+  switchPage('edit-profile');
+  const p = state.profileData; if(!p) return;
   document.getElementById('edit-name').value = p.name || '';
   document.getElementById('edit-bio').value = p.bio || '';
   state.selectedEmoji = p.avatar;
   
   const grid = document.getElementById('emoji-grid');
-  grid.innerHTML = '';
-  CONFIG.emojis.forEach(emoji => {
-    const item = document.createElement('div');
-    item.className = 'emoji-item' + (state.selectedEmoji === emoji ? ' selected' : '');
-    item.textContent = emoji;
-    item.onclick = () => {
-      document.querySelectorAll('.emoji-item').forEach(el => el.classList.remove('selected'));
-      item.classList.add('selected');
-      state.selectedEmoji = emoji;
-    };
-    grid.appendChild(item);
+  grid.innerHTML = CONFIG.emojis.map(e => `<div class="emoji-item ${e===state.selectedEmoji?'selected':''}" data-e="${e}">${e}</div>`).join('');
+  grid.querySelectorAll('.emoji-item').forEach(el => el.onclick = () => {
+    grid.querySelectorAll('.emoji-item').forEach(i => i.classList.remove('selected'));
+    el.classList.add('selected'); state.selectedEmoji = el.dataset.e;
   });
 }
 
 async function saveProfile() {
   const name = document.getElementById('edit-name').value.trim();
   const bio = document.getElementById('edit-bio').value.trim();
-  const btn = document.getElementById('saveProfileBtn');
+  if(!name) return toast('Name required');
   
-  if (!name) { toast('Name is required.', 'error'); return; }
-  
-  btn.disabled = true;
-  btn.textContent = 'Saving...';
-  
+  const btn = document.getElementById('saveProfileBtn'); btn.disabled = true;
   try {
-    const data = await apiFetch(`/api/mini-app/profile/${state.userId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ name, bio, avatar: state.selectedEmoji })
+    await apiFetch(`/api/mini-app/profile/${state.userId}`, {
+      method: 'PUT', body: JSON.stringify({ name, bio, avatar: state.selectedEmoji })
     });
-    
-    if (data.success) {
-      toast('Profile updated!', 'success');
-      await loadProfile();
-      switchPage('profile');
-    } else {
-      toast(data.error || 'Update failed.', 'error');
-    }
-  } catch(e) {
-    toast('Network error.', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Save Profile Changes';
-  }
+    toast('Profile updated');
+    switchPage('profile');
+  } catch(e) { toast(e.message); }
+  finally { btn.disabled = false; }
 }
 
-// ─────────────────────────────────────────
-//  SETTINGS
-// ─────────────────────────────────────────
+// SETTINGS
 async function loadSettings() {
-  const notifyCheck = document.getElementById('set-notifications');
-  const privacyCheck = document.getElementById('set-privacy');
-  if (!notifyCheck || !privacyCheck) return;
-  
   try {
     const data = await apiFetch(`/api/mini-app/settings/${state.userId}`);
-    if (data.success) {
-      notifyCheck.checked = data.data.notifications;
-      privacyCheck.checked = data.data.privacy_public;
-    }
-  } catch(e) {
-    console.error('[CV] loadSettings error:', e);
-  }
+    document.getElementById('set-notifications').checked = data.data.notifications;
+    document.getElementById('set-privacy').checked = data.data.privacy_public;
+  } catch(e) {}
 }
 
 async function saveSettings() {
-  const notifications = document.getElementById('set-notifications').checked;
-  const privacy_public = document.getElementById('set-privacy').checked;
-  const btn = document.getElementById('saveSettingsBtn');
-  
-  btn.disabled = true;
-  btn.textContent = 'Applying...';
-  
+  const btn = document.getElementById('saveSettingsBtn'); btn.disabled = true;
   try {
-    const data = await apiFetch(`/api/mini-app/settings/${state.userId}`, {
-      method: 'POST',
-      body: JSON.stringify({ notifications, privacy_public })
+    await apiFetch(`/api/mini-app/settings/${state.userId}`, {
+      method: 'POST', body: JSON.stringify({
+        notifications: document.getElementById('set-notifications').checked,
+        privacy_public: document.getElementById('set-privacy').checked
+      })
     });
-    
-    if (data.success) {
-      toast('Settings applied!', 'success');
-    } else {
-      toast(data.error || 'Failed.', 'error');
-    }
-  } catch(e) {
-    toast('Network error.', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Apply Settings';
-  }
+    toast('Settings saved');
+  } catch(e) { toast(e.message); }
+  finally { btn.disabled = false; }
 }
 
-// ─────────────────────────────────────────
-//  AUTH
-// ─────────────────────────────────────────
-async function authenticate() {
-  console.log('[CV] authenticate()');
-
-  // Path 1: Telegram WebApp native (no token needed)
-  const tg = window.Telegram && window.Telegram.WebApp;
-  if (tg) {
-    console.log('[CV] Telegram.WebApp found');
-    try {
-      tg.expand();
-      tg.ready();
-    } catch(e) { console.warn('[CV] tg init warning:', e); }
-
-    const user = tg.initDataUnsafe && tg.initDataUnsafe.user;
-    if (user && user.id) {
-      console.log('[CV] TG user id:', user.id);
-      state.userId = String(user.id);
-
-      // Auto-generate token via API
-      try {
-        const res = await fetch(`${CONFIG.apiBase}/api/generate-token/${state.userId}`);
-        const d = await res.json();
-        if (d.success) console.log('[CV] token generated for TG user');
-      } catch(e) { console.warn('[CV] token generation warning (non-fatal):', e); }
-
-      showApp();
-      return;
-    }
-  } else {
-    console.warn('[CV] Telegram.WebApp not available');
-  }
-
-  // Path 2: JWT token in URL
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get('token');
-  if (token) {
-    console.log('[CV] found token in URL, verifying…');
-    try {
-      const res = await fetch(`${CONFIG.apiBase}/api/verify-token/${token}`);
-      const d = await res.json();
-      if (d.success && d.user_id) {
-        state.userId = String(d.user_id);
-        console.log('[CV] token valid, userId:', state.userId);
-        showApp();
-        return;
-      } else {
-        console.warn('[CV] token invalid:', d.error);
-      }
-    } catch(e) {
-      console.error('[CV] token verify error:', e);
-    }
-  }
-
-  // Auth failed
-  console.warn('[CV] authentication failed – showing login message');
-  document.getElementById('authScreen').innerHTML = `
-    <div style="font-size:2rem;margin-bottom:16px;">🔒</div>
-    <h2 style="font-family:var(--font-display);color:var(--gold);margin-bottom:12px;">Access Required</h2>
-    <p style="color:var(--text-dim);font-size:0.88rem;line-height:1.7;margin-bottom:24px;">
-      Please open this app through the Telegram bot.<br>
-      Use <strong>/webapp</strong> in the bot to get a fresh link.
-    </p>
-    <a href="https://t.me/${CONFIG.botUsername}" 
-       style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,var(--primary),var(--primary-light));
-              color:#000;border-radius:999px;font-weight:600;text-decoration:none;font-size:0.9rem;">
-      Open Bot
-    </a>
-  `;
-}
-
-function showApp() {
-  console.log('[CV] showApp(), userId:', state.userId);
-  document.getElementById('authScreen').style.display = 'none';
-  document.getElementById('mainApp').style.display = 'block';
-
-  // Wire up all events now that DOM is visible
-  setupEventListeners();
-
-  // Render categories
-  renderCategories();
-
-  // Load initial feed
-  loadFeed(false);
-}
-
-// ─────────────────────────────────────────
-//  EVENT LISTENERS (called once after auth)
-// ─────────────────────────────────────────
-function setupEventListeners() {
-  console.log('[CV] setupEventListeners()');
-
-  // Bottom nav
-  document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const page = btn.dataset.page;
-      console.log('[CV] nav click →', page);
-      switchPage(page);
-    });
-  });
-
-  // Vent submit
-  const submitBtn = document.getElementById('submitVentBtn');
-  if (submitBtn) submitBtn.addEventListener('click', submitVent);
-  else console.error('[CV] submitVentBtn not found!');
-
-  // Char counter
-  const ventInput = document.getElementById('ventInput');
-  if (ventInput) {
-    ventInput.addEventListener('input', () => {
-      const len = ventInput.value.length;
-      const el = document.getElementById('charCount');
-      if (el) {
-        el.textContent = `${len} / 5000`;
-        el.className = 'char-count' + (len > 4500 ? ' warn' : '');
-      }
-    });
-  }
-
-  // Feed refresh
-  const refreshFeedBtn = document.getElementById('refreshFeedBtn');
-  if (refreshFeedBtn) refreshFeedBtn.addEventListener('click', () => {
-    state.feedPage = 1; state.feedHasMore = true;
-    loadFeed(false);
-  });
-
-  // Load more
-  const loadMoreBtn = document.getElementById('loadMoreBtn');
-  if (loadMoreBtn) loadMoreBtn.addEventListener('click', () => loadFeed(true));
-
-  // Leaderboard refresh
-  const refreshLbBtn = document.getElementById('refreshLbBtn');
-  if (refreshLbBtn) refreshLbBtn.addEventListener('click', loadLeaderboard);
-
-  // Back from detail
-  const backBtn = document.getElementById('backFromDetailBtn');
-  if (backBtn) backBtn.addEventListener('click', () => switchPage('feed'));
-
-  // Post comment
-  const postCommentBtn = document.getElementById('postCommentBtn');
-  if (postCommentBtn) postCommentBtn.addEventListener('click', postTopLevelComment);
-
-  // Profile Edit
-  const saveProfileBtn = document.getElementById('saveProfileBtn');
-  if (saveProfileBtn) saveProfileBtn.addEventListener('click', saveProfile);
+// INIT
+function initParticles() {
+  const canvas = document.getElementById('particleCanvas');
+  const ctx = canvas.getContext('2d');
+  let w = canvas.width = window.innerWidth;
+  let h = canvas.height = window.innerHeight;
+  const particles = [];
   
-  const backFromEditBtn = document.getElementById('backFromEditBtn');
-  if (backFromEditBtn) backFromEditBtn.addEventListener('click', () => switchPage('profile'));
-
-  // Settings
-  const saveSettingsBtn = document.getElementById('saveSettingsBtn');
-  if (saveSettingsBtn) saveSettingsBtn.addEventListener('click', saveSettings);
-
-  console.log('[CV] all listeners attached');
+  for(let i=0; i<40; i++) {
+    particles.push({ x: Math.random()*w, y: Math.random()*h, r: Math.random()*2+0.5, vx: (Math.random()-0.5)*0.3, vy: (Math.random()-0.5)*0.3 });
+  }
+  
+  function draw() {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    particles.forEach(p => {
+      p.x += p.vx; p.y += p.vy;
+      if(p.x < 0) p.x = w; if(p.x > w) p.x = 0;
+      if(p.y < 0) p.y = h; if(p.y > h) p.y = 0;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+  window.addEventListener('resize', () => { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; });
 }
 
-// ─────────────────────────────────────────
-//  BOOT
-// ─────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  console.log('[CV] DOMContentLoaded');
-  authenticate().catch(e => {
-    console.error('[CV] authenticate() threw:', e);
-    document.getElementById('authScreen').innerHTML = `
-      <div style="font-size:2rem;margin-bottom:16px;">⚠️</div>
-      <h2 style="font-family:var(--font-display);color:var(--gold);margin-bottom:12px;">Something went wrong</h2>
-      <p style="color:var(--text-dim);font-size:0.88rem;">Please reopen via the bot using /webapp.</p>
-    `;
+async function init() {
+  initParticles();
+  renderCategories();
+  
+  document.getElementById('ventInput').addEventListener('input', function() {
+    document.getElementById('charCount').textContent = this.value.length + '/5000';
   });
-});
+  
+  let searchTimeout;
+  document.getElementById('searchInput').addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    state.searchQuery = this.value.trim();
+    searchTimeout = setTimeout(() => { state.feedPage = 1; loadFeed(); }, 500);
+  });
+  
+  document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => switchPage(b.dataset.page));
+  document.getElementById('submitVentBtn').onclick = submitVent;
+  document.getElementById('loadMoreBtn').onclick = () => loadFeed(true);
+  document.getElementById('postCommentBtn').onclick = postComment;
+  document.getElementById('saveProfileBtn').onclick = saveProfile;
+  document.getElementById('saveSettingsBtn').onclick = saveSettings;
+  
+  // Auth
+  const tg = window.Telegram?.WebApp;
+  if(tg) {
+    try { tg.expand(); tg.ready(); } catch(e){}
+    const user = tg.initDataUnsafe?.user;
+    if(user?.id) { state.userId = String(user.id); }
+  }
+  if(!state.userId) {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if(token) {
+      try {
+        const res = await fetch(CONFIG.apiBase + '/api/verify-token/' + token);
+        const data = await res.json();
+        if(data.success) state.userId = String(data.user_id);
+      } catch(e){}
+    }
+  }
+  
+  if(state.userId) {
+    document.getElementById('authScreen').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'block';
+    loadFeed();
+  } else {
+    document.getElementById('authScreen').innerHTML = `
+      <div style="font-size:2rem; margin-bottom:10px;">🔒</div>
+      <h2 style="color:var(--primary);">Access Required</h2>
+      <p style="color:var(--text-dim); text-align:center; padding:20px;">Please open the app via Telegram bot.</p>
+    `;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
-</html>"""
-        .replace('SLOT_PRIMARY',   _primary)
-        .replace('SLOT_SECONDARY', _secondary)
-        .replace('SLOT_CARD_BG',   _card_bg)
-        .replace('SLOT_BORDER',    _border)
-        .replace('SLOT_TEXT',      _text)
-        .replace('SLOT_RGB',       _rgb)
-        .replace('SLOT_BOT',       _bot)
-    )
-
-    return html
+</html>""")
     
+    html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
+    return html
+
 
 # ==================== MINI APP API ENDPOINTS ====================
 
