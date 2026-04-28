@@ -4552,7 +4552,7 @@ async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE,
             logger.error(f"Error showing empty reports: {e}")
         return
 
-    lines = [f"📋 *Pending Reports* (Page {page}/{total_pages})\n"]
+    lines = [f"📋 *Pending Reports* \\(Page {page}/{total_pages}\\)\n"]
     keyboard = []
 
     for rep in reports:
@@ -4565,7 +4565,7 @@ async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE,
         safe_reason = escape_markdown(rep['reason'], version=2)
 
         lines.append(
-            f"🆔 *Report \\#{rep['report_id']}* – {type_label}\n"
+            f"🆔 *Report \\#{rep['report_id']}* \\- {type_label}\n"
             f"📝 _{safe_preview}_\n"
             f"👤 By: {safe_reporter}\n"
             f"💬 Reason: {safe_reason}\n"
