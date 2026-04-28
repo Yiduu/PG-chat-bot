@@ -2886,7 +2886,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"👤 *{safe_name}* {safe_sex}\n\n"
                         f"🛡 *Role:* Administrator\n"
                         f"👥 *Followers:* {len(followers)}\n\n"
-                        f"📖 *About:*\n_{safe_bio}_\n"
+                        f"📖 *About:*\n{safe_bio}\n"
                     )
                 else:
                     # Standardize escaping for V2
@@ -2902,7 +2902,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
                         f"⭐️ *Points:* {safe_rating}\n"
                         f"👥 *Followers:* {len(followers)}\n\n"
-                        f"📖 *About:*\n_{safe_bio}_\n"
+                        f"📖 *About:*\n{safe_bio}\n"
                     )
 
 
