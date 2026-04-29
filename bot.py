@@ -24,6 +24,13 @@ import asyncio
 from functools import lru_cache
 import html
 
+# FIX: moved logger setup to top
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 # Load environment variables first
 load_dotenv()
 
@@ -282,6 +289,15 @@ def init_db():
                             PRIMARY KEY (post_id, category_code)
                         )
                     ''')
+                    # FIX: added category migration
+                    c.execute("""
+                        INSERT INTO post_categories (post_id, category_code)
+                        SELECT post_id, category FROM posts 
+                        WHERE category IS NOT NULL
+                        ON CONFLICT DO NOTHING
+                    """)
+                    # Then drop the category column
+                    c.execute("ALTER TABLE posts DROP COLUMN category")
                     logger.info("Migrated posts to multi-category (post_categories table)")
 
                 # ---------------- Weekly Contributor History Migration ----------------
@@ -1174,11 +1190,6 @@ cancel_menu = ReplyKeyboardMarkup(
     is_persistent=True
 )
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__) 
 
 def create_anonymous_name(user_id):
     # Simply return "Anonymous" without numbers for all new users
@@ -3966,7 +3977,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
             f"👤 *{safe_name}* {safe_sex}\n\n"
             f"🛡 *Role:* Administrator\n"
             f"👥 *Followers:* {follower_count}\n\n"
-            f"📖 *About:*\n_{safe_bio}_\n"
+            f"📖 *About:*\n{safe_bio}\n"
             f"_Use /menu to return_"
         )
     else:
@@ -3975,7 +3986,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
             f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
             f"⭐️ *Points:* {safe_rating}\n"
             f"👥 *Followers:* {follower_count}\n\n"
-            f"📖 *About:*\n_{safe_bio}_\n"
+            f"📖 *About:*\n{safe_bio}\n"
             f"_Use /menu to return_"
         )
     
@@ -6293,7 +6304,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # FIX: Handle pending post editing (NEW CODE ENDS HERE)
 
     # If user doesn't exist, create them
-
+    # FIX: only create user if not exists
+    if not user:
         anon = create_anonymous_name(user_id)
         is_admin = str(user_id) == str(ADMIN_ID)
         db_execute(
