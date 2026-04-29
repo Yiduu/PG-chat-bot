@@ -338,6 +338,16 @@ def init_db():
                     logger.info("Adding missing column: warning_count to users table")
                     c.execute("ALTER TABLE users ADD COLUMN warning_count INTEGER DEFAULT 0")
 
+                # FIX: Added telegram_message_id to comments for cross-page threading
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='comments' AND column_name='telegram_message_id'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding telegram_message_id column to comments table")
+                    c.execute("ALTER TABLE comments ADD COLUMN telegram_message_id BIGINT DEFAULT NULL")
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_comments_telegram_message_id ON comments(telegram_message_id)")
+
                 # ---------------- Create admin user if specified ----------------
                 if ADMIN_ID:
                     c.execute('''
@@ -3547,6 +3557,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
         escaped_content = escape_markdown_v2(content) if content else ""
         message_text = f"{escaped_content}\n\n{author_text}"
         
+        msg = None
         if comment_type == 'text':
             msg = await context.bot.send_message(
                 chat_id=chat_id,
@@ -3556,7 +3567,6 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 reply_to_message_id=reply_to_message_id,
                 disable_web_page_preview=True
             )
-            return msg.message_id
             
         elif comment_type == 'voice' and file_id:
             msg = await context.bot.send_voice(
@@ -3567,7 +3577,6 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_to_message_id=reply_to_message_id
             )
-            return msg.message_id
             
         elif comment_type == 'gif' and file_id:
             msg = await context.bot.send_animation(
@@ -3578,7 +3587,6 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_to_message_id=reply_to_message_id
             )
-            return msg.message_id
             
         elif comment_type == 'sticker' and file_id:
             msg = await context.bot.send_sticker(
@@ -3586,7 +3594,6 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 sticker=file_id,
                 reply_to_message_id=reply_to_message_id
             )
-            return msg.message_id
             
         else:
             # Fallback for unknown types
@@ -3597,6 +3604,13 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_to_message_id=reply_to_message_id,
                 disable_web_page_preview=True
+            )
+
+        if msg:
+            # FIX: Store message ID in database for threading
+            db_execute(
+                "UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s",
+                (msg.message_id, comment_id)
             )
             return msg.message_id
             
@@ -3612,7 +3626,12 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 reply_to_message_id=reply_to_message_id,
                 disable_web_page_preview=True
             )
-            return msg.message_id
+            if msg:
+                db_execute(
+                    "UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s",
+                    (msg.message_id, comment_id)
+                )
+                return msg.message_id
         except Exception as e2:
             logger.error(f"Fallback also failed: {e2}")
             return None
@@ -3731,11 +3750,11 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             ).strip()
 
         # LINKING LOGIC: If it's a reply, try to link to the immediate parent's message
+        # FIX: Fetch parent's telegram_message_id from DB for cross-page threading
         reply_to_id = None
         if parent_id != 0:
-            reply_to_id = msg_ids.get(parent_id)
-            # If parent isn't in current batch, the app will show it as a standalone message 
-            # or we could link to a fixed parent if we had one.
+            parent_msg = db_fetch_one("SELECT telegram_message_id FROM comments WHERE comment_id = %s", (parent_id,))
+            reply_to_id = parent_msg['telegram_message_id'] if parent_msg and parent_msg['telegram_message_id'] else None
         
         # Send the comment
         new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id)
@@ -3858,8 +3877,11 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     for reply in replies:
         try:
             parent_id = reply.get('parent_comment_id')
-            # Link to the actual parent if shown in this batch, else fallback to base
-            target_msg_id = msg_ids.get(parent_id, base_reply_to_id)
+            # FIX: Fetch parent's telegram_message_id from DB for cross-page threading
+            target_msg_id = msg_ids.get(parent_id)
+            if not target_msg_id:
+                parent_msg = db_fetch_one("SELECT telegram_message_id FROM comments WHERE comment_id = %s", (parent_id,))
+                target_msg_id = parent_msg['telegram_message_id'] if parent_msg and parent_msg['telegram_message_id'] else base_reply_to_id
             
             reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, post_id, target_msg_id)
             
