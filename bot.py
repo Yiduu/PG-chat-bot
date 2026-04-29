@@ -1361,24 +1361,13 @@ def format_aura(rating):
 
 
 def count_all_comments(post_id):
-    def count_replies(parent_id=None):
-        if parent_id is None:
-            comments = db_fetch_all(
-                "SELECT comment_id FROM comments WHERE post_id = %s AND parent_comment_id = 0",
-                (post_id,)
-            )
-        else:
-            comments = db_fetch_all(
-                "SELECT comment_id FROM comments WHERE parent_comment_id = %s",
-                (parent_id,)
-            )
-        
-        total = len(comments)
-        for comment in comments:
-            total += count_replies(comment['comment_id'])
-        return total
-    
-    return count_replies()
+    """Get the total number of comments for a post using a single query."""
+    try:
+        row = db_fetch_one("SELECT COUNT(*) as cnt FROM comments WHERE post_id = %s", (post_id,))
+        return row['cnt'] if row else 0
+    except Exception as e:
+        logger.error(f"Error in count_all_comments: {e}")
+        return 0
 def get_cancel_reply_keyboard():
     """Create cancel button for reply keyboard (text) - ONLY for input states"""
     return ReplyKeyboardMarkup(
@@ -2615,14 +2604,11 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             await query.answer("❌ Failed to update database.", show_alert=True)
             return
         
-        # Notify the author
-        try:
-            await context.bot.send_message(
-                chat_id=post['author_id'],
-                text="✅ Your post has been approved and published!"
-            )
-        except Exception as e:
-            logger.error(f"Error notifying author: {e}")
+        # Notify the author in background
+        asyncio.create_task(context.bot.send_message(
+            chat_id=post['author_id'],
+            text="✅ Your post has been approved and published!"
+        ))
         
         # =============================================
         # CRITICAL FIX: Update the admin's original message to remove Approve/Reject buttons
@@ -2715,20 +2701,17 @@ async def finalize_rejection(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await update.callback_query.answer("⚠️ Reason truncated to 200 chars", show_alert=True)
 
     try:
-        # Notify the author
+        # Notify the author in background
         notification_text = "❌ Your post was not approved by the admin."
         if reason:
             safe_reason = html.escape(reason)
             notification_text += f"\n\n<b>Reason:</b> {safe_reason}"
         
-        try:
-            await context.bot.send_message(
-                chat_id=post['author_id'],
-                text=notification_text,
-                parse_mode=ParseMode.HTML if reason else None
-            )
-        except Exception as e:
-            logger.error(f"Error notifying author of rejection: {e}")
+        asyncio.create_task(context.bot.send_message(
+            chat_id=post['author_id'],
+            text=notification_text,
+            parse_mode=ParseMode.HTML if reason else None
+        ))
 
         # Note: In a real system we might want to ARCHIVE instead of DELETE to keep the reason.
         # But the requirement says "Delete the post from DB (and optionally store rejection_reason)".
@@ -3496,8 +3479,8 @@ def escape_markdown_v2(text):
         text = text.replace(char, '\\' + char)
     return text
 
-async def send_comment_message(context, chat_id, comment, author_text, reply_to_message_id=None):
-    """Helper function to send comments with proper media handling"""
+async def send_comment_message(context, chat_id, comment, author_text, reply_to_message_id=None, pre_fetched_data=None):
+    """Helper function to send comments with proper media handling and pre-fetched data support"""
     comment_id = comment['comment_id']
     comment_type = comment['type']
     file_id = comment['file_id']
@@ -3505,28 +3488,35 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
     
     # Get user reaction for buttons
     user_id = getattr(context, '_user_id', None)
-    user_reaction = None
-    if user_id:
-        user_reaction = db_fetch_one(
-            "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
-            (comment_id, user_id)
+    
+    if pre_fetched_data:
+        likes = pre_fetched_data.get('likes', 0)
+        dislikes = pre_fetched_data.get('dislikes', 0)
+        user_reaction_type = pre_fetched_data.get('user_reaction')
+    else:
+        # Fallback to individual DB queries if no pre-fetched data
+        user_reaction = None
+        if user_id:
+            user_reaction = db_fetch_one(
+                "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
+                (comment_id, user_id)
+            )
+        user_reaction_type = user_reaction['type'] if user_reaction else None
+        
+        likes_row = db_fetch_one(
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'like'",
+            (comment_id,)
         )
-    
-    # Get reaction counts
-    likes_row = db_fetch_one(
-        "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'like'",
-        (comment_id,)
-    )
-    likes = likes_row['cnt'] if likes_row else 0
-    
-    dislikes_row = db_fetch_one(
-        "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'dislike'",
-        (comment_id,)
-    )
-    dislikes = dislikes_row['cnt'] if dislikes_row else 0
+        likes = likes_row['cnt'] if likes_row else 0
+        
+        dislikes_row = db_fetch_one(
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'dislike'",
+            (comment_id,)
+        )
+        dislikes = dislikes_row['cnt'] if dislikes_row else 0
 
-    like_emoji = "👍" if user_reaction and user_reaction['type'] == 'like' else "👍"
-    dislike_emoji = "👎" if user_reaction and user_reaction['type'] == 'dislike' else "👎"
+    like_emoji = "👍" if user_reaction_type == 'like' else "👍"
+    dislike_emoji = "👎" if user_reaction_type == 'dislike' else "👎"
 
     # Build keyboard
     kb_buttons = [
@@ -3658,155 +3648,132 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post:
         if loading_msg:
-            try:
-                await loading_msg.delete()
-            except:
-                pass
-        await context.bot.send_message(chat_id, "❌ Post not found.", reply_markup=get_main_menu(str(update.effective_user.id)))
-
+            try: await loading_msg.delete()
+            except: pass
+        await context.bot.send_message(chat_id, "❌ Post not found.")
         return
 
-    # No query.answer here - handled by button_handler to avoid double-responding
-
     post_author_id = post['author_id']
-
-    per_page = 10  # All comments (parents + replies) per page
+    per_page = 10
     offset = (page - 1) * per_page
 
-    # NEW: Fetch ALL comments for this post in chronological order, regardless of parent_comment_id
-    comments = db_fetch_all(
-        "SELECT * FROM comments WHERE post_id = %s ORDER BY timestamp ASC LIMIT %s OFFSET %s",
-        (post_id, per_page, offset)
-    )
+    # OPTIMIZED: Batch load comments and user data using a JOIN
+    comments = db_fetch_all("""
+        SELECT c.*, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
+        FROM comments c
+        LEFT JOIN users u ON c.author_id = u.user_id
+        WHERE c.post_id = %s
+        ORDER BY c.timestamp ASC
+        LIMIT %s OFFSET %s
+    """, (post_id, per_page, offset))
 
     # Count all comments for pagination
-    total_comments_row = db_fetch_one(
-        "SELECT COUNT(*) as cnt FROM comments WHERE post_id = %s",
-        (post_id,)
-    )
-    total_comments = total_comments_row['cnt'] if total_comments_row else 0
+    total_comments = count_all_comments(post_id)
     total_pages = (total_comments + per_page - 1) // per_page
 
     user_id = str(update.effective_user.id)
     if not comments and page == 1:
         if loading_msg:
-            try:
-                await loading_msg.delete()
-            except:
-                pass
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="\\_No comments yet.\\_",
-            parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=get_main_menu(user_id)
-        )
-
+            try: await loading_msg.delete()
+            except: pass
+        await context.bot.send_message(chat_id, "_No comments yet._", parse_mode=ParseMode.MARKDOWN_V2)
         return
-
-    context._user_id = user_id
-
-    context._user_id = user_id
-    context._post_author_id = post_author_id
 
     # Delete loading message if it exists
     if loading_msg:
-        try:
-            await loading_msg.delete()
-        except:
-            pass
+        try: await loading_msg.delete()
+        except: pass
 
-    # Track message IDs for reply chaining in the stream
+    # PRE-FETCH: Batch load reactions and parent message IDs
+    comment_ids = [c['comment_id'] for c in comments]
+    reaction_data = {}
+    parent_msg_ids = {}
+
+    if comment_ids:
+        # Batch counts
+        counts = db_fetch_all("""
+            SELECT comment_id, type, COUNT(*) as cnt 
+            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, type
+        """, (tuple(comment_ids),))
+        for row in counts:
+            cid = row['comment_id']
+            if cid not in reaction_data: reaction_data[cid] = {'likes': 0, 'dislikes': 0, 'user_reaction': None}
+            if row['type'] == 'like': reaction_data[cid]['likes'] = row['cnt']
+            else: reaction_data[cid]['dislikes'] = row['cnt']
+
+        # Batch user reactions
+        u_reacts = db_fetch_all("SELECT comment_id, type FROM reactions WHERE comment_id IN %s AND user_id = %s", (tuple(comment_ids), user_id))
+        for row in u_reacts:
+            cid = row['comment_id']
+            if cid not in reaction_data: reaction_data[cid] = {'likes': 0, 'dislikes': 0, 'user_reaction': None}
+            reaction_data[cid]['user_reaction'] = row['type']
+
+        # Batch parent message IDs for threading
+        parent_ids = [c['parent_comment_id'] for c in comments if c.get('parent_comment_id', 0) != 0]
+        if parent_ids:
+            p_rows = db_fetch_all("SELECT comment_id, telegram_message_id FROM comments WHERE comment_id IN %s", (tuple(parent_ids),))
+            for row in p_rows: parent_msg_ids[row['comment_id']] = row['telegram_message_id']
+
+    context._user_id = user_id
     msg_ids = {}
 
-    # Show comments in a single stream
     for comment in comments:
         comment_id = comment['comment_id']
         parent_id = comment.get('parent_comment_id', 0)
-        commenter_id = comment['author_id']
-        commenter = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (commenter_id,))
         
-        display_sex = get_display_sex(commenter)
-        display_name = get_display_name(commenter)
-        rating = calculate_user_rating(commenter_id)
-        is_admin = commenter.get('is_admin', False)
-        profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{commenter_id}_{post_id}"
-
-
-
-        # Format author text
-        aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not is_admin else ""
+        # User cached or joined data
+        rating = calculate_user_rating(comment['author_id'])
+        is_author = str(comment['author_id']) == str(post_author_id)
         
-        if str(commenter_id) == str(post_author_id):
-            author_text = (
-                f"{display_sex} "
-                f"✅ _[vent author]({escape_markdown(profile_link, version=2)})_ "
-                f"{aura_text}"
-            ).strip()
-        else:
-            author_text = (
-                f"{display_sex} "
-                f"_[{escape_markdown(display_name, version=2)}]({profile_link})_ "
-                f"{aura_text}"
-            ).strip()
+        profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{comment['author_id']}_{post_id}"
+        aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not comment['is_admin'] else ""
+        
+        author_label = f"✅ _[vent author]({escape_markdown(profile_link, version=2)})_" if is_author else f"_[{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}]({profile_link})_"
+        author_text = f"{comment['sex'] or '👤'} {author_label} {aura_text}".strip()
 
-        # LINKING LOGIC: If it's a reply, try to link to the immediate parent's message
-        # FIX: Fetch parent's telegram_message_id from DB for cross-page threading
-        reply_to_id = None
-        if parent_id != 0:
-            parent_msg = db_fetch_one("SELECT telegram_message_id FROM comments WHERE comment_id = %s", (parent_id,))
-            reply_to_id = parent_msg['telegram_message_id'] if parent_msg and parent_msg['telegram_message_id'] else None
+        # Threading logic
+        reply_to_id = parent_msg_ids.get(parent_id)
         
-        # Send the comment
-        new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id)
+        # Pre-fetched data for button builder
+        pref = reaction_data.get(comment_id, {'likes': 0, 'dislikes': 0, 'user_reaction': None})
         
+        new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id, pre_fetched_data=pref)
         if new_msg_id:
             msg_ids[comment_id] = new_msg_id
     
-    # Pagination buttons for top-level comments
-    pagination_buttons = []
-    if page > 1:
-        pagination_buttons.append(InlineKeyboardButton("⬅️ Older Comments", callback_data=f"viewcomments_{post_id}_{page-1}"))
-    if page < total_pages:
-        pagination_buttons.append(InlineKeyboardButton("Newer Comments ➡️", callback_data=f"viewcomments_{post_id}_{page+1}"))
-    
-    if pagination_buttons:
-        pagination_markup = InlineKeyboardMarkup([pagination_buttons])
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"📄 Page {page}/{total_pages} (Oldest to Newest)",
-            reply_markup=pagination_markup,
-            disable_web_page_preview=True
-        )
-async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id):
-    """Send a single reply message with proper formatting"""
-    reply_user_id = reply['author_id']
-    reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (reply_user_id,))
-    reply_display_name = get_display_name(reply_user)
-    reply_display_sex = get_display_sex(reply_user)
-    rating_reply = calculate_user_rating(reply_user_id)
-    
-    reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply_user_id}_{post_id}"
-    is_admin = reply_user.get('is_admin', False)
+    # Pagination
+    if total_pages > 1:
+        buttons = []
+        if page > 1: buttons.append(InlineKeyboardButton("⬅️ Older", callback_data=f"viewcomments_{post_id}_{page-1}"))
+        if page < total_pages: buttons.append(InlineKeyboardButton("Newer ➡️", callback_data=f"viewcomments_{post_id}_{page+1}"))
+        await context.bot.send_message(chat_id, f"📄 Page {page}/{total_pages}", reply_markup=InlineKeyboardMarkup([buttons]))
+async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None):
+    """Send a single reply message with proper formatting using pre-fetched user data if available"""
+    # Use joined data if available, else fetch
+    is_admin = reply.get('is_admin')
+    if is_admin is None: # Not pre-fetched
+        reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (reply['author_id'],))
+        is_admin = reply_user.get('is_admin', False)
+        display_sex = get_display_sex(reply_user)
+        display_name = get_display_name(reply_user)
+    else:
+        display_sex = reply.get('sex') or '👤'
+        display_name = reply.get('anonymous_name') or 'Anonymous'
+        
+    rating_reply = calculate_user_rating(reply['author_id'])
+    reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply['author_id']}_{post_id}"
     aura_text = f"⚡ _Aura_ {rating_reply} {format_aura(rating_reply)}" if not is_admin else ""
-
-
     
     # Check if reply author is the vent author
-    if str(reply_user_id) == str(post_author_id):
-        reply_author_text = (
-            f"{reply_display_sex} "
-            f"✅ _[vent author]({reply_profile_link})_ "
-            f"{aura_text}"
-        ).strip()
+    if str(reply['author_id']) == str(post_author_id):
+        author_label = f"✅ _[vent author]({reply_profile_link})_"
     else:
-        reply_author_text = (
-            f"{reply_display_sex} "
-            f"_[{escape_markdown(reply_display_name, version=2)}]({reply_profile_link})_ "
-            f"{aura_text}"
-        ).strip()
+        author_label = f"_[{escape_markdown(display_name, version=2)}]({reply_profile_link})_"
+        
+    reply_author_text = f"{display_sex} {author_label} {aura_text}".strip()
 
-    # Send the reply
-    return await send_comment_message(context, chat_id, reply, reply_author_text, reply_to_message_id)
+    # Pass pre-fetched reaction data if available (e.g. from show_more_replies)
+    return await send_comment_message(context, chat_id, reply, reply_author_text, reply_to_message_id, pre_fetched_data=pre_fetched_data)
 
 async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, comment_id: int, page: int):
     """Show additional replies for a comment (paginated)"""
@@ -3830,7 +3797,7 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     # Skip the first 3 replies already shown in the comment view
     offset = 3 + (page - 1) * replies_per_page
     
-    # Get replies for this page using Recursive CTE to include deep nesting
+    # Get replies for this page with user data JOINed
     try:
         replies = db_fetch_all("""
             WITH RECURSIVE comment_tree AS (
@@ -3839,51 +3806,57 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 SELECT c.* FROM comments c
                 JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
             )
-            SELECT * FROM comment_tree ORDER BY timestamp ASC LIMIT %s OFFSET %s
+            SELECT ct.*, u.sex, u.anonymous_name, u.is_admin, u.avatar_emoji
+            FROM comment_tree ct
+            LEFT JOIN users u ON ct.author_id = u.user_id
+            ORDER BY ct.timestamp ASC LIMIT %s OFFSET %s
         """, (comment_id, replies_per_page, offset))
     except Exception as e:
         logger.error(f"Error fetching more replies for comment {comment_id}: {e}")
         await query.answer("❌ Error loading replies", show_alert=True)
         return
     
-    # Count total descendants (all replies in the thread)
-    total_replies_row = db_fetch_one("""
-        WITH RECURSIVE comment_tree AS (
-            SELECT comment_id FROM comments WHERE parent_comment_id = %s
-            UNION ALL
-            SELECT c.comment_id FROM comments c
-            JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
-        )
-        SELECT COUNT(*) as cnt FROM comment_tree
-    """, (comment_id,))
-    total_replies = total_replies_row['cnt'] if total_replies_row else 0
-    total_pages = (total_replies + replies_per_page - 1) // replies_per_page
+    # Pre-fetch reaction data for replies
+    reply_ids = [r['comment_id'] for r in replies]
+    reaction_data = {}
+    parent_msg_ids = {}
+    user_id = str(update.effective_user.id)
     
+    if reply_ids:
+        # Batch counts
+        counts = db_fetch_all("SELECT comment_id, type, COUNT(*) as cnt FROM reactions WHERE comment_id IN %s GROUP BY comment_id, type", (tuple(reply_ids),))
+        for row in counts:
+            cid = row['comment_id']
+            if cid not in reaction_data: reaction_data[cid] = {'likes': 0, 'dislikes': 0, 'user_reaction': None}
+            if row['type'] == 'like': reaction_data[cid]['likes'] = row['cnt']
+            else: reaction_data[cid]['dislikes'] = row['cnt']
+            
+        # Batch user reactions
+        u_reacts = db_fetch_all("SELECT comment_id, type FROM reactions WHERE comment_id IN %s AND user_id = %s", (tuple(reply_ids), user_id))
+        for row in u_reacts:
+            cid = row['comment_id']
+            if cid not in reaction_data: reaction_data[cid] = {'likes': 0, 'dislikes': 0, 'user_reaction': None}
+            reaction_data[cid]['user_reaction'] = row['type']
+
+        # Batch parent message IDs
+        p_ids = [r['parent_comment_id'] for r in replies]
+        if p_ids:
+            p_rows = db_fetch_all("SELECT comment_id, telegram_message_id FROM comments WHERE comment_id IN %s", (tuple(p_ids),))
+            for row in p_rows: parent_msg_ids[row['comment_id']] = row['telegram_message_id']
+
     # Delete the "Show more replies" button
-    try:
-        await query.message.delete()
-    except:
-        pass
-    
-    # Send the replies for this page
-    # Track message IDs for chaining (indentation)
-    # We start with the original button's reply_to_message_id as the base parent
-    base_reply_to_id = None
-    if query.message and query.message.reply_to_message:
-        base_reply_to_id = query.message.reply_to_message.message_id
+    try: await query.message.delete()
+    except: pass
     
     msg_ids = {comment_id: base_reply_to_id}
 
     for reply in replies:
         try:
-            parent_id = reply.get('parent_comment_id')
-            # FIX: Fetch parent's telegram_message_id from DB for cross-page threading
-            target_msg_id = msg_ids.get(parent_id)
-            if not target_msg_id:
-                parent_msg = db_fetch_one("SELECT telegram_message_id FROM comments WHERE comment_id = %s", (parent_id,))
-                target_msg_id = parent_msg['telegram_message_id'] if parent_msg and parent_msg['telegram_message_id'] else base_reply_to_id
+            pid = reply.get('parent_comment_id')
+            target_msg_id = msg_ids.get(pid) or parent_msg_ids.get(pid) or base_reply_to_id
             
-            reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, post_id, target_msg_id)
+            pref = reaction_data.get(reply['comment_id'], {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+            reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, post_id, target_msg_id, pre_fetched_data=pref)
             
             if reply_msg_id:
                 msg_ids[reply['comment_id']] = reply_msg_id
@@ -4673,6 +4646,45 @@ async def notify_admin_of_new_report(
     except Exception as e:
         logger.error(f"Error notifying admin of report: {e}")
 
+async def send_reaction_notification(context: ContextTypes.DEFAULT_TYPE, comment: dict, reactor_id: str, reaction_type: str, post_id: int):
+    """Background helper to send interaction notification"""
+    try:
+        # Resolve identities
+        post = db_fetch_one("SELECT content, author_id FROM posts WHERE post_id = %s", (post_id,))
+        comment_author = db_fetch_one("SELECT user_id, anonymous_name FROM users WHERE user_id = %s", (comment['author_id'],))
+        
+        # Don't notify yourself
+        if str(reactor_id) == str(comment['author_id']):
+            return
+
+        # Anonymization: If the person reacting is the post author
+        if post and str(reactor_id) == str(post['author_id']):
+            reactor_display = "Vent author"
+        else:
+            reactor = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (reactor_id,))
+            reactor_display = reactor['anonymous_name'] if reactor else "Anonymous"
+        
+        # Content formatting
+        post_preview = post['content'][:50] + '...' if post and len(post['content']) > 50 else (post['content'] if post else "")
+        reaction_label = "liked 👍" if reaction_type == 'like' else "disliked 👎"
+        reaction_icon = "✨" if reaction_type == 'like' else "⚠️"
+        
+        notification_text = (
+            f"{reaction_icon} *New Interaction\\!*\n\n"
+            f"👤 {escape_markdown(reactor_display, version=2)} *{reaction_label}* your comment\\:\n\n"
+            f"🗨 _{escape_markdown((comment['content'] or '[media]')[:150], version=2)}_\n\n"
+            f"📝 *Post Context\\:*\n{escape_markdown(post_preview, version=2)}\n\n"
+            f"🔗 [View Discussion](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+        )
+        
+        await context.bot.send_message(
+            chat_id=comment_author['user_id'],
+            text=notification_text,
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+    except Exception as e:
+        logger.error(f"Reaction notification failed: {e}")
+
 # ==================== END REPORTING HELPERS ====================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5071,45 +5083,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if "Message is not modified" not in str(e):
                         logger.error(f"Error updating reaction buttons: {e}")
                 
-                # Send notification only if reaction was added (not removed)
+                # Send notification in background
                 if not existing_reaction or existing_reaction['type'] != reaction_type:
-                    comment_author = db_fetch_one(
-                        "SELECT user_id, notifications_enabled FROM users WHERE user_id = %s",
-                        (comment['author_id'],)
-                    )
-                    if comment_author and comment_author['notifications_enabled'] and comment_author['user_id'] != user_id:
-                        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-                        
-                        # === FIX: Vent author anonymization in reaction notification ===
-                        if post and str(user_id) == str(post['author_id']):
-                            reactor_display = "Vent author"
-                            safe_reactor_name = reactor_display
-                        else:
-                            reactor_name = get_display_name(
-                                db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
-                            )
-                            safe_reactor_name = escape_markdown(reactor_name, version=2)
-                        
-                        post_preview = post['content'][:50] + '...' if post and len(post['content']) > 50 else (post['content'] if post else "")
-                        
-                        # Modernized Reaction Notification
-                        reaction_label = "liked 👍" if reaction_type == 'like' else "disliked 👎"
-                        reaction_icon = "✨" if reaction_type == 'like' else "⚠️"
-                        
-                        notification_text = (
-                            f"{reaction_icon} *New Interaction\\!*\n\n"
-                            f"👤 {safe_reactor_name} *{reaction_label}* your comment\\:\n\n"
-                            f"🗨 _{escape_markdown(comment['content'][:150], version=2)}_\n\n"
-                            f"📝 *Post Context\\:*\n{escape_markdown(post_preview, version=2)}\n\n"
-                            f"🔗 [View Discussion](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
-                        )
-
-                        
-                        await context.bot.send_message(
-                            chat_id=comment_author['user_id'],
-                            text=notification_text,
-                            parse_mode=ParseMode.MARKDOWN_V2
-                        )
+                    asyncio.create_task(send_reaction_notification(context, comment, user_id, reaction_type, post_id))
             except Exception as e:
                 logger.error(f"Error processing reaction: {e}")
                 await query.answer("❌ Error updating reaction", show_alert=True)
@@ -6458,8 +6434,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Your comment has been posted!", reply_markup=get_main_menu(user_id))
 
         
-        # Update comment count
-        await update_channel_post_comment_count(context, post_id)
+        # Update comment count in background
+        asyncio.create_task(update_channel_post_comment_count(context, post_id))
         
         # Notify vent author if this is a top‑level comment
         if parent_comment_id == 0:
