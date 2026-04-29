@@ -1698,7 +1698,7 @@ async def show_privacy_settings(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = [
         [InlineKeyboardButton(f"🔮 Aura & Points: {s(user['hide_aura'])}", callback_data='toggle_hide_aura')],
         [InlineKeyboardButton(f"📝 Bio: {s(user['hide_bio'])}", callback_data='toggle_hide_bio')],
-        [InlineKeyboardButton(f"👥 Follower Count: {s(user['hide_follower_count'])}", callback_data='toggle_hide_followers')],
+        [InlineKeyboardButton(f"👥 Follower Count: {s(user['hide_follower_count'])}", callback_data='toggle_hide_follower_count')],
         [InlineKeyboardButton(f"🛡️ Role: {s(user['hide_role'])}", callback_data='toggle_hide_role')],
         [InlineKeyboardButton("⬅️ Back to Settings", callback_data='settings')]
     ]
