@@ -216,6 +216,21 @@ def init_db():
                     logger.info("Adding missing column: avatar_emoji to users table")
                     c.execute("ALTER TABLE users ADD COLUMN avatar_emoji VARCHAR(10) DEFAULT NULL")
 
+                # Check for privacy columns in users
+                privacy_columns = [
+                    ('hide_aura', 'BOOLEAN DEFAULT FALSE'),
+                    ('hide_bio', 'BOOLEAN DEFAULT FALSE'),
+                    ('hide_follower_count', 'BOOLEAN DEFAULT FALSE'),
+                    ('hide_role', 'BOOLEAN DEFAULT FALSE')
+                ]
+                for col_name, col_type in privacy_columns:
+                    c.execute(f"""
+                        SELECT column_name FROM information_schema.columns 
+                        WHERE table_name='users' AND column_name='{col_name}'
+                    """)
+                    if not c.fetchone():
+                        logger.info(f"Adding missing column: {col_name} to users table")
+                        c.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
 
                 # ---------------- Database Schema Migration ----------------
                 # Check if thread_from_post_id column exists, if not add it
@@ -1619,6 +1634,9 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                    callback_data='toggle_privacy')
             ],
             [
+                InlineKeyboardButton("👁️ Privacy Controls", callback_data='privacy_settings')
+            ],
+            [
                 InlineKeyboardButton("🚫 Blocked Users", callback_data='list_blocked')
             ],
             [
@@ -1659,6 +1677,47 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Error loading settings. Please try again.")
         elif update.callback_query:
             await update.callback_query.message.reply_text("❌ Error loading settings. Please try again.")
+
+async def show_privacy_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the privacy toggle menu"""
+    user_id = str(update.effective_user.id)
+    query = update.callback_query
+    
+    user = db_fetch_one("""
+        SELECT hide_aura, hide_bio, hide_follower_count, hide_role 
+        FROM users WHERE user_id = %s
+    """, (user_id,))
+    
+    if not user:
+        await query.answer("User not found.", show_alert=True)
+        return
+
+    # Helper for status text
+    def s(val): return "✅ HIDDEN" if val else "❌ VISIBLE"
+    
+    keyboard = [
+        [InlineKeyboardButton(f"🔮 Aura & Points: {s(user['hide_aura'])}", callback_data='toggle_hide_aura')],
+        [InlineKeyboardButton(f"📝 Bio: {s(user['hide_bio'])}", callback_data='toggle_hide_bio')],
+        [InlineKeyboardButton(f"👥 Follower Count: {s(user['hide_follower_count'])}", callback_data='toggle_hide_followers')],
+        [InlineKeyboardButton(f"🛡️ Role: {s(user['hide_role'])}", callback_data='toggle_hide_role')],
+        [InlineKeyboardButton("⬅️ Back to Settings", callback_data='settings')]
+    ]
+    
+    text = (
+        "👁️ *Privacy Controls*\n\n"
+        "Toggle which metrics are visible to other users when they view your profile\\.\n"
+        "Note: You and administrators will always see your full profile\\."
+    )
+    
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+    except Exception as e:
+        if "Message is not modified" not in str(e):
+            logger.error(f"Error in show_privacy_settings: {e}")
 
 async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None):
     keyboard = [
@@ -2879,6 +2938,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 level = (rating // 10) + 1
                 bio = user_data.get('bio', 'No bio set.')
                 
+                # Check for admin viewer
+                viewer_data = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+                is_viewer_admin = viewer_data['is_admin'] if viewer_data else False
+                is_owner = str(user_id) == str(target_user_id)
+                
+                # Apply privacy filters
+                if not is_viewer_admin and not is_owner:
+                    if user_data.get('hide_aura'):
+                        rating_str = "🔒 Hidden"
+                        level_str = "🔒 Hidden"
+                        aura_str = "🔒 Hidden"
+                    else:
+                        rating_str = str(rating)
+                        level_str = str(level)
+                        aura_str = format_aura(rating)
+                        
+                    if user_data.get('hide_bio'):
+                        bio = "_[Hidden by user]_"
+                        
+                    if user_data.get('hide_follower_count'):
+                        follower_count = "🔒 Hidden"
+                    else:
+                        follower_count = str(len(followers))
+                        
+                    hide_role = user_data.get('hide_role')
+                else:
+                    rating_str = str(rating)
+                    level_str = str(level)
+                    aura_str = format_aura(rating)
+                    follower_count = str(len(followers))
+                    hide_role = False
+
                 is_target_admin = user_data.get('is_admin', False)
                 if is_target_admin:
                     # Standardize escaping for V2
@@ -2886,10 +2977,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     safe_sex = escape_markdown(display_sex, version=2)
                     safe_bio = escape_markdown(bio, version=2)
                     
+                    role_display = "Administrator"
+                    if hide_role and not is_viewer_admin and not is_owner:
+                        role_display = "🔒 Hidden"
+
                     profile_text = (
                         f"👤 *{safe_name}* {safe_sex}\n\n"
-                        f"🛡 *Role:* Administrator\n"
-                        f"👥 *Followers:* {len(followers)}\n\n"
+                        f"🛡 *Role:* {role_display}\n"
+                        f"👥 *Followers:* {follower_count}\n\n"
                         f"📖 *About:*\n{safe_bio}\n"
                     )
                 else:
@@ -2897,15 +2992,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     safe_name = escape_markdown(display_name, version=2)
                     safe_sex = escape_markdown(display_sex, version=2)
                     safe_bio = escape_markdown(bio, version=2)
-                    safe_level = escape_markdown(str(level), version=2)
-                    safe_rating = escape_markdown(str(rating), version=2)
-                    safe_aura = escape_markdown(format_aura(rating), version=2)
+                    safe_level = escape_markdown(level_str, version=2)
+                    safe_rating = escape_markdown(rating_str, version=2)
+                    safe_aura = escape_markdown(aura_str, version=2)
 
                     profile_text = (
                         f"👤 *{safe_name}* {safe_sex}\n\n"
                         f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
                         f"⭐️ *Points:* {safe_rating}\n"
-                        f"👥 *Followers:* {len(followers)}\n\n"
+                        f"👥 *Followers:* {follower_count}\n\n"
                         f"📖 *About:*\n{safe_bio}\n"
                     )
 
@@ -4831,6 +4926,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (new_value, user_id)
                 )
             await show_settings(update, context)
+
+        elif query.data == 'privacy_settings':
+            await show_privacy_settings(update, context)
+
+        elif query.data.startswith('toggle_hide_'):
+            metric = query.data.replace('toggle_hide_', '')
+            col = f"hide_{metric}"
+            
+            # Simple toggle logic
+            current = db_fetch_one(f"SELECT {col} FROM users WHERE user_id = %s", (user_id,))
+            if current:
+                new_val = not current[col]
+                db_execute(f"UPDATE users SET {col} = %s WHERE user_id = %s", (new_val, user_id))
+                status = "Hidden" if new_val else "Visible"
+                await query.answer(f"✅ {metric.replace('_', ' ').title()} is now {status}", show_alert=False)
+            
+            await show_privacy_settings(update, context)
 
         elif query.data == 'help':
             await query.answer("ℹ️ Loading Help...", show_alert=False)
@@ -7546,7 +7658,7 @@ async function loadProfile() {
   const box = document.getElementById('profileContainer');
   box.innerHTML = '<div class="skeleton" style="height:200px;"></div>';
   try {
-    const data = await apiFetch(`/api/mini-app/profile/${state.userId}`);
+    const data = await apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`);
     const p = data.data; state.profileData = p;
     
     box.innerHTML = `
@@ -8148,11 +8260,29 @@ def mini_app_profile(user_id):
         
         rating = calculate_user_rating(user_id)
         
+        # Check viewer for privacy
+        viewer_id = request.args.get('viewer_id')
+        viewer = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (viewer_id,)) if viewer_id else None
+        is_viewer_admin = viewer['is_admin'] if viewer else False
+        is_owner = str(user_id) == str(viewer_id)
+        
         followers = db_fetch_one(
             "SELECT COUNT(*) as count FROM followers WHERE followed_id = %s",
             (user_id,)
         )
+        follower_count = followers['count'] if followers else 0
         
+        aura_display = format_aura(rating)
+        rating_display = rating
+        
+        # Apply privacy
+        if not is_viewer_admin and not is_owner:
+            if user.get('hide_aura'):
+                aura_display = "🔒 Hidden"
+                rating_display = "Hidden"
+            if user.get('hide_follower_count'):
+                follower_count = "Hidden"
+
         posts = db_fetch_one(
             "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE",
             (user_id,)
@@ -8163,8 +8293,6 @@ def mini_app_profile(user_id):
             (user_id,)
         )
         
-        rating = calculate_user_rating(user_id)
-        
         return jsonify({
             'success': True,
             'data': {
@@ -8172,11 +8300,11 @@ def mini_app_profile(user_id):
                 'name': user['anonymous_name'],
                 'sex': user['sex'],
                 'avatar': user['avatar_emoji'] or "",
-                'rating': rating,
-                'aura': format_aura(rating),
+                'rating': rating_display,
+                'aura': aura_display,
 
                 'stats': {
-                    'followers': followers['count'] if followers else 0,
+                    'followers': follower_count,
                     'posts': posts['count'] if posts else 0,
                     'comments': comments['count'] if comments else 0
                 }
