@@ -3728,7 +3728,12 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{comment['author_id']}_{post_id}"
         aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not comment['is_admin'] else ""
         
-        author_label = f"✅ _[vent author]({escape_markdown(profile_link, version=2)})_" if is_author else f"_[{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}]({profile_link})_"
+        # Format display name with avatar
+        display_name = comment['anonymous_name'] or 'Anonymous'
+        avatar = comment.get('avatar_emoji')
+        full_name = f"{avatar} {display_name}" if avatar else display_name
+        
+        author_label = f"✅ _[vent author]({escape_markdown(profile_link, version=2)})_" if is_author else f"_[{escape_markdown(full_name, version=2)}]({profile_link})_"
         author_text = f"{comment['sex'] or '👤'} {author_label} {aura_text}".strip()
 
         # Threading logic
@@ -3759,6 +3764,9 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     else:
         display_sex = reply.get('sex') or '👤'
         display_name = reply.get('anonymous_name') or 'Anonymous'
+        avatar = reply.get('avatar_emoji')
+        if avatar:
+            display_name = f"{avatar} {display_name}"
         
     rating_reply = calculate_user_rating(reply['author_id'])
     reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply['author_id']}_{post_id}"
@@ -3792,6 +3800,11 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     post = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
     post_author_id = post['author_id'] if post else None
     
+    # We start with the original button's reply_to_message_id as the base parent
+    base_reply_to_id = None
+    if query.message and query.message.reply_to_message:
+        base_reply_to_id = query.message.reply_to_message.message_id
+    
     # Pagination for replies
     replies_per_page = 5
     # Skip the first 3 replies already shown in the comment view
@@ -3815,6 +3828,19 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         logger.error(f"Error fetching more replies for comment {comment_id}: {e}")
         await query.answer("❌ Error loading replies", show_alert=True)
         return
+
+    # Count total descendants (all replies in the thread)
+    total_replies_row = db_fetch_one("""
+        WITH RECURSIVE comment_tree AS (
+            SELECT comment_id FROM comments WHERE parent_comment_id = %s
+            UNION ALL
+            SELECT c.comment_id FROM comments c
+            JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
+        )
+        SELECT COUNT(*) as cnt FROM comment_tree
+    """, (comment_id,))
+    total_replies = total_replies_row['cnt'] if total_replies_row else 0
+    total_pages = (total_replies + replies_per_page - 1) // replies_per_page
     
     # Pre-fetch reaction data for replies
     reply_ids = [r['comment_id'] for r in replies]
@@ -3855,8 +3881,21 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             pid = reply.get('parent_comment_id')
             target_msg_id = msg_ids.get(pid) or parent_msg_ids.get(pid) or base_reply_to_id
             
+            # Format display name with avatar for reply
+            reply_author_id = reply['author_id']
+            rating_reply = calculate_user_rating(reply_author_id)
+            reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply_author_id}_{post_id}"
+            aura_text = f"⚡ _Aura_ {rating_reply} {format_aura(rating_reply)}" if not reply['is_admin'] else ""
+            
+            display_name = reply.get('anonymous_name') or 'Anonymous'
+            avatar = reply.get('avatar_emoji')
+            full_name = f"{avatar} {display_name}" if avatar else display_name
+            
+            author_label = f"✅ _[vent author]({reply_profile_link})_" if str(reply_author_id) == str(post_author_id) else f"_[{escape_markdown(full_name, version=2)}]({reply_profile_link})_"
+            author_text = f"{reply.get('sex') or '👤'} {author_label} {aura_text}".strip()
+            
             pref = reaction_data.get(reply['comment_id'], {'likes': 0, 'dislikes': 0, 'user_reaction': None})
-            reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, post_id, target_msg_id, pre_fetched_data=pref)
+            reply_msg_id = await send_comment_message(context, chat_id, reply, author_text, target_msg_id, pre_fetched_data=pref)
             
             if reply_msg_id:
                 msg_ids[reply['comment_id']] = reply_msg_id
