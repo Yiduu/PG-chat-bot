@@ -5086,36 +5086,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Send notification in background
                 if not existing_reaction or existing_reaction['type'] != reaction_type:
                     asyncio.create_task(send_reaction_notification(context, comment, user_id, reaction_type, post_id))
-                    return # Skip the rest of the broken block
-                        if post and str(user_id) == str(post['author_id']):
-                            reactor_display = "Vent author"
-                            safe_reactor_name = reactor_display
-                        else:
-                            reactor_name = get_display_name(
-                                db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
-                            )
-                            safe_reactor_name = escape_markdown(reactor_name, version=2)
-                        
-                        post_preview = post['content'][:50] + '...' if post and len(post['content']) > 50 else (post['content'] if post else "")
-                        
-                        # Modernized Reaction Notification
-                        reaction_label = "liked 👍" if reaction_type == 'like' else "disliked 👎"
-                        reaction_icon = "✨" if reaction_type == 'like' else "⚠️"
-                        
-                        notification_text = (
-                            f"{reaction_icon} *New Interaction\\!*\n\n"
-                            f"👤 {safe_reactor_name} *{reaction_label}* your comment\\:\n\n"
-                            f"🗨 _{escape_markdown(comment['content'][:150], version=2)}_\n\n"
-                            f"📝 *Post Context\\:*\n{escape_markdown(post_preview, version=2)}\n\n"
-                            f"🔗 [View Discussion](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
-                        )
-
-                        
-                        await context.bot.send_message(
-                            chat_id=comment_author['user_id'],
-                            text=notification_text,
-                            parse_mode=ParseMode.MARKDOWN_V2
-                        )
             except Exception as e:
                 logger.error(f"Error processing reaction: {e}")
                 await query.answer("❌ Error updating reaction", show_alert=True)
