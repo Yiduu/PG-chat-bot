@@ -232,6 +232,34 @@ def init_db():
                         logger.info(f"Adding missing column: {col_name} to users table")
                         c.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
 
+                # Add timestamp to reactions
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='reactions' AND column_name='timestamp'
+                """)
+                if not c.fetchone():
+                    c.execute("ALTER TABLE reactions ADD COLUMN timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                    logger.info("Added timestamp column to reactions table")
+
+                # Add timestamp to blocks
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='blocks' AND column_name='timestamp'
+                """)
+                if not c.fetchone():
+                    c.execute("ALTER TABLE blocks ADD COLUMN timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                    logger.info("Added timestamp column to blocks table")
+
+                # Add weekly_badge to users
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='users' AND column_name='weekly_badge'
+                """)
+                if not c.fetchone():
+                    c.execute("ALTER TABLE users ADD COLUMN weekly_badge TEXT DEFAULT NULL")
+                    logger.info("Added weekly_badge column to users table")
+
+
                 # ---------------- Database Schema Migration ----------------
                 # Check if thread_from_post_id column exists, if not add it
                 c.execute("""
@@ -1276,77 +1304,87 @@ def calculate_user_rating(user_id):
 def calculate_top_weekly_contributors():
     """Calculate top 3 users by aura points earned in the last 7 days."""
     query = """
-        SELECT u.user_id,
-               (COALESCE(p.post_points, 0) + COALESCE(c.comment_points, 0) + COALESCE(r.rx_points, 0) - COALESCE(b.block_points, 0)) as weekly_points
+        SELECT 
+            u.user_id,
+            COALESCE(p.post_points, 0) + 
+            COALESCE(c.comment_points, 0) + 
+            COALESCE(r.reaction_points, 0) - 
+            COALESCE(b.block_points, 0) AS weekly_points
         FROM users u
         LEFT JOIN (
-            SELECT author_id, COUNT(*) * 10 as post_points
-            FROM posts 
+            SELECT author_id, COUNT(*) * 10 AS post_points
+            FROM posts
             WHERE approved = TRUE AND timestamp >= NOW() - INTERVAL '7 days'
             GROUP BY author_id
         ) p ON u.user_id = p.author_id
         LEFT JOIN (
-            SELECT author_id, COUNT(*) * 2 as comment_points
-            FROM comments 
+            SELECT author_id, COUNT(*) * 2 AS comment_points
+            FROM comments
             WHERE timestamp >= NOW() - INTERVAL '7 days'
             GROUP BY author_id
         ) c ON u.user_id = c.author_id
         LEFT JOIN (
-            SELECT c.author_id, 
-                   SUM(CASE WHEN r.type = 'like' THEN 1 ELSE 0 END) - SUM(CASE WHEN r.type = 'dislike' THEN 2 ELSE 0 END) as rx_points
+            SELECT 
+                c.author_id,
+                SUM(CASE WHEN r.type = 'like' THEN 1 ELSE 0 END) - 
+                SUM(CASE WHEN r.type = 'dislike' THEN 2 ELSE 0 END) AS reaction_points
             FROM reactions r
             JOIN comments c ON r.comment_id = c.comment_id
             WHERE r.timestamp >= NOW() - INTERVAL '7 days'
             GROUP BY c.author_id
         ) r ON u.user_id = r.author_id
         LEFT JOIN (
-            SELECT blocked_id, COUNT(*) * 10 as block_points
-            FROM blocks 
+            SELECT blocked_id, COUNT(*) * 10 AS block_points
+            FROM blocks
             WHERE timestamp >= NOW() - INTERVAL '7 days'
             GROUP BY blocked_id
         ) b ON u.user_id = b.blocked_id
-        WHERE (COALESCE(p.post_points, 0) + COALESCE(c.comment_points, 0) + COALESCE(r.rx_points, 0) - COALESCE(b.block_points, 0)) > 0
+        WHERE (COALESCE(p.post_points,0) + COALESCE(c.comment_points,0) + COALESCE(r.reaction_points,0) - COALESCE(b.block_points,0)) > 0
         ORDER BY weekly_points DESC
         LIMIT 3
     """
     return db_fetch_all(query)
 
+
 async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
-    """Weekly job to announce top contributors."""
     try:
         logger.info("🏆 Starting weekly contributor announcement job...")
         
-        # 1. Calculate top 3
+        # Clear previous badges
+        db_execute("UPDATE users SET weekly_badge = NULL")
+        
         top_users = calculate_top_weekly_contributors()
         if not top_users:
-            logger.info("ℹ️ No users earned points this week. No announcement made.")
+            logger.info("ℹ️ No users earned points this week.")
             return
 
         badges = ["🥇", "🥈", "🥉"]
         winners_info = []
         today = datetime.now(timezone.utc).date()
         
-        # 2. Record and format
         for idx, user_data in enumerate(top_users):
             user_id = user_data['user_id']
             points = user_data['weekly_points']
             rank = idx + 1
-            badge = badges[idx]
+            badge_emoji = badges[rank-1]
             
-            # Record in history (optional but good for tracking)
+            # Store in history
             db_execute("""
                 INSERT INTO weekly_rankings (user_id, week_start, rank, points_earned, badge_emoji)
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (user_id, week_start) DO UPDATE 
                 SET rank = EXCLUDED.rank, points_earned = EXCLUDED.points_earned, badge_emoji = EXCLUDED.badge_emoji
-            """, (user_id, today, rank, points, badge))
+            """, (user_id, today, rank, points, badge_emoji))
+            
+            # Update current badge in users table
+            db_execute("UPDATE users SET weekly_badge = %s WHERE user_id = %s", (badge_emoji, user_id))
             
             # Get user info for announcement
             user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_id,))
             name = user['anonymous_name'] if user else "Contributor"
-            winners_info.append(f"{badge} {name} – {points} pts")
+            winners_info.append(f"{badge_emoji} {name} – {points} pts")
             
-            # Notify winner via DM
+            # DM winner
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
@@ -1356,7 +1394,7 @@ async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
             except Exception as dm_e:
                 logger.warning(f"Could not send DM to weekly winner {user_id}: {dm_e}")
 
-        # 3. Announce in Channel
+        # Announce in channel
         if CHANNEL_ID and winners_info:
             announcement = "🏆 *Weekly Top Contributors* 🏆\n\n" + "\n".join(winners_info) + \
                           "\n\nCongratulations! Thank you for being such a blessing to this community. ✨"
@@ -1373,6 +1411,7 @@ async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         logger.error(f"❌ Error in award_weekly_badges job: {e}")
+
 
 
 @lru_cache(maxsize=128)
@@ -1509,7 +1548,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Get top 10 users with weighted aura
     top_users = db_fetch_all('''
-        SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji,
+        SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge,
                (
                 (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
                 (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
@@ -1536,7 +1575,11 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Format each user
     for idx, user in enumerate(top_users, start=1):
-        safe_name = escape_markdown(user['anonymous_name'], version=2)
+        display_name = user['anonymous_name']
+        if user.get('weekly_badge'):
+            display_name = f"{user['weekly_badge']} {display_name}"
+            
+        safe_name = escape_markdown(display_name, version=2)
         safe_sex = escape_markdown(user['sex'], version=2)
         safe_total = escape_markdown(str(user['total']), version=2)
         safe_aura = escape_markdown(format_aura(user['total']), version=2)
@@ -1555,6 +1598,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"[{safe_name}]({profile_link})\n"
             f"   {safe_total} pts {safe_aura}\n\n"
         )
+
 
     
     # Add current user's rank
@@ -2954,6 +2998,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         display_name = "🛡 Vent Author"
 
                 display_sex = get_display_sex(user_data)
+                
+                weekly_badge = user_data.get('weekly_badge')
+                if weekly_badge:
+                    display_name = f"{weekly_badge} {display_name}"
+
                 level = (rating // 10) + 1
                 bio = user_data.get('bio', 'No bio set.')
                 
@@ -4094,6 +4143,11 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     display_name = get_display_name(user)
     display_sex = get_display_sex(user)
     rating = calculate_user_rating(user_id)
+    
+    weekly_badge = user.get('weekly_badge')
+    if weekly_badge:
+        display_name = f"{weekly_badge} {display_name}"
+
     
     
     followers = db_fetch_all(
@@ -8283,6 +8337,7 @@ def mini_app_leaderboard():
                 u.anonymous_name,
                 u.sex,
                 u.avatar_emoji,
+                u.weekly_badge,
                 (
                     (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
                     (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
@@ -8310,8 +8365,10 @@ def mini_app_leaderboard():
                 'sex': user['sex'],
                 'avatar': user['avatar_emoji'] or "",
                 'points': user['total'],
-                'aura': format_aura(user['total'])
+                'aura': format_aura(user['total']),
+                'weekly_badge': user['weekly_badge'] or ""
             })
+
 
         
         return jsonify({
@@ -8374,8 +8431,10 @@ def mini_app_profile(user_id):
                 'name': user['anonymous_name'],
                 'sex': user['sex'],
                 'avatar': user['avatar_emoji'] or "",
+                'weekly_badge': user['weekly_badge'] or "",
                 'rating': rating_display,
                 'aura': aura_display,
+
 
                 'stats': {
                     'followers': follower_count,
