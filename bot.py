@@ -3868,9 +3868,11 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not comment['is_admin'] else ""
         
         author_label = f"✅ _[vent author]({escape_markdown(profile_link, version=2)})_" if is_author else f"_[{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}]({profile_link})_"
-        # FIX: Include avatar_emoji if available
-        avatar = comment.get('avatar_emoji') or comment.get('sex') or '👤'
-        author_text = f"{avatar} {author_label} {aura_text}".strip()
+        # FIX: Include both sex emoji and avatar_emoji if available
+        sex_emoji = comment.get('sex') or '👤'
+        avatar_emoji = comment.get('avatar_emoji')
+        author_avatar = f"{sex_emoji} {avatar_emoji}" if avatar_emoji else sex_emoji
+        author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
         # Threading logic - FIX: check current batch msg_ids first
         reply_to_id = msg_ids.get(parent_id) or parent_msg_ids.get(parent_id)
@@ -3913,8 +3915,9 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     else:
         author_label = f"_[{escape_markdown(display_name, version=2)}]({reply_profile_link})_"
         
-    # FIX: Use avatar_emoji if available, otherwise display_sex
-    author_avatar = avatar_emoji or display_sex
+    # FIX: Use both sex emoji and avatar_emoji if available
+    author_sex = display_sex or '👤'
+    author_avatar = f"{author_sex} {avatar_emoji}" if avatar_emoji else author_sex
     reply_author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
     # Pass pre-fetched reaction data if available (e.g. from show_more_replies)
@@ -7578,7 +7581,7 @@ async function openPost(id) {
     box.innerHTML = `
       <div class="card">
         <div class="post-header">
-          <div class="avatar">${esc(p.author?.avatar || p.author?.sex || '👤')}</div>
+          <div class="avatar">${esc(p.author?.sex || '👤')} ${esc(p.author?.avatar || '')}</div>
           <div>
             <div class="post-author">${esc(p.author?.name || 'Anonymous')} ${esc(p.author?.aura||'')}</div>
             <div class="post-time">${esc(p.time_ago)}</div>
@@ -7623,7 +7626,7 @@ async function loadComments(id) {
       const children = c.children.map(ch => renderC(ch, depth+1)).join('');
       return `
         <div class="comment-item ${isReply}">
-          <div class="avatar" style="width:28px; height:28px; font-size:14px;">${esc(c.author?.avatar || '👤')}</div>
+          <div class="avatar" style="width:28px; height:28px; font-size:14px;">${esc(c.author?.sex || '👤')} ${esc(c.author?.avatar || '')}</div>
           <div class="comment-body">
             <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
               <span style="font-size:0.8rem; font-weight:600; color:var(--primary);">${esc(c.author?.name)} ${esc(c.author?.aura)}</span>
