@@ -448,6 +448,25 @@ async def fix_vent_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in fix_vent_numbers: {e}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
+async def fix_missing_sex(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to fix missing sex emoji for users with avatars"""
+    user_id = str(update.effective_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user.get('is_admin'):
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    # Fix users where sex is NULL or empty but avatar_emoji exists
+    rows_fixed = db_execute("""
+        UPDATE users 
+        SET sex = '👤' 
+        WHERE (sex IS NULL OR sex = '') 
+        AND avatar_emoji IS NOT NULL
+    """)
+    
+    await update.message.reply_text(f"✅ Fixed missing sex for {rows_fixed} users.")
+
+
 async def reset_weekly_badges_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to manually trigger weekly badge awarding."""
     user_id = str(update.effective_user.id)
@@ -3775,13 +3794,17 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     # OPTIMIZED: Batch load comments and user data using a JOIN
     comments = db_fetch_all("""
-        SELECT c.*, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
+        SELECT c.*, u.sex AS user_sex, u.avatar_emoji, u.anonymous_name, u.is_admin
         FROM comments c
         LEFT JOIN users u ON c.author_id = u.user_id
         WHERE c.post_id = %s
         ORDER BY c.timestamp ASC
         LIMIT %s OFFSET %s
     """, (post_id, per_page, offset))
+
+    # FIX: Restore sex field from aliased user_sex
+    for c in comments:
+        c['sex'] = c.pop('user_sex', '👤') or '👤'
 
     # Count all comments for pagination
     total_comments = count_all_comments(post_id)
@@ -3943,11 +3966,16 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 SELECT c.* FROM comments c
                 JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
             )
-            SELECT ct.*, u.sex, u.anonymous_name, u.is_admin, u.avatar_emoji
+            SELECT ct.*, u.sex AS user_sex, u.anonymous_name, u.is_admin, u.avatar_emoji
             FROM comment_tree ct
             LEFT JOIN users u ON ct.author_id = u.user_id
             ORDER BY ct.timestamp ASC LIMIT %s OFFSET %s
         """, (comment_id, replies_per_page, offset))
+        
+        # FIX: Restore sex field from aliased user_sex
+        for r in replies:
+            r['sex'] = r.pop('user_sex', '👤') or '👤'
+            
     except Exception as e:
         logger.error(f"Error fetching more replies for comment {comment_id}: {e}")
         await query.answer("❌ Error loading replies", show_alert=True)
@@ -6884,6 +6912,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("inbox", show_inbox))
     app.add_handler(CommandHandler("fixventnumbers", fix_vent_numbers))
+    app.add_handler(CommandHandler("fix_missing_sex", fix_missing_sex))
     app.add_handler(CommandHandler("recount_comments", recount_comments))
     app.add_handler(CommandHandler("reset_weekly_badges", reset_weekly_badges_command))
     app.add_handler(CallbackQueryHandler(button_handler))
