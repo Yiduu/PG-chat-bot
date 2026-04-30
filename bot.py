@@ -1339,11 +1339,13 @@ def calculate_top_weekly_contributors():
             WHERE timestamp >= NOW() - INTERVAL '7 days'
             GROUP BY blocked_id
         ) b ON u.user_id = b.blocked_id
-        WHERE (COALESCE(p.post_points,0) + COALESCE(c.comment_points,0) + COALESCE(r.reaction_points,0) - COALESCE(b.block_points,0)) > 0
+        WHERE u.is_admin = FALSE
+          AND (COALESCE(p.post_points,0) + COALESCE(c.comment_points,0) + COALESCE(r.reaction_points,0) - COALESCE(b.block_points,0)) > 0
         ORDER BY weekly_points DESC
         LIMIT 3
     """
     return db_fetch_all(query)
+
 
 
 async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
