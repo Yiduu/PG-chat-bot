@@ -7049,7 +7049,7 @@ def mini_app_page():
     """Complete Mini App - returns the old UI style with new features integrated."""
 
     # Updated Branding Summary Colors
-    _bot      = BOT_USERNAME
+    _bot      = BOT_USERNAME or ""
     _primary  = "#FFD966"
     _bg_color = "#0a0a0a"
     _card_bg  = "rgba(26, 26, 26, 0.7)"
@@ -7397,7 +7397,7 @@ def mini_app_page():
 <canvas id="particleCanvas"></canvas>
 
 <div id="authScreen">
-  <img src="/static/images/logo.jpg" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);">
+  <img src="/static/images/vent logo.png" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);">
   <div class="spinner"></div>
   <h2 style="margin-top: 24px; color: var(--primary); font-size: 1.5rem; font-weight: 700;">Christian Vent</h2>
   <p style="color: var(--text-dim); margin-top: 8px;">Preparing your secure space...</p>
@@ -7406,7 +7406,7 @@ def mini_app_page():
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/logo.jpg" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/vent logo.png" class="app-logo" alt="Christian Vent Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
@@ -7984,62 +7984,81 @@ function initParticles() {
 }
 
 async function init() {
-  initParticles();
-  renderCategories();
-  
-  document.getElementById('ventInput').addEventListener('input', function() {
-    document.getElementById('charCount').textContent = this.value.length + '/5000';
-  });
-  
-  let searchTimeout;
-  document.getElementById('searchInput').addEventListener('input', function() {
-    clearTimeout(searchTimeout);
-    state.searchQuery = this.value.trim();
-    searchTimeout = setTimeout(() => { state.feedPage = 1; loadFeed(); }, 600);
-  });
-  
-  document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => switchPage(b.dataset.page));
-  document.getElementById('submitVentBtn').onclick = submitVent;
-  document.getElementById('loadMoreBtn').onclick = () => loadFeed(true);
-  document.getElementById('postCommentBtn').onclick = postComment;
-  document.getElementById('saveProfileBtn').onclick = saveProfile;
-  document.getElementById('saveSettingsBtn').onclick = saveSettings;
-  
-  // Auth
-  const tg = window.Telegram?.WebApp;
-  if(tg) {
-    try { tg.expand(); tg.ready(); } catch(e){}
-    const user = tg.initDataUnsafe?.user;
-    if(user?.id) { state.userId = String(user.id); }
-  }
-  if(!state.userId) {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token');
-    if(token) {
-      try {
-        const res = await fetch(CONFIG.apiBase + '/api/verify-token/' + token);
-        const data = await res.json();
-        if(data.success) state.userId = String(data.user_id);
-      } catch(e){}
-    }
-  }
-  
-  if(state.userId) {
-    loadFeed();
-    apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`).then(d => { state.profileData = d.data; });
+  try {
+    initParticles();
+    renderCategories();
     
-    setTimeout(() => {
-      document.getElementById('authScreen').style.opacity = '0';
+    document.getElementById('ventInput').addEventListener('input', function() {
+      document.getElementById('charCount').textContent = this.value.length + '/5000';
+    });
+    
+    let searchTimeout;
+    document.getElementById('searchInput').addEventListener('input', function() {
+      clearTimeout(searchTimeout);
+      state.searchQuery = this.value.trim();
+      searchTimeout = setTimeout(() => { state.feedPage = 1; loadFeed(); }, 600);
+    });
+    
+    document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => switchPage(b.dataset.page));
+    document.getElementById('submitVentBtn').onclick = submitVent;
+    document.getElementById('loadMoreBtn').onclick = () => loadFeed(true);
+    document.getElementById('postCommentBtn').onclick = postComment;
+    document.getElementById('saveProfileBtn').onclick = saveProfile;
+    document.getElementById('saveSettingsBtn').onclick = saveSettings;
+    
+    // Auth
+    const tg = window.Telegram?.WebApp;
+    if(tg) {
+      try { tg.expand(); tg.ready(); } catch(e){}
+      const user = tg.initDataUnsafe?.user;
+      if(user?.id) { state.userId = String(user.id); }
+    }
+    
+    if(!state.userId) {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+      if(token) {
+        try {
+          const res = await fetch(CONFIG.apiBase + '/api/verify-token/' + token);
+          if (res.ok) {
+            const data = await res.json();
+            if(data.success) state.userId = String(data.user_id);
+          }
+        } catch(e){ console.error('Token verify failed:', e); }
+      }
+    }
+    
+    console.log('Final userId:', state.userId);
+    
+    if(state.userId) {
+      loadFeed();
+      apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`)
+        .then(d => { state.profileData = d.data; })
+        .catch(e => console.error('Profile load error:', e));
+      
       setTimeout(() => {
-        document.getElementById('authScreen').style.display = 'none';
-        document.getElementById('mainApp').style.display = 'block';
-      }, 300);
-    }, 400);
-  } else {
+        const auth = document.getElementById('authScreen');
+        auth.style.transition = 'opacity 0.4s ease';
+        auth.style.opacity = '0';
+        setTimeout(() => {
+          auth.style.display = 'none';
+          document.getElementById('mainApp').style.display = 'block';
+        }, 400);
+      }, 500);
+    } else {
+      document.getElementById('authScreen').innerHTML = `
+        <div style="font-size:3rem; margin-bottom:20px;">🔒</div>
+        <h2 style="color:var(--primary); font-size: 1.8rem;">Access Restricted</h2>
+        <p style="color:var(--text-dim); text-align:center; padding:20px; font-size: 1rem; line-height:1.6;">Please open this application from within the Christian Vent Telegram bot to continue securely.</p>
+      `;
+    }
+  } catch (err) {
+    console.error('Init error:', err);
     document.getElementById('authScreen').innerHTML = `
-      <div style="font-size:3rem; margin-bottom:20px;">🔒</div>
-      <h2 style="color:var(--primary); font-size: 1.8rem;">Access Restricted</h2>
-      <p style="color:var(--text-dim); text-align:center; padding:20px; font-size: 1rem; line-height:1.6;">Please open this application from within the Christian Vent Telegram bot to continue securely.</p>
+      <div style="font-size:3rem; margin-bottom:20px;">⚠️</div>
+      <h2 style="color:var(--primary);">App Error</h2>
+      <p style="color:var(--text-dim); padding:20px;">\${err.message}</p>
+      <button class="btn-primary" onclick="location.reload()">Retry</button>
     `;
   }
 }
@@ -8053,7 +8072,14 @@ document.addEventListener('DOMContentLoaded', init);
     return html
 
 
-# ==================== MINI APP API ENDPOINTS ====================
+@flask_app.route('/api/verify-token/<token>')
+def mini_app_verify_token(token):
+    """Verify JWT token and return user_id"""
+    try:
+        data = jwt.decode(token, TOKEN, algorithms=['HS256'])
+        return jsonify({'success': True, 'user_id': data['user_id']})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 401
 
 @flask_app.route('/api/mini-app/submit-vent', methods=['POST'])
 def mini_app_submit_vent():
