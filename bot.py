@@ -3929,9 +3929,9 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not comment['is_admin'] else ""
         
         if is_author:
-            # Vent author: show only sex emoji + "Vent author" (no avatar, no aura)
+            # Vent author: show sex emoji + clickable "Vent author" (no custom avatar, no aura)
             sex_emoji = comment.get('sex') or '👤'
-            author_text = f"{sex_emoji} Vent author"
+            author_text = f"{sex_emoji} _[{escape_markdown('Vent author', version=2)}]({profile_link})_"
         else:
             # Normal user: show full display (sex + custom avatar + name + aura)
             sex_emoji = comment.get('sex') or '👤'
@@ -3977,9 +3977,9 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     
     # Check if reply author is the vent author
     if str(reply['author_id']) == str(post_author_id):
-        # Vent author reply: show only sex emoji + "Vent author"
+        # Vent author reply: clickable "Vent author" with sex emoji
         sex_emoji = display_sex or '👤'
-        reply_author_text = f"{sex_emoji} Vent author"
+        reply_author_text = f"{sex_emoji} _[{escape_markdown('Vent author', version=2)}]({reply_profile_link})_"
     else:
         # Normal user
         author_sex = display_sex or '👤'
@@ -7112,7 +7112,7 @@ def mini_app_page():
       padding: 10px 16px;
     }
     .app-logo {
-      width: 100px;
+      width: 130px;
       height: auto;
       max-width: 80%;
       border-radius: 24px;
