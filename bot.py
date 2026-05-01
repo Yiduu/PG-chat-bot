@@ -408,6 +408,14 @@ def init_db():
                         ON CONFLICT (user_id) DO UPDATE SET is_admin = TRUE
                     ''', (ADMIN_ID, "Admin"))
 
+                # ---------------- Performance Indexes ----------------
+                c.execute("CREATE INDEX IF NOT EXISTS idx_posts_author_id ON posts(author_id)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_posts_approved_timestamp ON posts(approved, timestamp DESC)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_comments_author_id ON comments(author_id)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_comments_timestamp ON comments(timestamp DESC)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_post_categories_post_id ON post_categories(post_id)")
+
             conn.commit()
         logging.info("PostgreSQL database initialized successfully")
     except Exception as e:
@@ -7389,7 +7397,7 @@ def mini_app_page():
 <canvas id="particleCanvas"></canvas>
 
 <div id="authScreen">
-  <img src="/static/images/logo.png" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);">
+  <img src="/static/images/logo.jpg" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);">
   <div class="spinner"></div>
   <h2 style="margin-top: 24px; color: var(--primary); font-size: 1.5rem; font-weight: 700;">Christian Vent</h2>
   <p style="color: var(--text-dim); margin-top: 8px;">Preparing your secure space...</p>
@@ -7398,7 +7406,7 @@ def mini_app_page():
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/logo.png" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/logo.jpg" class="app-logo" alt="Christian Vent Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
@@ -8017,16 +8025,16 @@ async function init() {
   }
   
   if(state.userId) {
+    loadFeed();
+    apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`).then(d => { state.profileData = d.data; });
+    
     setTimeout(() => {
       document.getElementById('authScreen').style.opacity = '0';
       setTimeout(() => {
         document.getElementById('authScreen').style.display = 'none';
         document.getElementById('mainApp').style.display = 'block';
-        loadFeed();
-        // Load profile once for the "replying as" logic
-        apiFetch(\`/api/mini-app/profile/\${state.userId}?viewer_id=\${state.userId}\`).then(d => { state.profileData = d.data; });
-      }, 500);
-    }, 1200);
+      }, 300);
+    }, 400);
   } else {
     document.getElementById('authScreen').innerHTML = `
       <div style="font-size:3rem; margin-bottom:20px;">🔒</div>
