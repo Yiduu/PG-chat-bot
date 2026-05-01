@@ -1055,7 +1055,7 @@ def login_page():
 <body>
     <div class="login-container">
         <div class="brand">
-            <img src="/static/images/logo.jpg" class="logo" alt="Christian Vent Logo">
+            <img src="/static/images/logo.png" class="logo" alt="Christian Vent Logo">
             <h1 class="title">Christian Vent</h1>
             <p class="subtitle">Share your thoughts anonymously</p>
         </div>
@@ -7389,7 +7389,7 @@ def mini_app_page():
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/logo.jpg" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/logo.png" class="app-logo" alt="Christian Vent Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
