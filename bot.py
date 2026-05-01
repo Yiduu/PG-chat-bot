@@ -7100,15 +7100,19 @@ def mini_app_page():
     /* ===== HEADER ===== */
     .app-header {
       text-align: center;
-      padding: 20px 16px;
+      padding: 10px 16px;
     }
     .app-logo {
-      width: 72px;
-      height: 72px;
-      border-radius: 18px;
-      margin-bottom: 16px;
-      box-shadow: 0 6px 16px rgba(SLOT_RGB, 0.25);
-      border: 1px solid var(--border);
+      width: 100px;
+      height: auto;
+      max-width: 80%;
+      border-radius: 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+      border: none;
+      display: block;
+      margin-left: auto;
+      margin-right: auto;
     }
     .app-title {
       font-size: 1.6rem;
