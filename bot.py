@@ -7063,6 +7063,7 @@ def mini_app_page():
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
       --primary: SLOT_PRIMARY;
+      --primary-rgb: SLOT_RGB;
       --primary-dim: rgba(SLOT_RGB, 0.15);
       --bg-color: #0a0a0a;
       --card-bg: rgba(26, 26, 26, 0.7);
@@ -7076,6 +7077,8 @@ def mini_app_page():
     body {
       font-family: var(--font-family);
       background-color: var(--bg-color);
+      background-image: radial-gradient(circle at 30% 20%, rgba(SLOT_RGB, 0.08) 0%, transparent 60%),
+                        radial-gradient(circle at 80% 70%, rgba(SLOT_RGB, 0.05) 0%, transparent 50%);
       color: var(--text);
       min-height: 100vh;
       overflow-x: hidden;
@@ -7919,18 +7922,26 @@ function initParticles() {
   let w = canvas.width = window.innerWidth;
   let h = canvas.height = window.innerHeight;
   const particles = [];
+  const rgb = getComputedStyle(document.documentElement).getPropertyValue('--primary-rgb').trim() || '255, 217, 102';
   
-  for(let i=0; i<40; i++) {
-    particles.push({ x: Math.random()*w, y: Math.random()*h, r: Math.random()*2+0.5, vx: (Math.random()-0.5)*0.3, vy: (Math.random()-0.5)*0.3 });
+  for(let i=0; i<30; i++) {
+    particles.push({ 
+      x: Math.random()*w, 
+      y: Math.random()*h, 
+      r: Math.random()*2+0.5, 
+      vx: (Math.random()-0.5)*0.3, 
+      vy: (Math.random()-0.5)*0.3,
+      a: Math.random() * 0.25 + 0.1 
+    });
   }
   
   function draw() {
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
     particles.forEach(p => {
       p.x += p.vx; p.y += p.vy;
       if(p.x < 0) p.x = w; if(p.x > w) p.x = 0;
       if(p.y < 0) p.y = h; if(p.y > h) p.y = 0;
+      ctx.fillStyle = `rgba(${rgb}, ${p.a})`;
       ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
     });
     requestAnimationFrame(draw);
