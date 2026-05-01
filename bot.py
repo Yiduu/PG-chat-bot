@@ -7397,7 +7397,7 @@ def mini_app_page():
 <canvas id="particleCanvas"></canvas>
 
 <div id="authScreen">
-  <img src="/static/images/vent logo.png" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);">
+  <img src="/static/images/logo.jpg" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);">
   <div class="spinner"></div>
   <h2 style="margin-top: 24px; color: var(--primary); font-size: 1.5rem; font-weight: 700;">Christian Vent</h2>
   <p style="color: var(--text-dim); margin-top: 8px;">Preparing your secure space...</p>
@@ -7406,7 +7406,7 @@ def mini_app_page():
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/vent logo.png" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/logo.jpg" class="app-logo" alt="Christian Vent Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
@@ -7706,7 +7706,7 @@ async function openPost(id) {
   respondingLabel.innerHTML = '';
   
   try {
-    const data = await apiFetch(\`/api/mini-app/post/\${id}\`);
+    const data = await apiFetch(`/api/mini-app/post/${id}`);
     const p = data.data;
     state.currentPostAuthorId = String(p.author_id);
     const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
@@ -7737,7 +7737,7 @@ async function loadComments(id) {
   const box = document.getElementById('detailCommentsBox');
   box.innerHTML = '<div class="skeleton"></div><div class="skeleton" style="height:60px;"></div>';
   try {
-    const data = await apiFetch(\`/api/mini-app/post/\${id}/comments\`);
+    const data = await apiFetch(`/api/mini-app/post/${id}/comments`);
     const comments = data.data || [];
     
     if(!comments.length) { box.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-dim); background:rgba(255,255,255,0.02); border-radius:16px;">No replies yet. Be the first to respond!</div>'; return; }
@@ -7757,37 +7757,37 @@ async function loadComments(id) {
       const displayName = isPostAuthor ? "Vent author" : (c.author?.name || 'Anonymous');
       const replyAsName = String(state.userId) === state.currentPostAuthorId ? "Vent author" : (state.profileData?.name || "Anonymous");
       
-      let actions = `<button class="action-btn" onclick="toggleReply(\${c.id})">Reply</button>`;
+      let actions = `<button class="action-btn" onclick="toggleReply(${c.id})">Reply</button>`;
       if(isMine) {
         actions += `
-          <button class="action-btn" onclick="editComment(\${c.id}, '\${esc(c.content.replace(/'/g, "\\\\'"))}')">Edit</button>
-          <button class="action-btn" style="color:#ff5555;" onclick="deleteComment(\${c.id})">Delete</button>
+          <button class="action-btn" onclick="editComment(${c.id}, '${esc(c.content.replace(/'/g, "\\'"))}')">Edit</button>
+          <button class="action-btn" style="color:#ff5555;" onclick="deleteComment(${c.id})">Delete</button>
         `;
       }
       
       const children = c.children.map(ch => renderC(ch, depth+1)).join('');
       return `
-        <div class="comment-item \${isReply}">
-          <div class="avatar" style="width:32px; height:32px; font-size:16px;">\${esc(c.author?.sex || '👤')} \${esc(c.author?.avatar || '')}</div>
-          <div class="comment-body" style="\${isPostAuthor ? 'border-color: rgba(255, 217, 102, 0.3); background: rgba(255, 217, 102, 0.03);' : ''}">
+        <div class="comment-item ${isReply}">
+          <div class="avatar" style="width:32px; height:32px; font-size:16px;">${esc(c.author?.sex || '👤')} ${esc(c.author?.avatar || '')}</div>
+          <div class="comment-body" style="${isPostAuthor ? 'border-color: rgba(255, 217, 102, 0.3); background: rgba(255, 217, 102, 0.03);' : ''}">
             <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
-              <span style="font-size:0.85rem; font-weight:700; color:\${isPostAuthor ? 'var(--primary)' : 'var(--text)'};">\${esc(displayName)} \${esc(c.author?.aura)}</span>
-              <span style="font-size:0.7rem; color:var(--text-dim);">\${esc(c.time_ago)}</span>
+              <span style="font-size:0.85rem; font-weight:700; color:${isPostAuthor ? 'var(--primary)' : 'var(--text)'};">${esc(displayName)} ${esc(c.author?.aura)}</span>
+              <span style="font-size:0.7rem; color:var(--text-dim);">${esc(c.time_ago)}</span>
             </div>
-            <div style="font-size:0.95rem; line-height:1.5; color: rgba(255,255,255,0.9);" id="comment-content-\${c.id}">\${esc(c.content)}</div>
-            <div class="comment-actions">\${actions}</div>
+            <div style="font-size:0.95rem; line-height:1.5; color: rgba(255,255,255,0.9);" id="comment-content-${c.id}">${esc(c.content)}</div>
+            <div class="comment-actions">${actions}</div>
             
-            <div class="inline-reply-box" id="reply-box-\${c.id}">
-              <div style="font-size:0.75rem; color:var(--primary); margin-bottom:6px; font-weight:700; text-transform:uppercase;">Replying as \${esc(replyAsName)}</div>
-              <textarea class="vent-textarea" style="min-height:70px; margin-bottom:8px;" id="reply-text-\${c.id}" placeholder="Write your reply..."></textarea>
+            <div class="inline-reply-box" id="reply-box-${c.id}">
+              <div style="font-size:0.75rem; color:var(--primary); margin-bottom:6px; font-weight:700; text-transform:uppercase;">Replying as ${esc(replyAsName)}</div>
+              <textarea class="vent-textarea" style="min-height:70px; margin-bottom:8px;" id="reply-text-${c.id}" placeholder="Write your reply..."></textarea>
               <div style="text-align:right;">
-                <button class="btn-ghost" style="padding:6px 12px; font-size:0.75rem; border:none; background:transparent;" onclick="toggleReply(\${c.id})">Cancel</button>
-                <button class="btn-primary" style="padding:8px 20px; width:auto; font-size:0.8rem; display:inline-block;" onclick="sendReply(\${c.id})">Post Reply</button>
+                <button class="btn-ghost" style="padding:6px 12px; font-size:0.75rem; border:none; background:transparent;" onclick="toggleReply(${c.id})">Cancel</button>
+                <button class="btn-primary" style="padding:8px 20px; width:auto; font-size:0.8rem; display:inline-block;" onclick="sendReply(${c.id})">Post Reply</button>
               </div>
             </div>
           </div>
         </div>
-        \${children}
+        ${children}
       `;
     };
     box.innerHTML = roots.map(c => renderC(c, 0)).join('');
@@ -7860,14 +7860,14 @@ async function loadLeaderboard() {
     const data = await apiFetch('/api/mini-app/leaderboard');
     box.innerHTML = (data.data||[]).map((u,i) => `
       <div style="display:flex; align-items:center; gap:16px; padding:16px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
-        <div style="width:30px; font-weight:800; font-size:1.1rem; color:\${i===0?'#FFD700':i===1?'#C0C0C0':i===2?'#CD7F32':'var(--text-dim)'};">\${i<3?['👑','🥈','🥉'][i]:i+1}</div>
-        <div class="avatar" style="width:46px; height:46px;">\${esc(u.avatar||'👤')}</div>
+        <div style="width:30px; font-weight:800; font-size:1.1rem; color:${i===0?'#FFD700':i===1?'#C0C0C0':i===2?'#CD7F32':'var(--text-dim)'};">${i<3?['👑','🥈','🥉'][i]:i+1}</div>
+        <div class="avatar" style="width:46px; height:46px;">${esc(u.avatar||'👤')}</div>
         <div style="flex:1;">
-          <div style="font-weight:700; font-size:1rem;">\${esc(u.name)}</div>
-          <div style="font-size:0.8rem; color:var(--text-dim); font-weight:500;">\${esc(u.aura)}</div>
+          <div style="font-weight:700; font-size:1rem;">${esc(u.name)}</div>
+          <div style="font-size:0.8rem; color:var(--text-dim); font-weight:500;">${esc(u.aura)}</div>
         </div>
         <div style="text-align:right;">
-          <div style="font-weight:800; color:var(--primary); font-size:1.1rem;">\${u.points}</div>
+          <div style="font-weight:800; color:var(--primary); font-size:1.1rem;">${u.points}</div>
           <div style="font-size:0.65rem; color:var(--text-dim); text-transform:uppercase; font-weight:700;">points</div>
         </div>
       </div>
@@ -7880,21 +7880,21 @@ async function loadProfile() {
   const box = document.getElementById('profileContainer');
   box.innerHTML = '<div class="skeleton" style="height:300px;"></div>';
   try {
-    const data = await apiFetch(\`/api/mini-app/profile/\${state.userId}?viewer_id=\${state.userId}\`);
+    const data = await apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`);
     const p = data.data; state.profileData = p;
     
     box.innerHTML = `
       <div class="card" style="text-align:center; padding: 30px 20px;">
         <button class="btn-ghost" onclick="setupEditProfile()" style="position:absolute; right:20px; top:20px; padding:6px 12px; font-size:0.75rem;">Edit Profile</button>
-        <div class="avatar" style="width:100px; height:100px; font-size:48px; margin:0 auto 20px; border:3px solid var(--primary); border-radius:30px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.2);">\${esc(p.avatar||'👤')}</div>
-        <div style="font-size:1.6rem; font-weight:800; color:var(--primary); letter-spacing:-0.5px;">\${esc(p.name)}</div>
-        <div style="font-size:0.95rem; color:var(--text-dim); margin-bottom:20px; font-weight:600;">\${esc(p.aura)} • \${p.rating} Reputation</div>
-        \${p.bio ? `<div style="font-style:italic; font-size:1rem; margin-bottom:30px; line-height:1.6; color:rgba(255,255,255,0.8); background:rgba(255,255,255,0.03); padding:16px; border-radius:12px;">"\${esc(p.bio)}"</div>` : ''}
+        <div class="avatar" style="width:100px; height:100px; font-size:48px; margin:0 auto 20px; border:3px solid var(--primary); border-radius:30px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.2);">${esc(p.avatar||'👤')}</div>
+        <div style="font-size:1.6rem; font-weight:800; color:var(--primary); letter-spacing:-0.5px;">${esc(p.name)}</div>
+        <div style="font-size:0.95rem; color:var(--text-dim); margin-bottom:20px; font-weight:600;">${esc(p.aura)} • ${p.rating} Reputation</div>
+        ${p.bio ? `<div style="font-style:italic; font-size:1rem; margin-bottom:30px; line-height:1.6; color:rgba(255,255,255,0.8); background:rgba(255,255,255,0.03); padding:16px; border-radius:12px;">"${esc(p.bio)}"</div>` : ''}
         
         <div style="display:flex; justify-content:space-around; border-top:1px solid var(--border); padding-top:24px;">
-          <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">\${p.stats?.posts||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Vents</div></div>
-          <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">\${p.stats?.comments||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Replies</div></div>
-          <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">\${p.stats?.followers||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Followers</div></div>
+          <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">${p.stats?.posts||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Vents</div></div>
+          <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">${p.stats?.comments||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Replies</div></div>
+          <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">${p.stats?.followers||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Followers</div></div>
         </div>
       </div>
     `;
@@ -7909,7 +7909,7 @@ function setupEditProfile() {
   state.selectedEmoji = p.avatar;
   
   const grid = document.getElementById('emoji-grid');
-  grid.innerHTML = CONFIG.emojis.map(e => `<div class="emoji-item \${e===state.selectedEmoji?'selected':''}" data-e="\${e}">\${e}</div>`).join('');
+  grid.innerHTML = CONFIG.emojis.map(e => `<div class="emoji-item ${e===state.selectedEmoji?'selected':''}" data-e="${e}">${e}</div>`).join('');
   grid.querySelectorAll('.emoji-item').forEach(el => el.onclick = () => {
     grid.querySelectorAll('.emoji-item').forEach(i => i.classList.remove('selected'));
     el.classList.add('selected'); state.selectedEmoji = el.dataset.e;
@@ -7923,7 +7923,7 @@ async function saveProfile() {
   
   const btn = document.getElementById('saveProfileBtn'); btn.disabled = true; btn.textContent = 'Saving...';
   try {
-    await apiFetch(\`/api/mini-app/profile/\${state.userId}\`, {
+    await apiFetch(`/api/mini-app/profile/${state.userId}`, {
       method: 'PUT', body: JSON.stringify({ name, bio, avatar: state.selectedEmoji })
     });
     toast('✅ Profile saved successfully');
@@ -7936,7 +7936,7 @@ async function saveProfile() {
 // SETTINGS
 async function loadSettings() {
   try {
-    const data = await apiFetch(\`/api/mini-app/settings/\${state.userId}\`);
+    const data = await apiFetch(`/api/mini-app/settings/${state.userId}`);
     document.getElementById('set-notifications').checked = data.data.notifications;
     document.getElementById('set-privacy').checked = data.data.privacy_public;
   } catch(e) {}
@@ -7945,7 +7945,7 @@ async function loadSettings() {
 async function saveSettings() {
   const btn = document.getElementById('saveSettingsBtn'); btn.disabled = true; btn.textContent = 'Applying...';
   try {
-    await apiFetch(\`/api/mini-app/settings/\${state.userId}\`, {
+    await apiFetch(`/api/mini-app/settings/${state.userId}`, {
       method: 'POST', body: JSON.stringify({
         notifications: document.getElementById('set-notifications').checked,
         privacy_public: document.getElementById('set-privacy').checked
