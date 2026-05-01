@@ -7778,7 +7778,8 @@ async function loadComments(id) {
       
       let actions = "<button class='action-btn' onclick='toggleReply(" + c.id + ")'>Reply</button>";
       if(isMine) {
-        actions += " <button class='action-btn' onclick='editComment(" + c.id + ", \"" + esc(c.content.replace(/'/g, "\\'").replace(/"/g, "&quot;")) + "\")'>Edit</button>" +
+        const safeContent = encodeURIComponent(c.content);
+        actions += " <button class='action-btn' onclick='editComment(" + c.id + ", decodeURIComponent(\"" + safeContent + "\"))'>Edit</button>" +
           "<button class='action-btn' style='color:#ff5555;' onclick='deleteComment(" + c.id + ")'>Delete</button>";
       }
       
