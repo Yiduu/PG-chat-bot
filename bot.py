@@ -6068,7 +6068,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_updated_profile(user_id, query.message.chat.id, context)
             
         elif query.data == 'clear_avatar':
-            db_execute("UPDATE users SET avatar_emoji = NULL WHERE user_id = %s", (user_id))
+            db_execute("UPDATE users SET avatar_emoji = NULL WHERE user_id = %s", (user_id,))
             await query.answer("✅ Avatar removed!", show_alert=True)
             await send_updated_profile(user_id, query.message.chat.id, context)
             
@@ -7066,8 +7066,8 @@ def mini_app_page():
       --primary-dim: rgba(SLOT_RGB, 0.15);
       --bg-color: #0a0a0a;
       --card-bg: rgba(26, 26, 26, 0.7);
-      --border: SLOT_BORDER;
-      --text: SLOT_TEXT;
+      --border: rgba(255, 255, 255, 0.1);
+      --text: #f0f0f0;
       --text-dim: rgba(255, 255, 255, 0.5);
       --font-family: 'Inter', sans-serif;
       --radius: 12px;
