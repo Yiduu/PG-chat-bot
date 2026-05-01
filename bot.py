@@ -6986,9 +6986,6 @@ def main():
         logger.error(f"Failed to initialize database: {e}")
         return
 
-
-
-    
     # Create and run Telegram bot
     app = Application.builder().token(TOKEN).post_init(set_bot_commands).build()
     
@@ -7009,8 +7006,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_message_text))
     
     app.add_error_handler(error_handler)
-    
-    
     
     # Start Flask server in a separate thread for Render
     port = int(os.environ.get('PORT', 5000))
@@ -7035,8 +7030,6 @@ def main():
     logger.info("Starting bot polling...")
     app.run_polling()
 
-# In bot.py, replace the simple /mini_app route with this:
-
 @flask_app.route('/mini_app')
 def mini_app_route():
     # Helper to allow both /mini_app (legacy) and direct call
@@ -7044,15 +7037,16 @@ def mini_app_route():
 
 def mini_app_page(user_id=None):
     """Complete Mini App - returns the old UI style with new features integrated."""
-
+    import json
+    
     # Updated Branding Summary Colors
-    _bot      = BOT_USERNAME or ""
     _primary  = "#FFD966"
     _bg_color = "#0a0a0a"
     _card_bg  = "rgba(26, 26, 26, 0.7)"
     _border   = "rgba(255, 255, 255, 0.1)"
     _text     = "#f0f0f0"
     _rgb      = "255, 217, 102" # RGB for #FFD966
+    _bot      = BOT_USERNAME or ""
 
     html = ("""<!DOCTYPE html>
 <html lang="en">
@@ -7062,6 +7056,7 @@ def mini_app_page(user_id=None):
   <title>Christian Vent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:,"> <!-- Prevent favicon 404 -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     /* ===== CSS RESET & VARIABLES ===== */
@@ -7651,8 +7646,8 @@ async function loadFeed(append = false) {
   if(!append) { container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>'; loadMore.style.display='none'; }
   
   try {
-    let url = `/api/mini-app/get-posts?page=${state.feedPage}&user_id=${state.userId}`;
-    if(state.searchQuery) url = `/api/mini-app/search?q=${encodeURIComponent(state.searchQuery)}&page=${state.feedPage}&user_id=${state.userId}`;
+    let url = "/api/mini-app/get-posts?page=" + state.feedPage + "&user_id=" + state.userId;
+    if(state.searchQuery) url = "/api/mini-app/search?q=" + encodeURIComponent(state.searchQuery) + "&page=" + state.feedPage + "&user_id=" + state.userId;
     
     const data = await apiFetch(url);
     const posts = data.data || [];
@@ -7662,8 +7657,8 @@ async function loadFeed(append = false) {
     if(posts.length === 0 && !append) container.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-dim);"><div style="font-size:3rem; margin-bottom:10px;">🏜️</div>No vents found matching your search.</div>';
     
     posts.forEach(p => {
-      const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
-      const unread = p.unread_comments > 0 ? `<span class="unread-badge">${p.unread_comments} new</span>` : '';
+      const cats = (p.categories||[]).map(c => "<span class='cat-badge'>" + esc(c) + "</span>").join('');
+      const unread = p.unread_comments > 0 ? "<span class='unread-badge'>" + p.unread_comments + " new</span>" : '';
       
       container.insertAdjacentHTML('beforeend', `
         <div class="card" onclick="openPost(${p.id})">
@@ -7703,10 +7698,10 @@ async function openPost(id) {
   respondingLabel.innerHTML = '';
   
   try {
-    const data = await apiFetch(`/api/mini-app/post/${id}`);
+    const data = await apiFetch("/api/mini-app/post/" + id);
     const p = data.data;
     state.currentPostAuthorId = String(p.author_id);
-    const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
+    const cats = (p.categories||[]).map(c => "<span class='cat-badge'>" + esc(c) + "</span>").join('');
     
     box.innerHTML = `
       <div class="card">
@@ -7734,7 +7729,7 @@ async function loadComments(id) {
   const box = document.getElementById('detailCommentsBox');
   box.innerHTML = '<div class="skeleton"></div><div class="skeleton" style="height:60px;"></div>';
   try {
-    const data = await apiFetch(`/api/mini-app/post/${id}/comments`);
+    const data = await apiFetch("/api/mini-app/post/" + id + "/comments");
     const comments = data.data || [];
     
     if(!comments.length) { box.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-dim); background:rgba(255,255,255,0.02); border-radius:16px;">No replies yet. Be the first to respond!</div>'; return; }
@@ -7754,12 +7749,11 @@ async function loadComments(id) {
       const displayName = isPostAuthor ? "Vent author" : (c.author?.name || 'Anonymous');
       const replyAsName = String(state.userId) === state.currentPostAuthorId ? "Vent author" : (state.profileData?.name || "Anonymous");
       
-      let actions = `<button class="action-btn" onclick="toggleReply(${c.id})">Reply</button>`;
+      let actions = "<button class='action-btn' onclick='toggleReply(" + c.id + ")'>Reply</button>";
       if(isMine) {
-        actions += `
-          <button class="action-btn" onclick="editComment(${c.id}, '${esc(c.content.replace(/'/g, "\\'"))}')">Edit</button>
-          <button class="action-btn" style="color:#ff5555;" onclick="deleteComment(${c.id})">Delete</button>
-        `;
+        actions += " " +
+          "<button class='action-btn' onclick='editComment(" + c.id + ", \"" + esc(c.content.replace(/'/g, "\\'").replace(/"/g, "&quot;")) + "\")'>Edit</button>" +
+          "<button class='action-btn' style='color:#ff5555;' onclick='deleteComment(" + c.id + ")'>Delete</button>";
       }
       
       const children = c.children.map(ch => renderC(ch, depth+1)).join('');
@@ -7797,7 +7791,7 @@ async function postComment() {
   const btn = document.getElementById('postCommentBtn');
   btn.disabled = true; btn.textContent = 'Sending...';
   try {
-    await apiFetch(\`/api/mini-app/post/\${state.currentPostId}/comment\`, {
+    await apiFetch("/api/mini-app/post/" + state.currentPostId + "/comment", {
       method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: 0 })
     });
     document.getElementById('commentInput').value = '';
@@ -7818,7 +7812,7 @@ async function sendReply(parentId) {
   const text = textarea.value.trim();
   if(!text) return toast('Please enter a reply');
   try {
-    await apiFetch(\`/api/mini-app/post/\${state.currentPostId}/comment\`, {
+    await apiFetch("/api/mini-app/post/" + state.currentPostId + "/comment", {
       method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: parentId })
     });
     toast('✅ Reply posted');
@@ -7830,7 +7824,7 @@ async function editComment(id, oldText) {
   const newText = prompt("Edit your comment:", oldText);
   if(newText === null || newText.trim() === '' || newText.trim() === oldText) return;
   try {
-    await apiFetch(\`/api/mini-app/comment/\${id}\`, {
+    await apiFetch("/api/mini-app/comment/" + id, {
       method: 'PUT', body: JSON.stringify({ user_id: state.userId, content: newText.trim() })
     });
     toast('✏️ Comment updated');
@@ -7841,7 +7835,7 @@ async function editComment(id, oldText) {
 async function deleteComment(id) {
   if(!confirm("Are you sure you want to delete this comment?")) return;
   try {
-    await apiFetch(\`/api/mini-app/comment/\${id}\`, {
+    await apiFetch("/api/mini-app/comment/" + id, {
       method: 'DELETE', body: JSON.stringify({ user_id: state.userId })
     });
     toast('🗑️ Comment deleted');
@@ -7877,7 +7871,7 @@ async function loadProfile() {
   const box = document.getElementById('profileContainer');
   box.innerHTML = '<div class="skeleton" style="height:300px;"></div>';
   try {
-    const data = await apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`);
+    const data = await apiFetch("/api/mini-app/profile/" + state.userId + "?viewer_id=" + state.userId);
     const p = data.data; state.profileData = p;
     
     box.innerHTML = `
@@ -7898,105 +7892,78 @@ async function loadProfile() {
   } catch(e) { box.innerHTML = '<div class="card">Error loading profile.</div>'; }
 }
 
-function setupEditProfile() {
+async function setupEditProfile() {
   switchPage('edit-profile');
-  const p = state.profileData; if(!p) return;
-  document.getElementById('edit-name').value = p.name || '';
-  document.getElementById('edit-bio').value = p.bio || '';
-  state.selectedEmoji = p.avatar;
+  const d = state.profileData;
+  if(!d) return;
+  document.getElementById('edit-name').value = d.name || '';
+  document.getElementById('edit-bio').value = d.bio || '';
+  state.selectedEmoji = d.avatar;
   
   const grid = document.getElementById('emoji-grid');
-  grid.innerHTML = CONFIG.emojis.map(e => `<div class="emoji-item ${e===state.selectedEmoji?'selected':''}" data-e="${e}">${e}</div>`).join('');
-  grid.querySelectorAll('.emoji-item').forEach(el => el.onclick = () => {
-    grid.querySelectorAll('.emoji-item').forEach(i => i.classList.remove('selected'));
-    el.classList.add('selected'); state.selectedEmoji = el.dataset.e;
-  });
+  grid.innerHTML = CONFIG.emojis.map(e => `<div class="emoji-item ${e===d.avatar?'selected':''}" onclick="selectEmoji(this, '${e}')">${e}</div>`).join('');
+}
+
+function selectEmoji(el, e) {
+  document.querySelectorAll('.emoji-item').forEach(i => i.classList.remove('selected'));
+  el.classList.add('selected');
+  state.selectedEmoji = e;
 }
 
 async function saveProfile() {
   const name = document.getElementById('edit-name').value.trim();
   const bio = document.getElementById('edit-bio').value.trim();
-  if(!name) return toast('Display name is required');
-  
-  const btn = document.getElementById('saveProfileBtn'); btn.disabled = true; btn.textContent = 'Saving...';
+  if(!name) return toast('Name is required');
   try {
-    await apiFetch(`/api/mini-app/profile/${state.userId}`, {
-      method: 'PUT', body: JSON.stringify({ name, bio, avatar: state.selectedEmoji })
+    await apiFetch("/api/mini-app/profile/" + state.userId, {
+      method: 'POST', body: JSON.stringify({ name, bio, avatar_emoji: state.selectedEmoji })
     });
-    toast('✅ Profile saved successfully');
+    toast('✅ Profile updated!');
     switchPage('profile');
-    loadProfile();
   } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; btn.textContent = 'Save Changes'; }
 }
 
 // SETTINGS
 async function loadSettings() {
   try {
-    const data = await apiFetch(`/api/mini-app/settings/${state.userId}`);
-    document.getElementById('set-notifications').checked = data.data.notifications;
-    document.getElementById('set-privacy').checked = data.data.privacy_public;
-  } catch(e) {}
+    const data = await apiFetch("/api/mini-app/settings/" + state.userId);
+    const s = data.data;
+    document.getElementById('set-notifications').checked = s.notifications_enabled;
+    document.getElementById('set-privacy').checked = s.public_profile;
+  } catch(e) { console.error('Settings load error:', e); }
 }
 
 async function saveSettings() {
-  const btn = document.getElementById('saveSettingsBtn'); btn.disabled = true; btn.textContent = 'Applying...';
+  const notif = document.getElementById('set-notifications').checked;
+  const priv = document.getElementById('set-privacy').checked;
   try {
-    await apiFetch(`/api/mini-app/settings/${state.userId}`, {
-      method: 'POST', body: JSON.stringify({
-        notifications: document.getElementById('set-notifications').checked,
-        privacy_public: document.getElementById('set-privacy').checked
-      })
+    await apiFetch("/api/mini-app/settings/" + state.userId, {
+      method: 'POST', body: JSON.stringify({ notifications_enabled: notif, public_profile: priv })
     });
-    toast('✅ Settings updated');
+    toast('✅ Settings applied');
   } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; btn.textContent = 'Apply Settings'; }
 }
 
-// INIT
-function initParticles() {
-  const canvas = document.getElementById('particleCanvas');
-  const ctx = canvas.getContext('2d');
-  let w = canvas.width = window.innerWidth;
-  let h = canvas.height = window.innerHeight;
-  const particles = [];
-  
-  for(let i=0; i<50; i++) {
-    particles.push({ x: Math.random()*w, y: Math.random()*h, r: Math.random()*2+0.5, vx: (Math.random()-0.5)*0.4, vy: (Math.random()-0.5)*0.4 });
-  }
-  
-  function draw() {
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(255, 217, 102, 0.25)'; // Gold tinted particles
-    particles.forEach(p => {
-      p.x += p.vx; p.y += p.vy;
-      if(p.x < 0) p.x = w; if(p.x > w) p.x = 0;
-      if(p.y < 0) p.y = h; if(p.y > h) p.y = 0;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
-    });
-    requestAnimationFrame(draw);
-  }
-  draw();
-  window.addEventListener('resize', () => { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; });
-}
-
+// INITIALIZATION
 async function init() {
-  try {
-    initParticles();
     renderCategories();
     
-    document.getElementById('ventInput').addEventListener('input', function() {
-      document.getElementById('charCount').textContent = this.value.length + '/5000';
+    document.getElementById('ventInput').oninput = (e) => {
+      const len = e.target.value.length;
+      document.getElementById('charCount').textContent = len + '/5000';
+    };
+    
+    document.getElementById('searchInput').oninput = (e) => {
+      state.searchQuery = e.target.value.trim();
+      state.feedPage = 1;
+      clearTimeout(state._searchT);
+      state._searchT = setTimeout(() => loadFeed(), 500);
+    };
+    
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+      btn.onclick = () => switchPage(btn.dataset.page);
     });
     
-    let searchTimeout;
-    document.getElementById('searchInput').addEventListener('input', function() {
-      clearTimeout(searchTimeout);
-      state.searchQuery = this.value.trim();
-      searchTimeout = setTimeout(() => { state.feedPage = 1; loadFeed(); }, 600);
-    });
-    
-    document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => switchPage(b.dataset.page));
     document.getElementById('submitVentBtn').onclick = submitVent;
     document.getElementById('loadMoreBtn').onclick = () => loadFeed(true);
     document.getElementById('postCommentBtn').onclick = postComment;
@@ -8007,18 +7974,18 @@ async function init() {
     const app = document.getElementById('mainApp');
 
     try {
-      // 1. Check if server injected userId
+      // 1. Check server-injected ID
       if(!state.userId) {
-        // 2. Try Telegram WebApp
+        // 2. Fallback to Telegram WebApp
         const tg = window.Telegram?.WebApp;
         if(tg) {
           try { tg.expand(); tg.ready(); } catch(e){}
           const user = tg.initDataUnsafe?.user;
-          if(user?.id) { state.userId = String(user.id); }
+          if(user?.id) state.userId = String(user.id);
         }
       }
       
-      // 3. Fallback to URL token (only if not already set by server/TG)
+      // 3. Fallback to URL token
       if(!state.userId) {
         const token = new URLSearchParams(window.location.search).get('token');
         if(token) {
@@ -8031,21 +7998,13 @@ async function init() {
           } catch(e){ console.error('Token verify failed:', e); }
         }
       }
-      
-      console.log('Final userId:', state.userId);
-      
+
       if(state.userId) {
-        // Show app immediately to avoid hang feeling
         auth.style.display = 'none';
         app.style.display = 'block';
-        
-        // Load data in background
         loadFeed();
-        apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`)
-          .then(d => { state.profileData = d.data; })
-          .catch(e => console.error('Profile load error:', e));
-        
-        loadLeaderboard().catch(e => console.error('Leaderboard load error:', e));
+        loadProfile().catch(e => console.error('Init profile error:', e));
+        loadLeaderboard().catch(e => console.error('Init leaderboard error:', e));
       } else {
         auth.innerHTML = `
           <div style="font-size:3rem; margin-bottom:20px;">🔒</div>
@@ -8058,7 +8017,7 @@ async function init() {
       auth.innerHTML = `
         <div style="font-size:3rem; margin-bottom:20px;">⚠️</div>
         <h2 style="color:var(--primary);">App Error</h2>
-        <p style="color:var(--text-dim); padding:20px;">${err.message}</p>
+        <p style="color:var(--text-dim); padding:20px;">` + esc(err.message) + `</p>
         <button class="btn-primary" onclick="location.reload()">Retry</button>
       `;
     }
@@ -8069,8 +8028,13 @@ document.addEventListener('DOMContentLoaded', init);
 </body>
 </html>""")
     
-    html = html.replace('SLOT_USER_ID', f'"{user_id}"' if user_id else 'null')
+    # Safe replacement using json.dumps for the user_id literal
+    user_id_literal = json.dumps(str(user_id)) if user_id else 'null'
+    html = html.replace('SLOT_USER_ID', user_id_literal)
+    
+    # Standard replacements
     html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BG', _bg_color).replace('SLOT_CARD_BG', _card_bg).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
+    
     return html
 
 
