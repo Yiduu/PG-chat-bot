@@ -3928,12 +3928,17 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{comment['author_id']}_{post_id}"
         aura_text = f"⚡ _Aura_ {rating} {format_aura(rating)}" if not comment['is_admin'] else ""
         
-        author_label = f"✅ _[vent author]({escape_markdown(profile_link, version=2)})_" if is_author else f"_[{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}]({profile_link})_"
-        # FIX: Include both sex emoji and avatar_emoji if available
-        sex_emoji = comment.get('sex') or '👤'
-        avatar_emoji = comment.get('avatar_emoji')
-        author_avatar = f"{sex_emoji} {avatar_emoji}" if avatar_emoji else sex_emoji
-        author_text = f"{author_avatar} {author_label} {aura_text}".strip()
+        if is_author:
+            # Vent author: show only sex emoji + "Vent author" (no avatar, no aura)
+            sex_emoji = comment.get('sex') or '👤'
+            author_text = f"{sex_emoji} Vent author"
+        else:
+            # Normal user: show full display (sex + custom avatar + name + aura)
+            sex_emoji = comment.get('sex') or '👤'
+            avatar_emoji = comment.get('avatar_emoji')
+            author_avatar = f"{sex_emoji} {avatar_emoji}" if avatar_emoji else sex_emoji
+            author_label = f"_[{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}]({profile_link})_"
+            author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
         # Threading logic - FIX: check current batch msg_ids first
         reply_to_id = msg_ids.get(parent_id) or parent_msg_ids.get(parent_id)
@@ -3972,14 +3977,15 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     
     # Check if reply author is the vent author
     if str(reply['author_id']) == str(post_author_id):
-        author_label = f"✅ _[vent author]({reply_profile_link})_"
+        # Vent author reply: show only sex emoji + "Vent author"
+        sex_emoji = display_sex or '👤'
+        reply_author_text = f"{sex_emoji} Vent author"
     else:
+        # Normal user
+        author_sex = display_sex or '👤'
         author_label = f"_[{escape_markdown(display_name, version=2)}]({reply_profile_link})_"
-        
-    # FIX: Use both sex emoji and avatar_emoji if available
-    author_sex = display_sex or '👤'
-    author_avatar = f"{author_sex} {avatar_emoji}" if avatar_emoji else author_sex
-    reply_author_text = f"{author_avatar} {author_label} {aura_text}".strip()
+        author_avatar = f"{author_sex} {avatar_emoji}" if avatar_emoji else author_sex
+        reply_author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
     # Pass pre-fetched reaction data if available (e.g. from show_more_replies)
     # FIX: Pass the full reply dict (already done, but ensured)
