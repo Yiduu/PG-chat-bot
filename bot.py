@@ -381,6 +381,15 @@ def init_db():
                     logger.info("Adding missing column: warning_count to users table")
                     c.execute("ALTER TABLE users ADD COLUMN warning_count INTEGER DEFAULT 0")
 
+                # Check for 'thread_context_post_id' column in users
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='users' AND column_name='thread_context_post_id'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: thread_context_post_id to users table")
+                    c.execute("ALTER TABLE users ADD COLUMN thread_context_post_id BIGINT DEFAULT NULL")
+
                 # FIX: Added telegram_message_id to comments for cross-page threading
                 c.execute("""
                     SELECT column_name FROM information_schema.columns 
@@ -632,7 +641,8 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
             selected_categories = NULL,
             comment_post_id = NULL,
             comment_idx = NULL,
-            private_message_target = NULL
+            private_message_target = NULL,
+            thread_context_post_id = NULL
         WHERE user_id = %s
     ''', (user_id,))
     
@@ -4972,6 +4982,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Please select at least one category.", show_alert=True)
                 return
             
+            # Check if this is a thread continuation
+            user_data = db_fetch_one("SELECT thread_context_post_id FROM users WHERE user_id = %s", (user_id,))
+            if user_data and user_data.get('thread_context_post_id'):
+                context.user_data['thread_from_post_id'] = user_data['thread_context_post_id']
+            
             # Store selected categories in user's DB record
             db_execute(
                 "UPDATE users SET selected_categories = %s, waiting_for_post = TRUE WHERE user_id = %s",
@@ -5730,9 +5745,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if post and post['author_id'] == user_id:
                 context.user_data['thread_from_post_id'] = post_id
+                # Save to DB for persistence
+                db_execute("UPDATE users SET thread_context_post_id = %s WHERE user_id = %s", (post_id, user_id))
+                # Use multi-category selection
+                context.user_data['selected_categories'] = set()
                 await query.message.reply_text(
-                    "📚 *Choose a category for your continuation:*",
-                    reply_markup=build_category_buttons(),
+                    "📚 *Select categories for your continuation (you can choose multiple):*",
+                    reply_markup=build_multi_category_keyboard(set()),
                     parse_mode=ParseMode.MARKDOWN
                 )
             else:
@@ -6555,6 +6574,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # NEW: Check if we have a thread_from_post_id for continuation
     thread_from_post_id = context.user_data.get('thread_from_post_id')
+    if not thread_from_post_id:
+        # Fallback to database
+        user_db = db_fetch_one("SELECT thread_context_post_id FROM users WHERE user_id = %s", (user_id,))
+        if user_db and user_db.get('thread_context_post_id'):
+            thread_from_post_id = user_db['thread_context_post_id']
+            context.user_data['thread_from_post_id'] = thread_from_post_id
     
     if user and user['waiting_for_post']:
         category = user.get('selected_categories')
@@ -6597,6 +6622,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Send confirmation
             await send_post_confirmation(update, context, post_content, category, media_type, media_id, thread_from_post_id=thread_from_post_id)
+            
+            # Clear thread context from DB after it's been passed to confirmation
+            if thread_from_post_id:
+                db_execute("UPDATE users SET thread_context_post_id = NULL WHERE user_id = %s", (user_id,))
             return
         except Exception as e:
             logger.error(f"Error reading media: {e}")
