@@ -7064,8 +7064,8 @@ def mini_app_page():
     :root {
       --primary: SLOT_PRIMARY;
       --primary-dim: rgba(SLOT_RGB, 0.15);
-      --bg-color: #0b0a08;
-      --card-bg: rgba(22, 20, 16, 0.6);
+      --bg-color: #0a0a0a;
+      --card-bg: rgba(26, 26, 26, 0.7);
       --border: SLOT_BORDER;
       --text: SLOT_TEXT;
       --text-dim: rgba(255, 255, 255, 0.5);
@@ -7127,8 +7127,8 @@ def mini_app_page():
       position: fixed;
       bottom: 0; left: 0; right: 0;
       height: var(--nav-h);
-      background: rgba(11, 10, 8, 0.85);
-      backdrop-filter: blur(15px);
+      background: rgba(10, 10, 10, 0.85);
+      backdrop-filter: blur(20px);
       border-top: 1px solid var(--border);
       display: flex;
       justify-content: space-around;
@@ -7153,8 +7153,8 @@ def mini_app_page():
     /* ===== CARDS & GLASSMORPHISM ===== */
     .card {
       background: var(--card-bg);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 16px;
@@ -7526,7 +7526,7 @@ const CONFIG = {
 const state = {
   userId: null, currentPage: 'vent', feedPage: 1, feedHasMore: true, feedLoading: false,
   searchQuery: '', currentPostId: null, selectedCategories: new Set(),
-  profileData: null, selectedEmoji: null
+  profileData: null, selectedEmoji: null, currentPostAuthorId: null
 };
 
 function esc(str) {
@@ -7670,6 +7670,7 @@ async function openPost(id) {
   try {
     const data = await apiFetch(`/api/mini-app/post/${id}`);
     const p = data.data;
+    state.currentPostAuthorId = p.author_id || (p.author && p.author.id);
     const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
     
     box.innerHTML = `
@@ -7707,7 +7708,13 @@ async function loadComments(id) {
     
     const renderC = (c, depth) => {
       const isReply = depth > 0 ? 'is-reply' : '';
-      const isMine = String(c.author?.id || c.author_id) === String(state.userId) || c.author?.is_me;
+      const c_author_id = c.author_id || (c.author && c.author.id);
+      const isMine = String(c_author_id) === String(state.userId) || c.author?.is_me;
+      
+      let displayName = c.author?.name || 'Anonymous';
+      if (c_author_id && state.currentPostAuthorId && String(c_author_id) === String(state.currentPostAuthorId)) {
+        displayName = 'Vent author';
+      }
       
       let actions = `<button class="action-btn" onclick="toggleReply(${c.id})">Reply</button>`;
       if(isMine) {
@@ -7723,7 +7730,7 @@ async function loadComments(id) {
           <div class="avatar" style="width:28px; height:28px; font-size:14px;">${esc(c.author?.sex || '👤')} ${esc(c.author?.avatar || '')}</div>
           <div class="comment-body">
             <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-              <span style="font-size:0.8rem; font-weight:600; color:var(--primary);">${esc(c.author?.name)} ${esc(c.author?.aura)}</span>
+              <span style="font-size:0.8rem; font-weight:600; color:var(--primary);">${esc(displayName)} ${esc(c.author?.aura)}</span>
               <span style="font-size:0.7rem; color:var(--text-dim);">${esc(c.time_ago)}</span>
             </div>
             <div style="font-size:0.85rem; line-height:1.4;" id="comment-content-${c.id}">${esc(c.content)}</div>
