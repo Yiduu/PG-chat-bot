@@ -8271,7 +8271,9 @@ def mini_app_get_single_post(post_id):
             'categories': category_list,
             'time_ago': time_ago,
             'comments': post['comment_count'] or 0,
+            'author_id': post['author_id'],
             'author': {
+                'id': post['author_id'],
                 'name': 'Anonymous',
                 'sex': post['author_sex'] or '👤',
                 'avatar': post['author_avatar'] or "",
@@ -8329,7 +8331,9 @@ def mini_app_get_post_comments(post_id):
                 'parent_id': c['parent_comment_id'] or 0,
                 'content': c['content'],
                 'time_ago': calc_time,
+                'author_id': c['author_id'],
                 'author': {
+                    'id': c['author_id'],
                     'name': c['author_name'] or 'Anonymous',
                     'sex': c['author_sex'] or '👤',
                     'avatar': c['author_avatar'] or "",
