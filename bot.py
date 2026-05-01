@@ -7056,7 +7056,7 @@ def mini_app_page(user_id=None):
   <title>Christian Vent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="icon" href="data:,"> <!-- Prevent favicon 404 -->
+  <link rel="icon" href="data:,">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     /* ===== CSS RESET & VARIABLES ===== */
@@ -7082,12 +7082,6 @@ def mini_app_page(user_id=None):
       padding-bottom: calc(var(--nav-h) + 30px);
       background-image: radial-gradient(circle at top right, rgba(SLOT_RGB, 0.05), transparent 400px),
                         radial-gradient(circle at bottom left, rgba(SLOT_RGB, 0.03), transparent 400px);
-    }
-    canvas#particleCanvas {
-      position: fixed;
-      top: 0; left: 0; width: 100%; height: 100%;
-      z-index: -1;
-      pointer-events: none;
     }
 
     /* ===== SCROLLBAR ===== */
@@ -7382,14 +7376,26 @@ def mini_app_page(user_id=None):
       border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    
+    .emoji-item {
+      font-size: 1.8rem; text-align: center; padding: 12px; background: rgba(255,255,255,0.03);
+      border-radius: 12px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s ease;
+    }
+    .emoji-item:hover { background: rgba(255,255,255,0.08); transform: scale(1.05); }
+    .emoji-item.selected { border-color: var(--primary); background: var(--primary-dim); transform: scale(1.1); }
+    
+    .toggle-slider:before {
+      position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px;
+      background-color: #fff; transition: .4s; border-radius: 50%;
+    }
+    input:checked + .toggle-slider { background-color: var(--primary); }
+    input:checked + .toggle-slider:before { transform: translateX(20px); background-color: #000; }
   </style>
 </head>
 <body>
 
-<canvas id="particleCanvas"></canvas>
-
 <div id="authScreen">
-  <img src="/static/images/logo.jpg" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);" onerror="this.style.display='none'">
+  <img src="/static/images/vent logo.png" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);" onerror="this.style.display='none'">
   <div class="spinner"></div>
   <h2 style="margin-top: 24px; color: var(--primary); font-size: 1.5rem; font-weight: 700;">Christian Vent</h2>
   <p style="color: var(--text-dim); margin-top: 8px;">Preparing your secure space...</p>
@@ -7398,7 +7404,7 @@ def mini_app_page(user_id=None):
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/logo.jpg" class="app-logo" alt="Christian Vent Logo" onerror="this.style.display='none'">
+    <img src="/static/images/vent logo.png" class="app-logo" alt="Christian Vent Logo" onerror="this.style.display='none'">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
@@ -7517,23 +7523,6 @@ def mini_app_page(user_id=None):
 
 <div id="toast" class="toast"></div>
 
-<style>
-  /* Custom Toggle Styles */
-  .toggle-slider:before {
-    position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px;
-    background-color: #fff; transition: .4s; border-radius: 50%;
-  }
-  input:checked + .toggle-slider { background-color: var(--primary); }
-  input:checked + .toggle-slider:before { transform: translateX(20px); background-color: #000; }
-  
-  .emoji-item {
-    font-size: 1.8rem; text-align: center; padding: 12px; background: rgba(255,255,255,0.03);
-    border-radius: 12px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s ease;
-  }
-  .emoji-item:hover { background: rgba(255,255,255,0.08); transform: scale(1.05); }
-  .emoji-item.selected { border-color: var(--primary); background: var(--primary-dim); transform: scale(1.1); }
-</style>
-
 <script>
 'use strict';
 
@@ -7552,9 +7541,17 @@ const CONFIG = {
 };
 
 const state = {
-  userId: SLOT_USER_ID, currentPage: 'vent', feedPage: 1, feedHasMore: true, feedLoading: false,
-  searchQuery: '', currentPostId: null, currentPostAuthorId: null, selectedCategories: new Set(),
-  profileData: null, selectedEmoji: null
+  userId: SLOT_USER_ID,
+  currentPage: 'vent',
+  feedPage: 1,
+  feedHasMore: true,
+  feedLoading: false,
+  searchQuery: '',
+  currentPostId: null,
+  currentPostAuthorId: null,
+  selectedCategories: new Set(),
+  profileData: null,
+  selectedEmoji: null
 };
 
 function esc(str) {
@@ -7562,11 +7559,15 @@ function esc(str) {
   d.textContent = str || '';
   return d.innerHTML;
 }
+
 function toast(msg) {
   const el = document.getElementById('toast');
-  el.textContent = msg; el.classList.add('show');
-  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 3000);
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 3000);
 }
+
 async function apiFetch(path, opts = {}) {
   const res = await fetch(CONFIG.apiBase + path, { headers: {'Content-Type': 'application/json'}, ...opts });
   const data = await res.json();
@@ -7604,9 +7605,11 @@ function renderCategories() {
     btn.addEventListener('click', () => {
       const c = btn.dataset.code;
       if(state.selectedCategories.has(c)) {
-        state.selectedCategories.delete(c); btn.classList.remove('selected');
+        state.selectedCategories.delete(c);
+        btn.classList.remove('selected');
       } else {
-        state.selectedCategories.add(c); btn.classList.add('selected');
+        state.selectedCategories.add(c);
+        btn.classList.add('selected');
       }
       btn.querySelector('.cat-icon-check').textContent = state.selectedCategories.has(c) ? '✓' : '';
     });
@@ -7620,20 +7623,29 @@ async function submitVent() {
   if(!cats.length) return toast('Select at least one category');
   
   const btn = document.getElementById('submitVentBtn');
-  btn.disabled = true; btn.textContent = 'Posting...';
+  btn.disabled = true;
+  btn.textContent = 'Posting...';
   
   try {
     await apiFetch('/api/mini-app/submit-vent', {
-      method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, categories: cats })
+      method: 'POST',
+      body: JSON.stringify({ user_id: state.userId, content: text, categories: cats })
     });
     toast('✅ Vent submitted for approval!');
     document.getElementById('ventInput').value = '';
     state.selectedCategories.clear();
-    document.querySelectorAll('.cat-btn').forEach(b => { b.classList.remove('selected'); b.querySelector('.cat-icon-check').textContent=''; });
+    document.querySelectorAll('.cat-btn').forEach(b => {
+      b.classList.remove('selected');
+      b.querySelector('.cat-icon-check').textContent='';
+    });
     document.getElementById('charCount').textContent = '0/5000';
     state.feedPage = 1;
-  } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; btn.textContent = 'Post Anonymously'; }
+  } catch(e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Post Anonymously';
+  }
 }
 
 // FEED PAGE
@@ -7643,18 +7655,25 @@ async function loadFeed(append = false) {
   const container = document.getElementById('feedContainer');
   const loadMore = document.getElementById('loadMoreArea');
   
-  if(!append) { container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>'; loadMore.style.display='none'; }
+  if(!append) {
+    container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
+    loadMore.style.display='none';
+  }
   
   try {
     let url = "/api/mini-app/get-posts?page=" + state.feedPage + "&user_id=" + state.userId;
-    if(state.searchQuery) url = "/api/mini-app/search?q=" + encodeURIComponent(state.searchQuery) + "&page=" + state.feedPage + "&user_id=" + state.userId;
+    if(state.searchQuery) {
+      url = "/api/mini-app/search?q=" + encodeURIComponent(state.searchQuery) + "&page=" + state.feedPage + "&user_id=" + state.userId;
+    }
     
     const data = await apiFetch(url);
     const posts = data.data || [];
     state.feedHasMore = data.has_more;
     
     if(!append) container.innerHTML = '';
-    if(posts.length === 0 && !append) container.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-dim);"><div style="font-size:3rem; margin-bottom:10px;">🏜️</div>No vents found matching your search.</div>';
+    if(posts.length === 0 && !append) {
+      container.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-dim);"><div style="font-size:3rem; margin-bottom:10px;">🏜️</div>No vents found matching your search.</div>';
+    }
     
     posts.forEach(p => {
       const cats = (p.categories||[]).map(c => "<span class='cat-badge'>" + esc(c) + "</span>").join('');
@@ -7684,7 +7703,9 @@ async function loadFeed(append = false) {
   } catch(e) {
     if(!append) container.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding: 40px;">Failed to load feed. Please try again.</div>';
     toast('Error loading feed');
-  } finally { state.feedLoading = false; }
+  } finally {
+    state.feedLoading = false;
+  }
 }
 
 // POST DETAIL
@@ -7694,7 +7715,8 @@ async function openPost(id) {
   const box = document.getElementById('detailPostBox');
   const commBox = document.getElementById('detailCommentsBox');
   const respondingLabel = document.getElementById('respondingAsLabel');
-  box.innerHTML = '<div class="skeleton" style="height:200px;"></div>'; commBox.innerHTML = '';
+  box.innerHTML = '<div class="skeleton" style="height:200px;"></div>';
+  commBox.innerHTML = '';
   respondingLabel.innerHTML = '';
   
   try {
@@ -7717,12 +7739,13 @@ async function openPost(id) {
       </div>
     `;
     
-    // Set "Responding as" label
     const replyAsName = String(state.userId) === state.currentPostAuthorId ? "Vent author" : (state.profileData?.name || "Anonymous");
     respondingLabel.textContent = "Responding as " + replyAsName;
     
     await loadComments(id);
-  } catch(e) { box.innerHTML = '<div class="card">Error loading post. It may have been deleted.</div>'; }
+  } catch(e) {
+    box.innerHTML = '<div class="card">Error loading post. It may have been deleted.</div>';
+  }
 }
 
 async function loadComments(id) {
@@ -7732,9 +7755,13 @@ async function loadComments(id) {
     const data = await apiFetch("/api/mini-app/post/" + id + "/comments");
     const comments = data.data || [];
     
-    if(!comments.length) { box.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-dim); background:rgba(255,255,255,0.02); border-radius:16px;">No replies yet. Be the first to respond!</div>'; return; }
+    if(!comments.length) {
+      box.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-dim); background:rgba(255,255,255,0.02); border-radius:16px;">No replies yet. Be the first to respond!</div>';
+      return;
+    }
     
-    const map = {}; const roots = [];
+    const map = {};
+    const roots = [];
     comments.forEach(c => map[c.id] = {...c, children: []});
     comments.forEach(c => {
       if(c.parent_id && map[c.parent_id]) map[c.parent_id].children.push(map[c.id]);
@@ -7751,8 +7778,7 @@ async function loadComments(id) {
       
       let actions = "<button class='action-btn' onclick='toggleReply(" + c.id + ")'>Reply</button>";
       if(isMine) {
-        actions += " " +
-          "<button class='action-btn' onclick='editComment(" + c.id + ", \"" + esc(c.content.replace(/'/g, "\\'").replace(/"/g, "&quot;")) + "\")'>Edit</button>" +
+        actions += " <button class='action-btn' onclick='editComment(" + c.id + ", \"" + esc(c.content.replace(/'/g, "\\'").replace(/"/g, "&quot;")) + "\")'>Edit</button>" +
           "<button class='action-btn' style='color:#ff5555;' onclick='deleteComment(" + c.id + ")'>Delete</button>";
       }
       
@@ -7782,23 +7808,31 @@ async function loadComments(id) {
       `;
     };
     box.innerHTML = roots.map(c => renderC(c, 0)).join('');
-  } catch(e) { box.innerHTML = '<div style="text-align:center; padding:20px;">Error loading comments.</div>'; }
+  } catch(e) {
+    box.innerHTML = '<div style="text-align:center; padding:20px;">Error loading comments.</div>';
+  }
 }
 
 async function postComment() {
   const text = document.getElementById('commentInput').value.trim();
   if(!text) return toast('Please enter a response');
   const btn = document.getElementById('postCommentBtn');
-  btn.disabled = true; btn.textContent = 'Sending...';
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
   try {
     await apiFetch("/api/mini-app/post/" + state.currentPostId + "/comment", {
-      method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: 0 })
+      method: 'POST',
+      body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: 0 })
     });
     document.getElementById('commentInput').value = '';
     toast('✅ Reply posted successfully');
     await loadComments(state.currentPostId);
-  } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; btn.textContent = 'Send Response'; }
+  } catch(e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send Response';
+  }
 }
 
 function toggleReply(id) {
@@ -7813,11 +7847,14 @@ async function sendReply(parentId) {
   if(!text) return toast('Please enter a reply');
   try {
     await apiFetch("/api/mini-app/post/" + state.currentPostId + "/comment", {
-      method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: parentId })
+      method: 'POST',
+      body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: parentId })
     });
     toast('✅ Reply posted');
     await loadComments(state.currentPostId);
-  } catch(e) { toast(e.message); }
+  } catch(e) {
+    toast(e.message);
+  }
 }
 
 async function editComment(id, oldText) {
@@ -7825,22 +7862,27 @@ async function editComment(id, oldText) {
   if(newText === null || newText.trim() === '' || newText.trim() === oldText) return;
   try {
     await apiFetch("/api/mini-app/comment/" + id, {
-      method: 'PUT', body: JSON.stringify({ user_id: state.userId, content: newText.trim() })
+      method: 'PUT',
+      body: JSON.stringify({ user_id: state.userId, content: newText.trim() })
     });
     toast('✏️ Comment updated');
     await loadComments(state.currentPostId);
-  } catch(e) { toast(e.message); }
+  } catch(e) {
+    toast(e.message);
+  }
 }
 
 async function deleteComment(id) {
   if(!confirm("Are you sure you want to delete this comment?")) return;
   try {
-    await apiFetch("/api/mini-app/comment/" + id, {
-      method: 'DELETE', body: JSON.stringify({ user_id: state.userId })
+    await apiFetch("/api/mini-app/comment/" + id + "?user_id=" + state.userId, {
+      method: 'DELETE'
     });
     toast('🗑️ Comment deleted');
     await loadComments(state.currentPostId);
-  } catch(e) { toast(e.message); }
+  } catch(e) {
+    toast(e.message);
+  }
 }
 
 // LEADERBOARD
@@ -7863,7 +7905,9 @@ async function loadLeaderboard() {
         </div>
       </div>
     `).join('');
-  } catch(e) { box.innerHTML = '<div style="padding:20px;">Error loading leaderboard.</div>'; }
+  } catch(e) {
+    box.innerHTML = '<div style="padding:20px;">Error loading leaderboard.</div>';
+  }
 }
 
 // PROFILE
@@ -7872,16 +7916,16 @@ async function loadProfile() {
   box.innerHTML = '<div class="skeleton" style="height:300px;"></div>';
   try {
     const data = await apiFetch("/api/mini-app/profile/" + state.userId + "?viewer_id=" + state.userId);
-    const p = data.data; state.profileData = p;
+    const p = data.data;
+    state.profileData = p;
     
     box.innerHTML = `
-      <div class="card" style="text-align:center; padding: 30px 20px;">
-        <button class="btn-ghost" onclick="setupEditProfile()" style="position:absolute; right:20px; top:20px; padding:6px 12px; font-size:0.75rem;">Edit Profile</button>
-        <div class="avatar" style="width:100px; height:100px; font-size:48px; margin:0 auto 20px; border:3px solid var(--primary); border-radius:30px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.2);">${esc(p.avatar||'👤')}</div>
-        <div style="font-size:1.6rem; font-weight:800; color:var(--primary); letter-spacing:-0.5px;">${esc(p.name)}</div>
-        <div style="font-size:0.95rem; color:var(--text-dim); margin-bottom:20px; font-weight:600;">${esc(p.aura)} • ${p.rating} Reputation</div>
-        ${p.bio ? `<div style="font-style:italic; font-size:1rem; margin-bottom:30px; line-height:1.6; color:rgba(255,255,255,0.8); background:rgba(255,255,255,0.03); padding:16px; border-radius:12px;">"${esc(p.bio)}"</div>` : ''}
-        
+      <div class="card">
+        <div style="text-align:center; margin-bottom:20px;">
+          <div class="avatar" style="width:84px; height:84px; font-size:42px; margin:0 auto 16px;">${esc(p.avatar||'👤')}</div>
+          <h2 style="font-size:1.5rem; font-weight:700; margin-bottom:8px;">${esc(p.name)}</h2>
+          <div style="font-size:1rem; color:var(--primary); font-weight:600;">${esc(p.aura)} • ${esc(p.rating)} points</div>
+        </div>
         <div style="display:flex; justify-content:space-around; border-top:1px solid var(--border); padding-top:24px;">
           <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">${p.stats?.posts||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Vents</div></div>
           <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">${p.stats?.comments||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Replies</div></div>
@@ -7889,7 +7933,9 @@ async function loadProfile() {
         </div>
       </div>
     `;
-  } catch(e) { box.innerHTML = '<div class="card">Error loading profile.</div>'; }
+  } catch(e) {
+    box.innerHTML = '<div class="card">Error loading profile.</div>';
+  }
 }
 
 async function setupEditProfile() {
@@ -7916,11 +7962,15 @@ async function saveProfile() {
   if(!name) return toast('Name is required');
   try {
     await apiFetch("/api/mini-app/profile/" + state.userId, {
-      method: 'POST', body: JSON.stringify({ name, bio, avatar_emoji: state.selectedEmoji })
+      method: 'PUT',
+      body: JSON.stringify({ name, bio, avatar: state.selectedEmoji })
     });
     toast('✅ Profile updated!');
     switchPage('profile');
-  } catch(e) { toast(e.message); }
+    await loadProfile();
+  } catch(e) {
+    toast(e.message);
+  }
 }
 
 // SETTINGS
@@ -7928,9 +7978,11 @@ async function loadSettings() {
   try {
     const data = await apiFetch("/api/mini-app/settings/" + state.userId);
     const s = data.data;
-    document.getElementById('set-notifications').checked = s.notifications_enabled;
-    document.getElementById('set-privacy').checked = s.public_profile;
-  } catch(e) { console.error('Settings load error:', e); }
+    document.getElementById('set-notifications').checked = s.notifications;
+    document.getElementById('set-privacy').checked = s.privacy_public;
+  } catch(e) {
+    console.error('Settings load error:', e);
+  }
 }
 
 async function saveSettings() {
@@ -7938,89 +7990,77 @@ async function saveSettings() {
   const priv = document.getElementById('set-privacy').checked;
   try {
     await apiFetch("/api/mini-app/settings/" + state.userId, {
-      method: 'POST', body: JSON.stringify({ notifications_enabled: notif, public_profile: priv })
+      method: 'POST',
+      body: JSON.stringify({ notifications: notif, privacy_public: priv })
     });
     toast('✅ Settings applied');
-  } catch(e) { toast(e.message); }
+  } catch(e) {
+    toast(e.message);
+  }
 }
 
 // INITIALIZATION
 async function init() {
-    renderCategories();
-    
-    document.getElementById('ventInput').oninput = (e) => {
-      const len = e.target.value.length;
-      document.getElementById('charCount').textContent = len + '/5000';
-    };
-    
-    document.getElementById('searchInput').oninput = (e) => {
-      state.searchQuery = e.target.value.trim();
-      state.feedPage = 1;
-      clearTimeout(state._searchT);
-      state._searchT = setTimeout(() => loadFeed(), 500);
-    };
-    
-    document.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.onclick = () => switchPage(btn.dataset.page);
-    });
-    
-    document.getElementById('submitVentBtn').onclick = submitVent;
-    document.getElementById('loadMoreBtn').onclick = () => loadFeed(true);
-    document.getElementById('postCommentBtn').onclick = postComment;
-    document.getElementById('saveProfileBtn').onclick = saveProfile;
-    document.getElementById('saveSettingsBtn').onclick = saveSettings;
-    
-    const auth = document.getElementById('authScreen');
-    const app = document.getElementById('mainApp');
+  renderCategories();
+  
+  document.getElementById('ventInput').oninput = e => {
+    document.getElementById('charCount').textContent = e.target.value.length + '/5000';
+  };
+  
+  document.getElementById('searchInput').oninput = e => {
+    state.searchQuery = e.target.value.trim();
+    state.feedPage = 1;
+    clearTimeout(state._searchT);
+    state._searchT = setTimeout(() => loadFeed(), 500);
+  };
+  
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.onclick = () => switchPage(btn.dataset.page);
+  });
+  
+  document.getElementById('submitVentBtn').onclick = submitVent;
+  document.getElementById('loadMoreBtn').onclick = () => loadFeed(true);
+  document.getElementById('postCommentBtn').onclick = postComment;
+  document.getElementById('saveProfileBtn').onclick = saveProfile;
+  document.getElementById('saveSettingsBtn').onclick = saveSettings;
+  
+  const auth = document.getElementById('authScreen');
+  const app = document.getElementById('mainApp');
 
-    try {
-      // 1. Check server-injected ID
-      if(!state.userId) {
-        // 2. Fallback to Telegram WebApp
-        const tg = window.Telegram?.WebApp;
-        if(tg) {
-          try { tg.expand(); tg.ready(); } catch(e){}
-          const user = tg.initDataUnsafe?.user;
-          if(user?.id) state.userId = String(user.id);
-        }
-      }
+  try {
+    console.log('Initial userId:', state.userId);
+    
+    if(state.userId) {
+      auth.style.display = 'none';
+      app.style.display = 'block';
       
-      // 3. Fallback to URL token
-      if(!state.userId) {
-        const token = new URLSearchParams(window.location.search).get('token');
-        if(token) {
-          try {
-            const res = await fetch(CONFIG.apiBase + '/api/verify-token/' + token);
-            if (res.ok) {
-              const data = await res.json();
-              if(data.success) state.userId = String(data.user_id);
-            }
-          } catch(e){ console.error('Token verify failed:', e); }
-        }
-      }
-
-      if(state.userId) {
-        auth.style.display = 'none';
-        app.style.display = 'block';
-        loadFeed();
-        loadProfile().catch(e => console.error('Init profile error:', e));
-        loadLeaderboard().catch(e => console.error('Init leaderboard error:', e));
-      } else {
-        auth.innerHTML = `
-          <div style="font-size:3rem; margin-bottom:20px;">🔒</div>
-          <h2 style="color:var(--primary); font-size: 1.8rem;">Access Restricted</h2>
-          <p style="color:var(--text-dim); text-align:center; padding:20px; font-size: 1rem; line-height:1.6;">Please open this application from within the Christian Vent Telegram bot to continue securely.</p>
-        `;
-      }
-    } catch (err) {
-      console.error('Init error:', err);
+      loadFeed();
+      apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`)
+        .then(d => { state.profileData = d.data; })
+        .catch(e => console.error('Profile load error:', e));
+      
+      loadLeaderboard().catch(e => console.error('Leaderboard load error:', e));
+    } else {
       auth.innerHTML = `
-        <div style="font-size:3rem; margin-bottom:20px;">⚠️</div>
-        <h2 style="color:var(--primary);">App Error</h2>
-        <p style="color:var(--text-dim); padding:20px;">` + esc(err.message) + `</p>
-        <button class="btn-primary" onclick="location.reload()">Retry</button>
+        <div style="font-size:3rem; margin-bottom:20px;">🔒</div>
+        <h2 style="color:var(--primary); font-size: 1.8rem;">Access Restricted</h2>
+        <p style="color:var(--text-dim); text-align:center; padding:20px; font-size: 1rem; line-height:1.6;">
+          Please open this application from within the Christian Vent Telegram bot to continue securely.
+        </p>
+        <a href="https://t.me/${CONFIG.botUsername}" class="btn-primary" style="margin-top:20px; display:inline-block; text-decoration:none; width:auto; padding:14px 32px;">
+          Open Telegram Bot
+        </a>
       `;
     }
+  } catch (err) {
+    console.error('Init error:', err);
+    auth.innerHTML = `
+      <div style="font-size:3rem; margin-bottom:20px;">⚠️</div>
+      <h2 style="color:var(--primary);">App Error</h2>
+      <p style="color:var(--text-dim); padding:20px;">${esc(err.message)}</p>
+      <button class="btn-primary" onclick="location.reload()">Retry</button>
+    `;
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);
@@ -8033,7 +8073,13 @@ document.addEventListener('DOMContentLoaded', init);
     html = html.replace('SLOT_USER_ID', user_id_literal)
     
     # Standard replacements
-    html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BG', _bg_color).replace('SLOT_CARD_BG', _card_bg).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
+    html = html.replace('SLOT_PRIMARY', _primary)
+    html = html.replace('SLOT_BG', _bg_color)
+    html = html.replace('SLOT_CARD_BG', _card_bg)
+    html = html.replace('SLOT_BORDER', _border)
+    html = html.replace('SLOT_TEXT', _text)
+    html = html.replace('SLOT_RGB', _rgb)
+    html = html.replace('SLOT_BOT', _bot)
     
     return html
 
