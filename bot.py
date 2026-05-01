@@ -1055,7 +1055,7 @@ def login_page():
 <body>
     <div class="login-container">
         <div class="brand">
-            <img src="/static/images/vent%20logo.png" class="logo" alt="Christian Vent Logo">
+            <img src="/static/images/logo.jpg" class="logo" alt="Christian Vent Logo">
             <h1 class="title">Christian Vent</h1>
             <p class="subtitle">Share your thoughts anonymously</p>
         </div>
@@ -7102,6 +7102,14 @@ def mini_app_page():
       text-align: center;
       padding: 20px 16px;
     }
+    .app-logo {
+      width: 72px;
+      height: 72px;
+      border-radius: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 6px 16px rgba(SLOT_RGB, 0.25);
+      border: 1px solid var(--border);
+    }
     .app-title {
       font-size: 1.6rem;
       color: var(--primary);
@@ -7381,6 +7389,7 @@ def mini_app_page():
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
+    <img src="/static/images/logo.jpg" class="app-logo" alt="Christian Vent Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
