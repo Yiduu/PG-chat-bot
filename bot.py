@@ -7040,14 +7040,14 @@ def main():
 def mini_app_page():
     """Complete Mini App - returns the old UI style with new features integrated."""
 
-    # All these are already loaded globally in bot.py via load_dotenv()
+    # Updated Branding Summary Colors
     _bot      = BOT_USERNAME
-    _primary  = PRIMARY_COLOR        # e.g. "#c9a84c"
-    _secondary= SECONDARY_COLOR      # e.g. "#e8c97a"
-    _card_bg  = CARD_BG_COLOR        # e.g. "#161410"
-    _border   = BORDER_COLOR         # e.g. "#1e1c18"
-    _text     = TEXT_COLOR           # e.g. "#e8e0d0"
-    _rgb      = PRIMARY_RGB          # e.g. "201, 168, 76"
+    _primary  = "#FFD966"
+    _bg_color = "#0a0a0a"
+    _card_bg  = "rgba(26, 26, 26, 0.7)"
+    _border   = "rgba(255, 255, 255, 0.1)"
+    _text     = "#f0f0f0"
+    _rgb      = "255, 217, 102" # RGB for #FFD966
 
     html = ("""<!DOCTYPE html>
 <html lang="en">
@@ -7056,7 +7056,7 @@ def mini_app_page():
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Christian Vent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     /* ===== CSS RESET & VARIABLES ===== */
@@ -7064,14 +7064,14 @@ def mini_app_page():
     :root {
       --primary: SLOT_PRIMARY;
       --primary-dim: rgba(SLOT_RGB, 0.15);
-      --bg-color: #0b0a08;
-      --card-bg: rgba(22, 20, 16, 0.6);
+      --bg-color: SLOT_BG;
+      --card-bg: SLOT_CARD_BG;
       --border: SLOT_BORDER;
       --text: SLOT_TEXT;
-      --text-dim: rgba(255, 255, 255, 0.5);
-      --font-family: 'Inter', sans-serif;
-      --radius: 12px;
-      --nav-h: 65px;
+      --text-dim: rgba(240, 240, 240, 0.6);
+      --font-family: 'Outfit', 'Inter', sans-serif;
+      --radius: 16px;
+      --nav-h: 70px;
     }
     body {
       font-family: var(--font-family);
@@ -7079,7 +7079,9 @@ def mini_app_page():
       color: var(--text);
       min-height: 100vh;
       overflow-x: hidden;
-      padding-bottom: calc(var(--nav-h) + 20px);
+      padding-bottom: calc(var(--nav-h) + 30px);
+      background-image: radial-gradient(circle at top right, rgba(SLOT_RGB, 0.05), transparent 400px),
+                        radial-gradient(circle at bottom left, rgba(SLOT_RGB, 0.03), transparent 400px);
     }
     canvas#particleCanvas {
       position: fixed;
@@ -7094,32 +7096,35 @@ def mini_app_page():
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
     /* ===== LAYOUT ===== */
-    .page { display: none; padding: 16px; max-width: 600px; margin: 0 auto; }
+    .page { display: none; padding: 20px 16px; max-width: 600px; margin: 0 auto; animation: fadeIn 0.3s ease-out; }
     .page.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
     /* ===== HEADER ===== */
     .app-header {
       text-align: center;
-      padding: 20px 16px;
+      padding: 30px 16px 20px;
     }
     .app-logo {
-      width: 72px;
-      height: 72px;
-      border-radius: 18px;
+      width: 84px;
+      height: 84px;
+      border-radius: 22px;
       margin-bottom: 16px;
-      box-shadow: 0 6px 16px rgba(SLOT_RGB, 0.25);
+      box-shadow: 0 8px 24px rgba(SLOT_RGB, 0.3);
       border: 1px solid var(--border);
+      transition: transform 0.3s ease;
     }
+    .app-logo:hover { transform: scale(1.05) rotate(2deg); }
     .app-title {
-      font-size: 1.6rem;
+      font-size: 1.8rem;
       color: var(--primary);
       font-weight: 700;
-      letter-spacing: -0.5px;
+      letter-spacing: -0.8px;
     }
     .app-subtitle {
-      font-size: 0.85rem;
+      font-size: 0.9rem;
       color: var(--text-dim);
-      margin-top: 4px;
+      margin-top: 6px;
     }
 
     /* ===== BOTTOM NAV ===== */
@@ -7127,8 +7132,9 @@ def mini_app_page():
       position: fixed;
       bottom: 0; left: 0; right: 0;
       height: var(--nav-h);
-      background: rgba(11, 10, 8, 0.85);
-      backdrop-filter: blur(15px);
+      background: rgba(10, 10, 10, 0.8);
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
       border-top: 1px solid var(--border);
       display: flex;
       justify-content: space-around;
@@ -7141,109 +7147,125 @@ def mini_app_page():
       color: var(--text-dim);
       font-family: var(--font-family);
       font-size: 0.75rem;
-      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
       cursor: pointer;
       flex: 1;
-      padding: 8px 0;
-      transition: color 0.2s;
+      padding: 10px 0;
+      transition: all 0.3s ease;
     }
-    .nav-btn.active { color: var(--primary); }
-    .nav-icon { font-size: 1.4rem; }
+    .nav-btn.active { color: var(--primary); transform: translateY(-2px); }
+    .nav-btn.active .nav-icon { transform: scale(1.2); text-shadow: 0 0 10px rgba(SLOT_RGB, 0.5); }
+    .nav-icon { font-size: 1.5rem; transition: transform 0.3s ease; }
 
     /* ===== CARDS & GLASSMORPHISM ===== */
     .card {
       background: var(--card-bg);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 16px;
-      margin-bottom: 16px;
+      padding: 20px;
+      margin-bottom: 20px;
+      position: relative;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 30px rgba(0,0,0,0.4);
+      border-color: rgba(255, 255, 255, 0.2);
     }
     .card-title {
-      font-size: 1.1rem;
+      font-size: 1.25rem;
       color: var(--primary);
-      font-weight: 600;
-      margin-bottom: 6px;
+      font-weight: 700;
+      margin-bottom: 8px;
     }
-    .card-sub { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 12px; }
+    .card-sub { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 16px; }
 
     /* ===== FORM ELEMENTS ===== */
     .vent-textarea {
       width: 100%;
-      min-height: 120px;
-      background: rgba(0,0,0,0.3);
+      min-height: 140px;
+      background: rgba(0,0,0,0.4);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
+      border-radius: 12px;
+      padding: 14px;
       color: var(--text);
       font-family: var(--font-family);
-      font-size: 0.9rem;
+      font-size: 1rem;
       resize: vertical;
       outline: none;
-      transition: border-color 0.2s;
-      margin-bottom: 8px;
+      transition: all 0.3s ease;
+      margin-bottom: 10px;
     }
-    .vent-textarea:focus { border-color: var(--primary); }
+    .vent-textarea:focus { border-color: var(--primary); background: rgba(0,0,0,0.5); box-shadow: 0 0 0 4px var(--primary-dim); }
     
     .btn-primary {
       width: 100%;
-      padding: 14px;
-      background: var(--primary);
+      padding: 16px;
+      background: linear-gradient(135deg, var(--primary) 0%, #E8B923 100%);
       color: #000;
       border: none;
-      border-radius: 8px;
-      font-weight: 600;
-      font-size: 0.95rem;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 1rem;
       font-family: var(--font-family);
       cursor: pointer;
-      transition: opacity 0.2s;
+      transition: all 0.3s ease;
+      box-shadow: 0 6px 20px rgba(SLOT_RGB, 0.25);
     }
-    .btn-primary:active { opacity: 0.8; }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(SLOT_RGB, 0.4); }
+    .btn-primary:active { transform: translateY(0); opacity: 0.9; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
 
     .btn-ghost {
-      background: transparent;
+      background: rgba(255, 217, 102, 0.1);
       border: 1px solid var(--primary);
       color: var(--primary);
-      padding: 6px 12px;
-      border-radius: 6px;
-      font-size: 0.8rem;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
       cursor: pointer;
+      transition: all 0.2s ease;
     }
+    .btn-ghost:hover { background: var(--primary); color: #000; }
 
     /* ===== CATEGORY GRID ===== */
     .categories-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-bottom: 16px;
-      max-height: 200px;
+      gap: 10px;
+      margin-bottom: 20px;
+      max-height: 250px;
       overflow-y: auto;
+      padding-right: 4px;
     }
     .cat-btn {
-      display: flex; align-items: center; gap: 6px;
-      background: rgba(0,0,0,0.2);
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.03);
       border: 1px solid var(--border);
-      padding: 8px 10px;
-      border-radius: 6px;
+      padding: 12px;
+      border-radius: 10px;
       color: var(--text);
-      font-size: 0.8rem;
+      font-size: 0.85rem;
       cursor: pointer;
       text-align: left;
-      transition: all 0.2s;
+      transition: all 0.2s ease;
     }
+    .cat-btn:hover { background: rgba(255,255,255,0.07); }
     .cat-btn.selected {
       background: var(--primary-dim);
       border-color: var(--primary);
     }
     .cat-icon-check {
-      width: 14px; height: 14px;
-      border: 1px solid var(--text-dim);
-      border-radius: 3px;
+      width: 18px; height: 18px;
+      border: 1.5px solid var(--text-dim);
+      border-radius: 5px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 10px;
+      font-size: 11px;
       flex-shrink: 0;
+      transition: all 0.2s;
     }
     .cat-btn.selected .cat-icon-check {
       background: var(--primary);
@@ -7254,124 +7276,109 @@ def mini_app_page():
     /* ===== FEED POSTS ===== */
     .search-bar {
       width: 100%;
-      background: rgba(0,0,0,0.3);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px 12px;
-      color: var(--text);
-      font-family: var(--font-family);
-      margin-bottom: 16px;
-      outline: none;
-    }
-    .search-bar:focus { border-color: var(--primary); }
-
-    .post-header {
-      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
-    }
-    .avatar {
-      width: 36px; height: 36px;
-      background: var(--primary-dim);
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 18px;
-    }
-    .post-author { font-weight: 600; font-size: 0.9rem; }
-    .post-time { font-size: 0.75rem; color: var(--text-dim); margin-left: auto; }
-    
-    .cat-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-    .cat-badge {
       background: rgba(0,0,0,0.4);
       border: 1px solid var(--border);
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 0.7rem;
-      color: var(--text-dim);
+      border-radius: 12px;
+      padding: 14px 18px;
+      color: var(--text);
+      font-family: var(--font-family);
+      margin-bottom: 20px;
+      outline: none;
+      transition: all 0.3s ease;
+    }
+    .search-bar:focus { border-color: var(--primary); box-shadow: 0 0 0 4px var(--primary-dim); }
+
+    .post-header {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+    }
+    .avatar {
+      width: 42px; height: 42px;
+      background: var(--primary-dim);
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      border: 1px solid var(--border);
+    }
+    .post-author { font-weight: 700; font-size: 1rem; color: var(--text); }
+    .post-time { font-size: 0.75rem; color: var(--text-dim); margin-left: auto; }
+    
+    .cat-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .cat-badge {
+      background: rgba(SLOT_RGB, 0.1);
+      border: 1px solid rgba(SLOT_RGB, 0.2);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      color: var(--primary);
+      font-weight: 500;
     }
     
     .post-content {
-      font-size: 0.9rem; line-height: 1.5; margin-bottom: 12px; word-break: break-word;
+      font-size: 1rem; line-height: 1.6; margin-bottom: 16px; color: rgba(240, 240, 240, 0.9);
+      word-break: break-word;
     }
     .post-content.truncated {
-      display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+      display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
     }
     
     .post-footer {
       display: flex; align-items: center; justify-content: space-between;
-      border-top: 1px solid rgba(255,255,255,0.05);
-      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 14px;
     }
     .unread-badge {
-      background: var(--primary); color: #000; font-size: 0.65rem; font-weight: 700;
-      padding: 2px 6px; border-radius: 10px; margin-left: 6px;
+      background: var(--primary); color: #000; font-size: 0.7rem; font-weight: 800;
+      padding: 3px 8px; border-radius: 12px; margin-left: 8px;
+      box-shadow: 0 2px 8px rgba(SLOT_RGB, 0.3);
     }
     
     /* ===== COMMENTS ===== */
-    .comment-list { margin-top: 16px; }
+    .comment-list { margin-top: 20px; }
     .comment-item {
-      display: flex; gap: 10px; margin-bottom: 16px; position: relative;
+      display: flex; gap: 12px; margin-bottom: 20px; position: relative;
     }
-    .comment-item.is-reply { margin-left: 32px; }
+    .comment-item.is-reply { margin-left: 36px; }
     .comment-item.is-reply::before {
-      content: ''; position: absolute; left: -16px; top: 0; bottom: 0;
-      width: 2px; background: var(--border); border-radius: 2px;
+      content: ''; position: absolute; left: -18px; top: 0; bottom: 10px;
+      width: 2px; background: linear-gradient(to bottom, var(--border), transparent); border-radius: 2px;
     }
     .comment-body {
-      flex: 1; background: rgba(0,0,0,0.2); border: 1px solid var(--border);
-      border-radius: 8px; padding: 10px;
+      flex: 1; background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+      border-radius: 12px; padding: 12px 16px;
     }
     .comment-actions {
-      display: flex; gap: 12px; margin-top: 8px; font-size: 0.75rem; color: var(--text-dim);
+      display: flex; gap: 16px; margin-top: 10px; font-size: 0.8rem; color: var(--text-dim);
     }
-    .action-btn { background: none; border: none; color: inherit; cursor: pointer; padding: 0; }
+    .action-btn { background: none; border: none; color: inherit; cursor: pointer; padding: 0; font-weight: 500; }
     .action-btn:hover { color: var(--primary); }
 
-    .inline-reply-box { display: none; margin-top: 8px; }
+    .inline-reply-box { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
     .inline-reply-box.open { display: block; }
     
     /* ===== MISC ===== */
     .skeleton {
-      height: 100px; background: rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 12px;
-      animation: pulse 1.5s infinite;
+      height: 120px; background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 75%);
+      background-size: 200% 100%; border-radius: 12px; margin-bottom: 16px;
+      animation: loading 1.5s infinite;
     }
-    @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+    @keyframes loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
     
     .toast {
-      position: fixed; bottom: 85px; left: 50%; transform: translateX(-50%);
-      background: var(--primary); color: #000; padding: 10px 20px; border-radius: 20px;
-      font-size: 0.85rem; font-weight: 600; opacity: 0; pointer-events: none; transition: opacity 0.3s;
-      z-index: 2000;
+      position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+      background: var(--primary); color: #000; padding: 12px 24px; border-radius: 30px;
+      font-size: 0.9rem; font-weight: 700; opacity: 0; pointer-events: none; transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+      z-index: 2000; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
     }
-    .toast.show { opacity: 1; }
-    
-    .toggle-switch {
-      position: relative; display: inline-block; width: 40px; height: 22px;
-    }
-    .toggle-switch input { opacity: 0; width: 0; height: 0; }
-    .toggle-slider {
-      position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
-      background-color: rgba(255,255,255,0.1); transition: .4s; border-radius: 22px;
-    }
-    .toggle-slider:before {
-      position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px;
-      background-color: var(--text-dim); transition: .4s; border-radius: 50%;
-    }
-    input:checked + .toggle-slider { background-color: var(--primary-dim); }
-    input:checked + .toggle-slider:before { transform: translateX(18px); background-color: var(--primary); }
-    
-    .emoji-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-    .emoji-item {
-      font-size: 1.5rem; text-align: center; padding: 8px; background: rgba(0,0,0,0.2);
-      border-radius: 8px; cursor: pointer; border: 1px solid transparent;
-    }
-    .emoji-item.selected { border-color: var(--primary); background: var(--primary-dim); }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(-10px); }
     
     #authScreen {
       position: fixed; top:0; left:0; width:100%; height:100%;
       background: var(--bg-color); z-index: 9999;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center;
     }
     .spinner {
-      width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1);
+      width: 48px; height: 48px; border: 4px solid rgba(SLOT_RGB, 0.1);
       border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -7382,14 +7389,16 @@ def mini_app_page():
 <canvas id="particleCanvas"></canvas>
 
 <div id="authScreen">
+  <img src="/static/images/logo.jpg" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);">
   <div class="spinner"></div>
-  <h2 style="margin-top: 20px; color: var(--primary);">Authenticating...</h2>
+  <h2 style="margin-top: 24px; color: var(--primary); font-size: 1.5rem; font-weight: 700;">Christian Vent</h2>
+  <p style="color: var(--text-dim); margin-top: 8px;">Preparing your secure space...</p>
 </div>
 
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/vent logo.png" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/logo.jpg" class="app-logo" alt="Christian Vent Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
@@ -7398,11 +7407,11 @@ def mini_app_page():
   <section id="page-vent" class="page active">
     <div class="card">
       <div class="card-title">Share Your Heart</div>
-      <div class="card-sub">Pick categories that match your vent:</div>
+      <div class="card-sub">What's on your mind today? Select categories:</div>
       <div class="categories-grid" id="categoriesGrid"></div>
       
-      <textarea id="ventInput" class="vent-textarea" placeholder="What's on your heart?" maxlength="5000"></textarea>
-      <div style="text-align:right; font-size:0.75rem; color:var(--text-dim); margin-bottom:12px;" id="charCount">0/5000</div>
+      <textarea id="ventInput" class="vent-textarea" placeholder="Type your vent here..." maxlength="5000"></textarea>
+      <div style="text-align:right; font-size:0.8rem; color:var(--text-dim); margin-bottom:16px;" id="charCount">0/5000</div>
       
       <button class="btn-primary" id="submitVentBtn">Post Anonymously</button>
     </div>
@@ -7410,21 +7419,22 @@ def mini_app_page():
 
   <!-- FEED PAGE -->
   <section id="page-feed" class="page">
-    <input type="text" id="searchInput" class="search-bar" placeholder="Search vents...">
+    <input type="text" id="searchInput" class="search-bar" placeholder="Search for vents, topics, or prayers...">
     <div id="feedContainer"></div>
-    <div id="loadMoreArea" style="text-align:center; display:none; padding: 10px;">
-      <button class="btn-ghost" id="loadMoreBtn">Load More</button>
+    <div id="loadMoreArea" style="text-align:center; display:none; padding: 20px;">
+      <button class="btn-ghost" id="loadMoreBtn" style="width:100%; padding:14px;">Load More Vents</button>
     </div>
   </section>
 
   <!-- POST DETAIL PAGE -->
   <section id="page-detail" class="page">
-    <button class="btn-ghost" onclick="switchPage('feed')" style="margin-bottom:16px; border:none; padding:0;">← Back</button>
+    <button class="btn-ghost" onclick="switchPage('feed')" style="margin-bottom:20px; border:none; padding:0; background:none; font-size:1rem;">← Back to Feed</button>
     <div id="detailPostBox"></div>
     
-    <div class="card" style="margin-top:16px; padding: 12px;">
-      <textarea id="commentInput" class="vent-textarea" style="min-height:70px; margin-bottom:8px;" placeholder="Offer a response..."></textarea>
-      <button class="btn-primary" id="postCommentBtn" style="padding: 10px;">Send Response</button>
+    <div class="card" style="margin-top:20px; padding: 16px;" id="mainCommentCard">
+      <div id="respondingAsLabel" style="font-size:0.8rem; color:var(--primary); margin-bottom:8px; font-weight:700; letter-spacing: 0.5px; text-transform: uppercase;"></div>
+      <textarea id="commentInput" class="vent-textarea" style="min-height:90px; margin-bottom:12px;" placeholder="Offer a kind response or prayer..."></textarea>
+      <button class="btn-primary" id="postCommentBtn">Send Response</button>
     </div>
     
     <div id="detailCommentsBox" class="comment-list"></div>
@@ -7433,8 +7443,9 @@ def mini_app_page():
   <!-- LEADERBOARD PAGE -->
   <section id="page-leaderboard" class="page">
     <div class="card">
-      <div class="card-title">Top Contributors</div>
-      <div id="leaderboardContainer" style="margin-top: 16px;"></div>
+      <div class="card-title">🏆 Top Contributors</div>
+      <p style="font-size:0.85rem; color:var(--text-dim); margin-bottom:20px;">The most active and supportive members this week.</p>
+      <div id="leaderboardContainer"></div>
     </div>
   </section>
 
@@ -7445,51 +7456,51 @@ def mini_app_page():
 
   <!-- EDIT PROFILE PAGE -->
   <section id="page-edit-profile" class="page">
-    <button class="btn-ghost" onclick="switchPage('profile')" style="margin-bottom:16px; border:none; padding:0;">← Back</button>
+    <button class="btn-ghost" onclick="switchPage('profile')" style="margin-bottom:20px; border:none; padding:0; background:none;">← Back</button>
     <div class="card">
-      <div class="card-title">Edit Profile</div>
+      <div class="card-title">Edit Your Profile</div>
       
-      <label style="font-size:0.8rem; color:var(--primary); margin-bottom:4px; display:block;">Anonymous Name</label>
-      <input type="text" id="edit-name" class="vent-textarea" style="min-height:40px; margin-bottom:16px;">
+      <label style="font-size:0.9rem; color:var(--primary); margin-bottom:6px; display:block; font-weight:600;">Anonymous Name</label>
+      <input type="text" id="edit-name" class="vent-textarea" style="min-height:50px; margin-bottom:20px;">
       
-      <label style="font-size:0.8rem; color:var(--primary); margin-bottom:4px; display:block;">Bio</label>
-      <textarea id="edit-bio" class="vent-textarea" style="min-height:80px; margin-bottom:16px;"></textarea>
+      <label style="font-size:0.9rem; color:var(--primary); margin-bottom:6px; display:block; font-weight:600;">Bio</label>
+      <textarea id="edit-bio" class="vent-textarea" style="min-height:100px; margin-bottom:20px;" placeholder="Tell us a bit about yourself..."></textarea>
       
-      <label style="font-size:0.8rem; color:var(--primary); margin-bottom:8px; display:block;">Avatar</label>
-      <div id="emoji-grid" class="emoji-grid" style="margin-bottom:20px;"></div>
+      <label style="font-size:0.9rem; color:var(--primary); margin-bottom:10px; display:block; font-weight:600;">Choose Your Avatar</label>
+      <div id="emoji-grid" class="emoji-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom:24px;"></div>
       
-      <button class="btn-primary" id="saveProfileBtn">Save Profile</button>
+      <button class="btn-primary" id="saveProfileBtn">Save Changes</button>
     </div>
   </section>
 
   <!-- SETTINGS PAGE -->
   <section id="page-settings" class="page">
     <div class="card">
-      <div class="card-title">Settings</div>
+      <div class="card-title">⚙️ Settings</div>
       
-      <div style="display:flex; justify-content:space-between; align-items:center; margin: 20px 0;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin: 24px 0; padding-bottom: 16px; border-bottom: 1px solid var(--border);">
         <div>
-          <div style="font-weight:500;">Push Notifications</div>
-          <div style="font-size:0.75rem; color:var(--text-dim);">Alerts for replies</div>
+          <div style="font-weight:600; font-size:1.05rem;">Push Notifications</div>
+          <div style="font-size:0.8rem; color:var(--text-dim);">Get notified when someone replies</div>
         </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="set-notifications">
-          <span class="toggle-slider"></span>
+        <label class="toggle-switch" style="position: relative; display: inline-block; width: 46px; height: 26px;">
+          <input type="checkbox" id="set-notifications" style="opacity: 0; width: 0; height: 0;">
+          <span class="toggle-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.1); transition: .4s; border-radius: 34px;"></span>
         </label>
       </div>
       
-      <div style="display:flex; justify-content:space-between; align-items:center; margin: 20px 0;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin: 24px 0; padding-bottom: 16px; border-bottom: 1px solid var(--border);">
         <div>
-          <div style="font-weight:500;">Public Profile</div>
-          <div style="font-size:0.75rem; color:var(--text-dim);">Others see your stats</div>
+          <div style="font-weight:600; font-size:1.05rem;">Public Profile</div>
+          <div style="font-size:0.8rem; color:var(--text-dim);">Allow others to see your stats</div>
         </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="set-privacy">
-          <span class="toggle-slider"></span>
+        <label class="toggle-switch" style="position: relative; display: inline-block; width: 46px; height: 26px;">
+          <input type="checkbox" id="set-privacy" style="opacity: 0; width: 0; height: 0;">
+          <span class="toggle-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.1); transition: .4s; border-radius: 34px;"></span>
         </label>
       </div>
       
-      <button class="btn-primary" id="saveSettingsBtn">Apply</button>
+      <button class="btn-primary" id="saveSettingsBtn" style="margin-top: 10px;">Apply Settings</button>
     </div>
   </section>
 
@@ -7505,6 +7516,23 @@ def mini_app_page():
 </div>
 
 <div id="toast" class="toast"></div>
+
+<style>
+  /* Custom Toggle Styles */
+  .toggle-slider:before {
+    position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px;
+    background-color: #fff; transition: .4s; border-radius: 50%;
+  }
+  input:checked + .toggle-slider { background-color: var(--primary); }
+  input:checked + .toggle-slider:before { transform: translateX(20px); background-color: #000; }
+  
+  .emoji-item {
+    font-size: 1.8rem; text-align: center; padding: 12px; background: rgba(255,255,255,0.03);
+    border-radius: 12px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s ease;
+  }
+  .emoji-item:hover { background: rgba(255,255,255,0.08); transform: scale(1.05); }
+  .emoji-item.selected { border-color: var(--primary); background: var(--primary-dim); transform: scale(1.1); }
+</style>
 
 <script>
 'use strict';
@@ -7525,7 +7553,7 @@ const CONFIG = {
 
 const state = {
   userId: null, currentPage: 'vent', feedPage: 1, feedHasMore: true, feedLoading: false,
-  searchQuery: '', currentPostId: null, selectedCategories: new Set(),
+  searchQuery: '', currentPostId: null, currentPostAuthorId: null, selectedCategories: new Set(),
   profileData: null, selectedEmoji: null
 };
 
@@ -7615,7 +7643,7 @@ async function loadFeed(append = false) {
   const container = document.getElementById('feedContainer');
   const loadMore = document.getElementById('loadMoreArea');
   
-  if(!append) { container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>'; loadMore.style.display='none'; }
+  if(!append) { container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>'; loadMore.style.display='none'; }
   
   try {
     let url = `/api/mini-app/get-posts?page=${state.feedPage}&user_id=${state.userId}`;
@@ -7626,16 +7654,16 @@ async function loadFeed(append = false) {
     state.feedHasMore = data.has_more;
     
     if(!append) container.innerHTML = '';
-    if(posts.length === 0 && !append) container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-dim);">No posts found.</div>';
+    if(posts.length === 0 && !append) container.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-dim);"><div style="font-size:3rem; margin-bottom:10px;">🏜️</div>No vents found matching your search.</div>';
     
     posts.forEach(p => {
       const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
       const unread = p.unread_comments > 0 ? `<span class="unread-badge">${p.unread_comments} new</span>` : '';
       
       container.insertAdjacentHTML('beforeend', `
-        <div class="card" style="cursor:pointer;" onclick="openPost(${p.id})">
+        <div class="card" onclick="openPost(${p.id})">
           <div class="post-header">
-            <div class="avatar">${esc(p.author?.avatar || p.author?.sex || '👤')}</div>
+            <div class="avatar">${esc(p.author?.sex || '👤')} ${esc(p.author?.avatar || '')}</div>
             <div>
               <div class="post-author">${esc(p.author?.name || 'Anonymous')} ${esc(p.author?.aura||'')}</div>
               <div class="post-time">${esc(p.time_ago)}</div>
@@ -7644,8 +7672,8 @@ async function loadFeed(append = false) {
           <div class="cat-badges">${cats}</div>
           <div class="post-content truncated">${esc(p.content)}</div>
           <div class="post-footer">
-            <span style="font-size:0.8rem; color:var(--text-dim);">💬 ${p.comments} replies ${unread}</span>
-            <span style="font-size:0.8rem; color:var(--primary);">Read →</span>
+            <span style="font-size:0.85rem; color:var(--text-dim); font-weight:500;">💬 ${p.comments} replies ${unread}</span>
+            <span style="font-size:0.85rem; color:var(--primary); font-weight:600;">View Details →</span>
           </div>
         </div>
       `);
@@ -7654,7 +7682,7 @@ async function loadFeed(append = false) {
     loadMore.style.display = state.feedHasMore ? 'block' : 'none';
     if(state.feedHasMore) state.feedPage++;
   } catch(e) {
-    if(!append) container.innerHTML = '<div style="text-align:center; color:var(--text-dim);">Failed to load.</div>';
+    if(!append) container.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding: 40px;">Failed to load feed. Please try again.</div>';
     toast('Error loading feed');
   } finally { state.feedLoading = false; }
 }
@@ -7665,38 +7693,46 @@ async function openPost(id) {
   switchPage('detail');
   const box = document.getElementById('detailPostBox');
   const commBox = document.getElementById('detailCommentsBox');
-  box.innerHTML = '<div class="skeleton"></div>'; commBox.innerHTML = '';
+  const respondingLabel = document.getElementById('respondingAsLabel');
+  box.innerHTML = '<div class="skeleton" style="height:200px;"></div>'; commBox.innerHTML = '';
+  respondingLabel.innerHTML = '';
   
   try {
-    const data = await apiFetch(`/api/mini-app/post/${id}`);
+    const data = await apiFetch(\`/api/mini-app/post/\${id}\`);
     const p = data.data;
+    state.currentPostAuthorId = String(p.author_id);
     const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
     
     box.innerHTML = `
       <div class="card">
         <div class="post-header">
-          <div class="avatar">${esc(p.author?.sex || '👤')} ${esc(p.author?.avatar || '')}</div>
+          <div class="avatar" style="width:48px; height:48px; font-size:24px;">${esc(p.author?.sex || '👤')} ${esc(p.author?.avatar || '')}</div>
           <div>
-            <div class="post-author">${esc(p.author?.name || 'Anonymous')} ${esc(p.author?.aura||'')}</div>
+            <div class="post-author" style="font-size:1.1rem;">${esc(p.author?.name || 'Anonymous')} ${esc(p.author?.aura||'')}</div>
             <div class="post-time">${esc(p.time_ago)}</div>
           </div>
         </div>
         <div class="cat-badges">${cats}</div>
-        <div class="post-content">${esc(p.content)}</div>
+        <div class="post-content" style="font-size:1.1rem;">${esc(p.content)}</div>
       </div>
     `;
+    
+    // Set "Responding as" label
+    const replyAsName = String(state.userId) === state.currentPostAuthorId ? "Vent author" : (state.profileData?.name || "Anonymous");
+    respondingLabel.textContent = "Responding as " + replyAsName;
+    
     await loadComments(id);
-  } catch(e) { box.innerHTML = 'Error loading post.'; }
+  } catch(e) { box.innerHTML = '<div class="card">Error loading post. It may have been deleted.</div>'; }
 }
 
 async function loadComments(id) {
   const box = document.getElementById('detailCommentsBox');
-  box.innerHTML = '<div class="skeleton"></div>';
+  box.innerHTML = '<div class="skeleton"></div><div class="skeleton" style="height:60px;"></div>';
   try {
-    const data = await apiFetch(`/api/mini-app/post/${id}/comments`);
+    const data = await apiFetch(\`/api/mini-app/post/\${id}/comments\`);
     const comments = data.data || [];
     
-    if(!comments.length) { box.innerHTML = '<div style="text-align:center; color:var(--text-dim);">No replies yet.</div>'; return; }
+    if(!comments.length) { box.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-dim); background:rgba(255,255,255,0.02); border-radius:16px;">No replies yet. Be the first to respond!</div>'; return; }
     
     const map = {}; const roots = [];
     comments.forEach(c => map[c.id] = {...c, children: []});
@@ -7707,96 +7743,103 @@ async function loadComments(id) {
     
     const renderC = (c, depth) => {
       const isReply = depth > 0 ? 'is-reply' : '';
-      const isMine = String(c.author?.id || c.author_id) === String(state.userId) || c.author?.is_me;
+      const isMine = String(c.author?.id) === String(state.userId);
+      const isPostAuthor = String(c.author?.id) === state.currentPostAuthorId;
       
-      let actions = `<button class="action-btn" onclick="toggleReply(${c.id})">Reply</button>`;
+      const displayName = isPostAuthor ? "Vent author" : (c.author?.name || 'Anonymous');
+      const replyAsName = String(state.userId) === state.currentPostAuthorId ? "Vent author" : (state.profileData?.name || "Anonymous");
+      
+      let actions = `<button class="action-btn" onclick="toggleReply(\${c.id})">Reply</button>`;
       if(isMine) {
         actions += `
-          <button class="action-btn" onclick="editComment(${c.id}, '${esc(c.content.replace(/'/g, "\\'"))}')">Edit</button>
-          <button class="action-btn" style="color:#e74c3c;" onclick="deleteComment(${c.id})">Delete</button>
+          <button class="action-btn" onclick="editComment(\${c.id}, '\${esc(c.content.replace(/'/g, "\\\\'"))}')">Edit</button>
+          <button class="action-btn" style="color:#ff5555;" onclick="deleteComment(\${c.id})">Delete</button>
         `;
       }
       
       const children = c.children.map(ch => renderC(ch, depth+1)).join('');
       return `
-        <div class="comment-item ${isReply}">
-          <div class="avatar" style="width:28px; height:28px; font-size:14px;">${esc(c.author?.sex || '👤')} ${esc(c.author?.avatar || '')}</div>
-          <div class="comment-body">
-            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-              <span style="font-size:0.8rem; font-weight:600; color:var(--primary);">${esc(c.author?.name)} ${esc(c.author?.aura)}</span>
-              <span style="font-size:0.7rem; color:var(--text-dim);">${esc(c.time_ago)}</span>
+        <div class="comment-item \${isReply}">
+          <div class="avatar" style="width:32px; height:32px; font-size:16px;">\${esc(c.author?.sex || '👤')} \${esc(c.author?.avatar || '')}</div>
+          <div class="comment-body" style="\${isPostAuthor ? 'border-color: rgba(255, 217, 102, 0.3); background: rgba(255, 217, 102, 0.03);' : ''}">
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+              <span style="font-size:0.85rem; font-weight:700; color:\${isPostAuthor ? 'var(--primary)' : 'var(--text)'};">\${esc(displayName)} \${esc(c.author?.aura)}</span>
+              <span style="font-size:0.7rem; color:var(--text-dim);">\${esc(c.time_ago)}</span>
             </div>
-            <div style="font-size:0.85rem; line-height:1.4;" id="comment-content-${c.id}">${esc(c.content)}</div>
-            <div class="comment-actions">${actions}</div>
+            <div style="font-size:0.95rem; line-height:1.5; color: rgba(255,255,255,0.9);" id="comment-content-\${c.id}">\${esc(c.content)}</div>
+            <div class="comment-actions">\${actions}</div>
             
-            <div class="inline-reply-box" id="reply-box-${c.id}">
-              <textarea class="vent-textarea" style="min-height:50px; margin-bottom:4px;" id="reply-text-${c.id}"></textarea>
+            <div class="inline-reply-box" id="reply-box-\${c.id}">
+              <div style="font-size:0.75rem; color:var(--primary); margin-bottom:6px; font-weight:700; text-transform:uppercase;">Replying as \${esc(replyAsName)}</div>
+              <textarea class="vent-textarea" style="min-height:70px; margin-bottom:8px;" id="reply-text-\${c.id}" placeholder="Write your reply..."></textarea>
               <div style="text-align:right;">
-                <button class="btn-ghost" style="padding:4px 8px; font-size:0.7rem;" onclick="toggleReply(${c.id})">Cancel</button>
-                <button class="btn-primary" style="padding:4px 12px; width:auto; font-size:0.7rem; display:inline-block;" onclick="sendReply(${c.id})">Send</button>
+                <button class="btn-ghost" style="padding:6px 12px; font-size:0.75rem; border:none; background:transparent;" onclick="toggleReply(\${c.id})">Cancel</button>
+                <button class="btn-primary" style="padding:8px 20px; width:auto; font-size:0.8rem; display:inline-block;" onclick="sendReply(\${c.id})">Post Reply</button>
               </div>
             </div>
           </div>
         </div>
-        ${children}
+        \${children}
       `;
     };
     box.innerHTML = roots.map(c => renderC(c, 0)).join('');
-  } catch(e) { box.innerHTML = 'Error loading comments.'; }
+  } catch(e) { box.innerHTML = '<div style="text-align:center; padding:20px;">Error loading comments.</div>'; }
 }
 
 async function postComment() {
   const text = document.getElementById('commentInput').value.trim();
-  if(!text) return toast('Write something');
+  if(!text) return toast('Please enter a response');
   const btn = document.getElementById('postCommentBtn');
-  btn.disabled = true;
+  btn.disabled = true; btn.textContent = 'Sending...';
   try {
-    await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
+    await apiFetch(\`/api/mini-app/post/\${state.currentPostId}/comment\`, {
       method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: 0 })
     });
     document.getElementById('commentInput').value = '';
-    toast('Reply posted');
+    toast('✅ Reply posted successfully');
     await loadComments(state.currentPostId);
   } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; }
+  finally { btn.disabled = false; btn.textContent = 'Send Response'; }
 }
 
 function toggleReply(id) {
   const box = document.getElementById('reply-box-'+id);
   box.classList.toggle('open');
+  if(box.classList.contains('open')) box.querySelector('textarea').focus();
 }
 
 async function sendReply(parentId) {
-  const text = document.getElementById('reply-text-'+parentId).value.trim();
-  if(!text) return toast('Write something');
+  const textarea = document.getElementById('reply-text-'+parentId);
+  const text = textarea.value.trim();
+  if(!text) return toast('Please enter a reply');
   try {
-    await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
+    await apiFetch(\`/api/mini-app/post/\${state.currentPostId}/comment\`, {
       method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: parentId })
     });
-    toast('Reply posted');
+    toast('✅ Reply posted');
     await loadComments(state.currentPostId);
   } catch(e) { toast(e.message); }
 }
 
 async function editComment(id, oldText) {
-  const newText = prompt("Edit comment:", oldText);
+  const newText = prompt("Edit your comment:", oldText);
   if(newText === null || newText.trim() === '' || newText.trim() === oldText) return;
   try {
-    await apiFetch(`/api/mini-app/comment/${id}`, {
+    await apiFetch(\`/api/mini-app/comment/\${id}\`, {
       method: 'PUT', body: JSON.stringify({ user_id: state.userId, content: newText.trim() })
     });
-    toast('Comment edited');
+    toast('✏️ Comment updated');
     await loadComments(state.currentPostId);
   } catch(e) { toast(e.message); }
 }
 
 async function deleteComment(id) {
-  if(!confirm("Delete this comment?")) return;
+  if(!confirm("Are you sure you want to delete this comment?")) return;
   try {
-    await apiFetch(`/api/mini-app/comment/${id}`, {
+    await apiFetch(\`/api/mini-app/comment/\${id}\`, {
       method: 'DELETE', body: JSON.stringify({ user_id: state.userId })
     });
-    toast('Comment deleted');
+    toast('🗑️ Comment deleted');
     await loadComments(state.currentPostId);
   } catch(e) { toast(e.message); }
 }
@@ -7804,47 +7847,50 @@ async function deleteComment(id) {
 // LEADERBOARD
 async function loadLeaderboard() {
   const box = document.getElementById('leaderboardContainer');
-  box.innerHTML = '<div class="skeleton"></div>';
+  box.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
   try {
     const data = await apiFetch('/api/mini-app/leaderboard');
     box.innerHTML = (data.data||[]).map((u,i) => `
-      <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
-        <div style="width:24px; font-weight:700; color:${i===0?'#FFD700':i===1?'#C0C0C0':i===2?'#CD7F32':'var(--text-dim)'};">${i<3?['👑','🥈','🥉'][i]:i+1}</div>
-        <div class="avatar">${esc(u.avatar||'👤')}</div>
+      <div style="display:flex; align-items:center; gap:16px; padding:16px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
+        <div style="width:30px; font-weight:800; font-size:1.1rem; color:\${i===0?'#FFD700':i===1?'#C0C0C0':i===2?'#CD7F32':'var(--text-dim)'};">\${i<3?['👑','🥈','🥉'][i]:i+1}</div>
+        <div class="avatar" style="width:46px; height:46px;">\${esc(u.avatar||'👤')}</div>
         <div style="flex:1;">
-          <div style="font-weight:600; font-size:0.9rem;">${esc(u.name)}</div>
-          <div style="font-size:0.75rem; color:var(--text-dim);">${esc(u.aura)}</div>
+          <div style="font-weight:700; font-size:1rem;">\${esc(u.name)}</div>
+          <div style="font-size:0.8rem; color:var(--text-dim); font-weight:500;">\${esc(u.aura)}</div>
         </div>
-        <div style="font-weight:700; color:var(--primary);">${u.points} pts</div>
+        <div style="text-align:right;">
+          <div style="font-weight:800; color:var(--primary); font-size:1.1rem;">\${u.points}</div>
+          <div style="font-size:0.65rem; color:var(--text-dim); text-transform:uppercase; font-weight:700;">points</div>
+        </div>
       </div>
     `).join('');
-  } catch(e) { box.innerHTML = 'Error loading leaderboard.'; }
+  } catch(e) { box.innerHTML = '<div style="padding:20px;">Error loading leaderboard.</div>'; }
 }
 
 // PROFILE
 async function loadProfile() {
   const box = document.getElementById('profileContainer');
-  box.innerHTML = '<div class="skeleton" style="height:200px;"></div>';
+  box.innerHTML = '<div class="skeleton" style="height:300px;"></div>';
   try {
-    const data = await apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`);
+    const data = await apiFetch(\`/api/mini-app/profile/\${state.userId}?viewer_id=\${state.userId}\`);
     const p = data.data; state.profileData = p;
     
     box.innerHTML = `
-      <div class="card" style="text-align:center;">
-        <button class="btn-ghost" onclick="setupEditProfile()" style="position:absolute; right:16px; top:16px;">Edit</button>
-        <div class="avatar" style="width:80px; height:80px; font-size:32px; margin:0 auto 12px; border:2px solid var(--primary);">${esc(p.avatar||'👤')}</div>
-        <div style="font-size:1.3rem; font-weight:700; color:var(--primary);">${esc(p.name)}</div>
-        <div style="font-size:0.85rem; color:var(--text-dim); margin-bottom:16px;">${esc(p.aura)} ${p.rating} pts</div>
-        ${p.bio ? `<div style="font-style:italic; font-size:0.9rem; margin-bottom:20px;">"${esc(p.bio)}"</div>` : ''}
+      <div class="card" style="text-align:center; padding: 30px 20px;">
+        <button class="btn-ghost" onclick="setupEditProfile()" style="position:absolute; right:20px; top:20px; padding:6px 12px; font-size:0.75rem;">Edit Profile</button>
+        <div class="avatar" style="width:100px; height:100px; font-size:48px; margin:0 auto 20px; border:3px solid var(--primary); border-radius:30px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.2);">\${esc(p.avatar||'👤')}</div>
+        <div style="font-size:1.6rem; font-weight:800; color:var(--primary); letter-spacing:-0.5px;">\${esc(p.name)}</div>
+        <div style="font-size:0.95rem; color:var(--text-dim); margin-bottom:20px; font-weight:600;">\${esc(p.aura)} • \${p.rating} Reputation</div>
+        \${p.bio ? `<div style="font-style:italic; font-size:1rem; margin-bottom:30px; line-height:1.6; color:rgba(255,255,255,0.8); background:rgba(255,255,255,0.03); padding:16px; border-radius:12px;">"\${esc(p.bio)}"</div>` : ''}
         
-        <div style="display:flex; justify-content:space-around; border-top:1px solid var(--border); padding-top:16px;">
-          <div><div style="font-size:1.2rem; font-weight:700; color:var(--primary);">${p.stats?.posts||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Vents</div></div>
-          <div><div style="font-size:1.2rem; font-weight:700; color:var(--primary);">${p.stats?.comments||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Replies</div></div>
-          <div><div style="font-size:1.2rem; font-weight:700; color:var(--primary);">${p.stats?.followers||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Followers</div></div>
+        <div style="display:flex; justify-content:space-around; border-top:1px solid var(--border); padding-top:24px;">
+          <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">\${p.stats?.posts||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Vents</div></div>
+          <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">\${p.stats?.comments||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Replies</div></div>
+          <div style="text-align:center;"><div style="font-size:1.4rem; font-weight:800; color:var(--primary);">\${p.stats?.followers||0}</div><div style="font-size:0.75rem; color:var(--text-dim); font-weight:600; text-transform:uppercase;">Followers</div></div>
         </div>
       </div>
     `;
-  } catch(e) { box.innerHTML = 'Error loading profile.'; }
+  } catch(e) { box.innerHTML = '<div class="card">Error loading profile.</div>'; }
 }
 
 function setupEditProfile() {
@@ -7855,7 +7901,7 @@ function setupEditProfile() {
   state.selectedEmoji = p.avatar;
   
   const grid = document.getElementById('emoji-grid');
-  grid.innerHTML = CONFIG.emojis.map(e => `<div class="emoji-item ${e===state.selectedEmoji?'selected':''}" data-e="${e}">${e}</div>`).join('');
+  grid.innerHTML = CONFIG.emojis.map(e => `<div class="emoji-item \${e===state.selectedEmoji?'selected':''}" data-e="\${e}">\${e}</div>`).join('');
   grid.querySelectorAll('.emoji-item').forEach(el => el.onclick = () => {
     grid.querySelectorAll('.emoji-item').forEach(i => i.classList.remove('selected'));
     el.classList.add('selected'); state.selectedEmoji = el.dataset.e;
@@ -7865,40 +7911,41 @@ function setupEditProfile() {
 async function saveProfile() {
   const name = document.getElementById('edit-name').value.trim();
   const bio = document.getElementById('edit-bio').value.trim();
-  if(!name) return toast('Name required');
+  if(!name) return toast('Display name is required');
   
-  const btn = document.getElementById('saveProfileBtn'); btn.disabled = true;
+  const btn = document.getElementById('saveProfileBtn'); btn.disabled = true; btn.textContent = 'Saving...';
   try {
-    await apiFetch(`/api/mini-app/profile/${state.userId}`, {
+    await apiFetch(\`/api/mini-app/profile/\${state.userId}\`, {
       method: 'PUT', body: JSON.stringify({ name, bio, avatar: state.selectedEmoji })
     });
-    toast('Profile updated');
+    toast('✅ Profile saved successfully');
     switchPage('profile');
+    loadProfile();
   } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; }
+  finally { btn.disabled = false; btn.textContent = 'Save Changes'; }
 }
 
 // SETTINGS
 async function loadSettings() {
   try {
-    const data = await apiFetch(`/api/mini-app/settings/${state.userId}`);
+    const data = await apiFetch(\`/api/mini-app/settings/\${state.userId}\`);
     document.getElementById('set-notifications').checked = data.data.notifications;
     document.getElementById('set-privacy').checked = data.data.privacy_public;
   } catch(e) {}
 }
 
 async function saveSettings() {
-  const btn = document.getElementById('saveSettingsBtn'); btn.disabled = true;
+  const btn = document.getElementById('saveSettingsBtn'); btn.disabled = true; btn.textContent = 'Applying...';
   try {
-    await apiFetch(`/api/mini-app/settings/${state.userId}`, {
+    await apiFetch(\`/api/mini-app/settings/\${state.userId}\`, {
       method: 'POST', body: JSON.stringify({
         notifications: document.getElementById('set-notifications').checked,
         privacy_public: document.getElementById('set-privacy').checked
       })
     });
-    toast('Settings saved');
+    toast('✅ Settings updated');
   } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; }
+  finally { btn.disabled = false; btn.textContent = 'Apply Settings'; }
 }
 
 // INIT
@@ -7909,13 +7956,13 @@ function initParticles() {
   let h = canvas.height = window.innerHeight;
   const particles = [];
   
-  for(let i=0; i<40; i++) {
-    particles.push({ x: Math.random()*w, y: Math.random()*h, r: Math.random()*2+0.5, vx: (Math.random()-0.5)*0.3, vy: (Math.random()-0.5)*0.3 });
+  for(let i=0; i<50; i++) {
+    particles.push({ x: Math.random()*w, y: Math.random()*h, r: Math.random()*2+0.5, vx: (Math.random()-0.5)*0.4, vy: (Math.random()-0.5)*0.4 });
   }
   
   function draw() {
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.fillStyle = 'rgba(255, 217, 102, 0.25)'; // Gold tinted particles
     particles.forEach(p => {
       p.x += p.vx; p.y += p.vy;
       if(p.x < 0) p.x = w; if(p.x > w) p.x = 0;
@@ -7940,7 +7987,7 @@ async function init() {
   document.getElementById('searchInput').addEventListener('input', function() {
     clearTimeout(searchTimeout);
     state.searchQuery = this.value.trim();
-    searchTimeout = setTimeout(() => { state.feedPage = 1; loadFeed(); }, 500);
+    searchTimeout = setTimeout(() => { state.feedPage = 1; loadFeed(); }, 600);
   });
   
   document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => switchPage(b.dataset.page));
@@ -7970,14 +8017,21 @@ async function init() {
   }
   
   if(state.userId) {
-    document.getElementById('authScreen').style.display = 'none';
-    document.getElementById('mainApp').style.display = 'block';
-    loadFeed();
+    setTimeout(() => {
+      document.getElementById('authScreen').style.opacity = '0';
+      setTimeout(() => {
+        document.getElementById('authScreen').style.display = 'none';
+        document.getElementById('mainApp').style.display = 'block';
+        loadFeed();
+        // Load profile once for the "replying as" logic
+        apiFetch(\`/api/mini-app/profile/\${state.userId}?viewer_id=\${state.userId}\`).then(d => { state.profileData = d.data; });
+      }, 500);
+    }, 1200);
   } else {
     document.getElementById('authScreen').innerHTML = `
-      <div style="font-size:2rem; margin-bottom:10px;">🔒</div>
-      <h2 style="color:var(--primary);">Access Required</h2>
-      <p style="color:var(--text-dim); text-align:center; padding:20px;">Please open the app via Telegram bot.</p>
+      <div style="font-size:3rem; margin-bottom:20px;">🔒</div>
+      <h2 style="color:var(--primary); font-size: 1.8rem;">Access Restricted</h2>
+      <p style="color:var(--text-dim); text-align:center; padding:20px; font-size: 1rem; line-height:1.6;">Please open this application from within the Christian Vent Telegram bot to continue securely.</p>
     `;
   }
 }
@@ -7987,11 +8041,9 @@ document.addEventListener('DOMContentLoaded', init);
 </body>
 </html>""")
     
-    html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
+    html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BG', _bg_color).replace('SLOT_CARD_BG', _card_bg).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
     return html
 
-
-# ==================== MINI APP API ENDPOINTS ====================
 
 # ==================== MINI APP API ENDPOINTS ====================
 
@@ -8264,6 +8316,7 @@ def mini_app_get_single_post(post_id):
             'categories': category_list,
             'time_ago': time_ago,
             'comments': post['comment_count'] or 0,
+            'author_id': post['author_id'],
             'author': {
                 'name': 'Anonymous',
                 'sex': post['author_sex'] or '👤',
@@ -8323,6 +8376,7 @@ def mini_app_get_post_comments(post_id):
                 'content': c['content'],
                 'time_ago': calc_time,
                 'author': {
+                    'id': c['author_id'],
                     'name': c['author_name'] or 'Anonymous',
                     'sex': c['author_sex'] or '👤',
                     'avatar': c['author_avatar'] or "",
