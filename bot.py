@@ -846,25 +846,18 @@ flask_app = Flask(__name__, static_folder='static')
 @flask_app.route('/')
 def main_page():
     """Show mini app with authentication check"""
-    # Check if there's a token in the URL
     token = request.args.get('token')
     
     if not token:
-        # No token - redirect to login page
         return redirect('/login')
     
-    # Verify the token
+    # Verify the token locally (faster and prevents deadlocks)
     try:
-        response = requests.get(f'{request.host_url}api/verify-token/{token}')
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                # Token is valid, show mini app with user info
-                return mini_app_page()
+        data = jwt.decode(token, TOKEN, algorithms=['HS256'])
+        return mini_app_page(str(data.get('user_id')))
     except Exception as e:
-        logger.error(f"Error verifying token: {e}")
+        logger.error(f"Token verification failed: {e}")
     
-    # Invalid token or error - redirect to login
     return redirect('/login')
 
 # Login page for mini app
@@ -7022,7 +7015,7 @@ def main():
     # Start Flask server in a separate thread for Render
     port = int(os.environ.get('PORT', 5000))
     threading.Thread(
-        target=lambda: flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False),
+        target=lambda: flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True),
         daemon=True
     ).start()
     
@@ -7045,7 +7038,11 @@ def main():
 # In bot.py, replace the simple /mini_app route with this:
 
 @flask_app.route('/mini_app')
-def mini_app_page():
+def mini_app_route():
+    # Helper to allow both /mini_app (legacy) and direct call
+    return mini_app_page()
+
+def mini_app_page(user_id=None):
     """Complete Mini App - returns the old UI style with new features integrated."""
 
     # Updated Branding Summary Colors
@@ -7397,7 +7394,7 @@ def mini_app_page():
 <canvas id="particleCanvas"></canvas>
 
 <div id="authScreen">
-  <img src="/static/images/logo.jpg" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);">
+  <img src="/static/images/logo.jpg" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);" onerror="this.style.display='none'">
   <div class="spinner"></div>
   <h2 style="margin-top: 24px; color: var(--primary); font-size: 1.5rem; font-weight: 700;">Christian Vent</h2>
   <p style="color: var(--text-dim); margin-top: 8px;">Preparing your secure space...</p>
@@ -7406,7 +7403,7 @@ def mini_app_page():
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/logo.jpg" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/logo.jpg" class="app-logo" alt="Christian Vent Logo" onerror="this.style.display='none'">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
@@ -7560,7 +7557,7 @@ const CONFIG = {
 };
 
 const state = {
-  userId: null, currentPage: 'vent', feedPage: 1, feedHasMore: true, feedLoading: false,
+  userId: SLOT_USER_ID, currentPage: 'vent', feedPage: 1, feedHasMore: true, feedLoading: false,
   searchQuery: '', currentPostId: null, currentPostAuthorId: null, selectedCategories: new Set(),
   profileData: null, selectedEmoji: null
 };
@@ -8006,61 +8003,65 @@ async function init() {
     document.getElementById('saveProfileBtn').onclick = saveProfile;
     document.getElementById('saveSettingsBtn').onclick = saveSettings;
     
-    // Auth
-    const tg = window.Telegram?.WebApp;
-    if(tg) {
-      try { tg.expand(); tg.ready(); } catch(e){}
-      const user = tg.initDataUnsafe?.user;
-      if(user?.id) { state.userId = String(user.id); }
-    }
-    
-    if(!state.userId) {
-      const params = new URLSearchParams(window.location.search);
-      const token = params.get('token');
-      if(token) {
-        try {
-          const res = await fetch(CONFIG.apiBase + '/api/verify-token/' + token);
-          if (res.ok) {
-            const data = await res.json();
-            if(data.success) state.userId = String(data.user_id);
-          }
-        } catch(e){ console.error('Token verify failed:', e); }
+    const auth = document.getElementById('authScreen');
+    const app = document.getElementById('mainApp');
+
+    try {
+      // 1. Check if server injected userId
+      if(!state.userId) {
+        // 2. Try Telegram WebApp
+        const tg = window.Telegram?.WebApp;
+        if(tg) {
+          try { tg.expand(); tg.ready(); } catch(e){}
+          const user = tg.initDataUnsafe?.user;
+          if(user?.id) { state.userId = String(user.id); }
+        }
       }
-    }
-    
-    console.log('Final userId:', state.userId);
-    
-    if(state.userId) {
-      loadFeed();
-      apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`)
-        .then(d => { state.profileData = d.data; })
-        .catch(e => console.error('Profile load error:', e));
       
-      setTimeout(() => {
-        const auth = document.getElementById('authScreen');
-        auth.style.transition = 'opacity 0.4s ease';
-        auth.style.opacity = '0';
-        setTimeout(() => {
-          auth.style.display = 'none';
-          document.getElementById('mainApp').style.display = 'block';
-        }, 400);
-      }, 500);
-    } else {
-      document.getElementById('authScreen').innerHTML = `
-        <div style="font-size:3rem; margin-bottom:20px;">🔒</div>
-        <h2 style="color:var(--primary); font-size: 1.8rem;">Access Restricted</h2>
-        <p style="color:var(--text-dim); text-align:center; padding:20px; font-size: 1rem; line-height:1.6;">Please open this application from within the Christian Vent Telegram bot to continue securely.</p>
+      // 3. Fallback to URL token (only if not already set by server/TG)
+      if(!state.userId) {
+        const token = new URLSearchParams(window.location.search).get('token');
+        if(token) {
+          try {
+            const res = await fetch(CONFIG.apiBase + '/api/verify-token/' + token);
+            if (res.ok) {
+              const data = await res.json();
+              if(data.success) state.userId = String(data.user_id);
+            }
+          } catch(e){ console.error('Token verify failed:', e); }
+        }
+      }
+      
+      console.log('Final userId:', state.userId);
+      
+      if(state.userId) {
+        // Show app immediately to avoid hang feeling
+        auth.style.display = 'none';
+        app.style.display = 'block';
+        
+        // Load data in background
+        loadFeed();
+        apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`)
+          .then(d => { state.profileData = d.data; })
+          .catch(e => console.error('Profile load error:', e));
+        
+        loadLeaderboard().catch(e => console.error('Leaderboard load error:', e));
+      } else {
+        auth.innerHTML = `
+          <div style="font-size:3rem; margin-bottom:20px;">🔒</div>
+          <h2 style="color:var(--primary); font-size: 1.8rem;">Access Restricted</h2>
+          <p style="color:var(--text-dim); text-align:center; padding:20px; font-size: 1rem; line-height:1.6;">Please open this application from within the Christian Vent Telegram bot to continue securely.</p>
+        `;
+      }
+    } catch (err) {
+      console.error('Init error:', err);
+      auth.innerHTML = `
+        <div style="font-size:3rem; margin-bottom:20px;">⚠️</div>
+        <h2 style="color:var(--primary);">App Error</h2>
+        <p style="color:var(--text-dim); padding:20px;">${err.message}</p>
+        <button class="btn-primary" onclick="location.reload()">Retry</button>
       `;
     }
-  } catch (err) {
-    console.error('Init error:', err);
-    document.getElementById('authScreen').innerHTML = `
-      <div style="font-size:3rem; margin-bottom:20px;">⚠️</div>
-      <h2 style="color:var(--primary);">App Error</h2>
-      <p style="color:var(--text-dim); padding:20px;">\${err.message}</p>
-      <button class="btn-primary" onclick="location.reload()">Retry</button>
-    `;
-  }
 }
 
 document.addEventListener('DOMContentLoaded', init);
@@ -8068,6 +8069,7 @@ document.addEventListener('DOMContentLoaded', init);
 </body>
 </html>""")
     
+    html = html.replace('SLOT_USER_ID', f'"{user_id}"' if user_id else 'null')
     html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BG', _bg_color).replace('SLOT_CARD_BG', _card_bg).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
     return html
 
@@ -8460,6 +8462,35 @@ def mini_app_leaderboard():
     try:
         # Get top 10 users with weighted aura
         top_users = db_fetch_all('''
+            WITH user_stats AS (
+                SELECT 
+                    author_id,
+                    COUNT(*) FILTER (WHERE approved = TRUE) * 10 as post_pts
+                FROM posts
+                GROUP BY author_id
+            ),
+            comment_stats AS (
+                SELECT 
+                    author_id,
+                    COUNT(*) * 2 as comment_pts
+                FROM comments
+                GROUP BY author_id
+            ),
+            reaction_stats AS (
+                SELECT 
+                    c.author_id,
+                    SUM(CASE WHEN r.type = 'like' THEN 1 WHEN r.type = 'dislike' THEN -2 ELSE 0 END) as reaction_pts
+                FROM reactions r
+                JOIN comments c ON r.comment_id = c.comment_id
+                GROUP BY c.author_id
+            ),
+            block_stats AS (
+                SELECT 
+                    blocked_id,
+                    COUNT(*) * 10 as block_pts
+                FROM blocks
+                GROUP BY blocked_id
+            )
             SELECT 
                 u.user_id,
                 u.anonymous_name,
@@ -8467,17 +8498,16 @@ def mini_app_leaderboard():
                 u.avatar_emoji,
                 u.weekly_badge,
                 (
-                    (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
-                    (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
-                    COALESCE((
-                        SELECT SUM(CASE WHEN r.type = 'like' THEN 1 WHEN r.type = 'dislike' THEN -2 ELSE 0 END)
-                        FROM reactions r
-                        JOIN comments c2 ON r.comment_id = c2.comment_id
-                        WHERE c2.author_id = u.user_id
-                    ), 0) -
-                    (SELECT COUNT(*) FROM blocks b WHERE b.blocked_id = u.user_id) * 10
+                    COALESCE(ps.post_pts, 0) + 
+                    COALESCE(cs.comment_pts, 0) + 
+                    COALESCE(rs.reaction_pts, 0) - 
+                    COALESCE(bs.block_pts, 0)
                 ) as total
             FROM users u
+            LEFT JOIN user_stats ps ON u.user_id = ps.author_id
+            LEFT JOIN comment_stats cs ON u.user_id = cs.author_id
+            LEFT JOIN reaction_stats rs ON u.user_id = rs.author_id
+            LEFT JOIN block_stats bs ON u.user_id = bs.blocked_id
             WHERE u.is_admin = FALSE
             ORDER BY total DESC
             LIMIT 10
