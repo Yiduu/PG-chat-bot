@@ -7389,7 +7389,7 @@ def mini_app_page():
 <canvas id="particleCanvas"></canvas>
 
 <div id="authScreen">
-  <img src="/static/images/logo.jpg" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);">
+  <img src="/static/images/logo.png" style="width: 90px; height: 90px; border-radius: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(SLOT_RGB, 0.3);">
   <div class="spinner"></div>
   <h2 style="margin-top: 24px; color: var(--primary); font-size: 1.5rem; font-weight: 700;">Christian Vent</h2>
   <p style="color: var(--text-dim); margin-top: 8px;">Preparing your secure space...</p>
@@ -7398,7 +7398,7 @@ def mini_app_page():
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/logo.jpg" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/logo.png" class="app-logo" alt="Christian Vent Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
