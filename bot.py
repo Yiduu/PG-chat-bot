@@ -4658,7 +4658,7 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
             comment_preview = comment['content'][:80] + '...' if len(comment['content']) > 80 else comment['content']
             safe_comment_preview = escape_markdown(comment_preview, version=2)
             
-            text += f"**{safe_num}.** {safe_comment_preview}\n\n"
+            text += f"*{safe_num}\\.* {safe_comment_preview}\n\n"
 
         
         # Build keyboard
