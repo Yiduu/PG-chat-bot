@@ -4190,6 +4190,10 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
             InlineKeyboardButton("📚 Content", callback_data='my_content_menu')
         ],
         [
+            InlineKeyboardButton("👥 Followers", callback_data='list_followers_1'),
+            InlineKeyboardButton("👣 Following", callback_data='list_following_1')
+        ],
+        [
             InlineKeyboardButton("📭 Inbox", callback_data='inbox'),
             InlineKeyboardButton("⚙️ Settings", callback_data='settings')
         ],
@@ -4600,7 +4604,7 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     
     # Get user's comments with post info
     comments = db_fetch_all('''
-        SELECT c.*, p.content as post_content, p.post_id
+        SELECT c.*, p.content as post_content, p.post_id, p.category
         FROM comments c
         JOIN posts p ON c.post_id = p.post_id
         WHERE c.author_id = %s
@@ -5175,6 +5179,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "INSERT INTO followers (follower_id, followed_id) VALUES (%s, %s)",
                         (user_id, target_uid)
                     )
+                    # Notify the followed user if they have notifications enabled
+                    followed_user = db_fetch_one(
+                        "SELECT notifications_enabled FROM users WHERE user_id = %s", (target_uid,)
+                    )
+                    if followed_user and followed_user['notifications_enabled']:
+                        follower_data = db_fetch_one(
+                            "SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (user_id,)
+                        )
+                        if follower_data:
+                            follower_name = follower_data.get('avatar_emoji') or ''
+                            follower_name = f"{follower_name} {follower_data['anonymous_name']}".strip()
+                            try:
+                                await context.bot.send_message(
+                                    chat_id=target_uid,
+                                    text=(
+                                        f"🔔 *New Follower!*\n"
+                                        f"👤 *{follower_name}* started following you.\n"
+                                        f"👉 View their profile: /start profileid_{user_id}"
+                                    ),
+                                    parse_mode=ParseMode.MARKDOWN
+                                )
+                            except Exception as notify_err:
+                                logger.warning(f"Could not notify user {target_uid} of follow: {notify_err}")
                 except psycopg2.IntegrityError:
                     pass
             else:
@@ -5185,6 +5212,88 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("✅ Successfully updated!")
             await send_updated_profile(target_uid, query.message.chat.id, context)
         
+        elif query.data.startswith('list_followers_'):
+            # Show paginated list of users who follow the current user
+            try:
+                page = int(query.data.split('_')[2])
+            except (IndexError, ValueError):
+                page = 1
+            per_page = 10
+            offset = (page - 1) * per_page
+            rows = db_fetch_all(
+                "SELECT u.user_id, u.anonymous_name, u.avatar_emoji FROM followers f "
+                "JOIN users u ON f.follower_id = u.user_id "
+                "WHERE f.followed_id = %s ORDER BY u.anonymous_name LIMIT %s OFFSET %s",
+                (user_id, per_page, offset)
+            )
+            total_row = db_fetch_one(
+                "SELECT COUNT(*) as cnt FROM followers WHERE followed_id = %s", (user_id,)
+            )
+            total = total_row['cnt'] if total_row else 0
+            total_pages = max(1, (total + per_page - 1) // per_page)
+
+            if not rows:
+                await query.answer("You have no followers yet.", show_alert=True)
+            else:
+                keyboard = []
+                for r in rows:
+                    label = f"{r['avatar_emoji']} {r['anonymous_name']}".strip() if r.get('avatar_emoji') else r['anonymous_name']
+                    keyboard.append([InlineKeyboardButton(label, url=f"https://t.me/{context.bot.username}?start=profileid_{r['user_id']}" )])
+                nav = []
+                if page > 1:
+                    nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"list_followers_{page-1}"))
+                if page < total_pages:
+                    nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"list_followers_{page+1}"))
+                if nav:
+                    keyboard.append(nav)
+                keyboard.append([InlineKeyboardButton("🔙 Back to Profile", callback_data="profile")])
+                await query.message.edit_text(
+                    f"👥 *Your Followers* (Page {page}/{total_pages})\n_{total} total_",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
+        elif query.data.startswith('list_following_'):
+            # Show paginated list of users the current user follows
+            try:
+                page = int(query.data.split('_')[2])
+            except (IndexError, ValueError):
+                page = 1
+            per_page = 10
+            offset = (page - 1) * per_page
+            rows = db_fetch_all(
+                "SELECT u.user_id, u.anonymous_name, u.avatar_emoji FROM followers f "
+                "JOIN users u ON f.followed_id = u.user_id "
+                "WHERE f.follower_id = %s ORDER BY u.anonymous_name LIMIT %s OFFSET %s",
+                (user_id, per_page, offset)
+            )
+            total_row = db_fetch_one(
+                "SELECT COUNT(*) as cnt FROM followers WHERE follower_id = %s", (user_id,)
+            )
+            total = total_row['cnt'] if total_row else 0
+            total_pages = max(1, (total + per_page - 1) // per_page)
+
+            if not rows:
+                await query.answer("You are not following anyone yet.", show_alert=True)
+            else:
+                keyboard = []
+                for r in rows:
+                    label = f"{r['avatar_emoji']} {r['anonymous_name']}".strip() if r.get('avatar_emoji') else r['anonymous_name']
+                    keyboard.append([InlineKeyboardButton(label, url=f"https://t.me/{context.bot.username}?start=profileid_{r['user_id']}" )])
+                nav = []
+                if page > 1:
+                    nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"list_following_{page-1}"))
+                if page < total_pages:
+                    nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"list_following_{page+1}"))
+                if nav:
+                    keyboard.append(nav)
+                keyboard.append([InlineKeyboardButton("🔙 Back to Profile", callback_data="profile")])
+                await query.message.edit_text(
+                    f"👣 *Following* (Page {page}/{total_pages})\n_{total} total_",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
         elif query.data.startswith('viewcomments_'):
             await query.answer("🔄 Loading comments...", show_alert=False)
             try:
@@ -7403,7 +7512,7 @@ def mini_app_page():
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/ventlogo.png" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/vent logo.png" class="app-logo" alt="Christian Vent Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
