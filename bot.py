@@ -7219,7 +7219,7 @@ def mini_app_page():
       color: var(--text);
       min-height: 100vh;
       overflow-x: hidden;
-      padding-bottom: calc(var(--nav-h) + 20px);
+      padding-bottom: calc(var(--nav-h) + 80px); /* Extra padding for footer */
     }
     canvas#particleCanvas {
       position: fixed;
@@ -7303,6 +7303,7 @@ def mini_app_page():
       border-radius: var(--radius);
       padding: 16px;
       margin-bottom: 16px;
+      position: relative;
     }
     .card-title {
       font-size: 1.1rem;
@@ -7356,14 +7357,55 @@ def mini_app_page():
       cursor: pointer;
     }
 
-    /* ===== CATEGORY GRID ===== */
+    /* ===== COLLAPSIBLE CATEGORIES ===== */
+    .selected-count-badge {
+      display: inline-block;
+      background: var(--primary-dim);
+      color: var(--primary);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--primary);
+      margin-bottom: 12px;
+    }
+    .category-group {
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.02);
+      overflow: hidden;
+    }
+    .group-header {
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.2s;
+    }
+    .group-header:active { background: rgba(255,255,255,0.05); }
+    .group-header span:first-child { font-size: 0.9rem; font-weight: 600; }
+    .group-toggle {
+      font-size: 0.7rem;
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      color: var(--text-dim);
+    }
+    .category-group.open .group-toggle { transform: rotate(90deg); color: var(--primary); }
+    .group-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease-out;
+    }
+    .category-group.open .group-content {
+      max-height: 500px;
+    }
     .categories-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
-      margin-bottom: 16px;
-      max-height: 200px;
-      overflow-y: auto;
+      padding: 0 12px 12px 12px;
     }
     .cat-btn {
       display: flex; align-items: center; gap: 6px;
@@ -7472,6 +7514,31 @@ def mini_app_page():
     .inline-reply-box { display: none; margin-top: 8px; }
     .inline-reply-box.open { display: block; }
     
+    /* ===== DEVELOPER FOOTER ===== */
+    .developer-footer {
+      margin-top: 20px;
+      padding: 16px;
+      text-align: center;
+      background: rgba(0,0,0,0.3);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.75rem;
+      opacity: 0.7;
+      transition: all 0.3s;
+      position: relative;
+      margin-bottom: 20px;
+    }
+    .developer-footer:hover { opacity: 1; border-color: var(--primary); }
+    .dev-name { font-weight: 700; color: var(--text); }
+    .dev-accent { color: var(--primary); margin: 0 4px; }
+    .dev-contact { display: block; margin-top: 6px; color: var(--primary); text-decoration: none; font-weight: 500; }
+    .dev-gold-line {
+      height: 1px; width: 40px; background: var(--primary); margin: 8px auto;
+      box-shadow: 0 0 10px var(--primary);
+    }
+
     /* ===== MISC ===== */
     .skeleton {
       height: 100px; background: rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 12px;
@@ -7543,7 +7610,9 @@ def mini_app_page():
     <div class="card">
       <div class="card-title">Share Your Heart</div>
       <div class="card-sub">Pick categories that match your vent:</div>
-      <div class="categories-grid" id="categoriesGrid"></div>
+      
+      <div id="selectedCount" class="selected-count-badge">Selected: 0 categories</div>
+      <div id="categoriesContainer"></div>
       
       <textarea id="ventInput" class="vent-textarea" placeholder="What's on your heart?" maxlength="5000"></textarea>
       <div style="text-align:right; font-size:0.75rem; color:var(--text-dim); margin-bottom:12px;" id="charCount">0/5000</div>
@@ -7637,6 +7706,15 @@ def mini_app_page():
     </div>
   </section>
 
+  <!-- DEVELOPER FOOTER -->
+  <div class="developer-footer">
+    <div class="dev-gold-line"></div>
+    <div>✨ Premium Developed by <span class="dev-name">Yididiya Tamiru</span> ✨</div>
+    <a href="https://t.me/YIDIDIYATAMIRUU" target="_blank" class="dev-contact">
+      ✉️ Contact Developer: @YIDIDIYATAMIRUU
+    </a>
+  </div>
+
   <!-- BOTTOM NAV -->
   <nav class="bottom-nav">
     <button class="nav-btn active" data-page="vent"><span class="nav-icon">✍️</span>Vent</button>
@@ -7663,6 +7741,12 @@ const CONFIG = {
     ['Finance', '💰 Finance'], ['WorshipMusic', '🎶 Worship'], ['Family', '🏠 Family'],
     ['Testimony', '🙌 Testimony'], ['AddictionRecovery', '💊 Recovery'], ['BibleQuestion', '📖 Bible Q&A'],
     ['Other', '🔖 Other']
+  ],
+  categoryGroups: [
+    { name: 'Personal Growth', cats: ['PrayForMe', 'Bible', 'SpiritualLife', 'ChristianChallenges'] },
+    { name: 'Life Situations', cats: ['WorkLife', 'Relationship', 'Marriage', 'Family'] },
+    { name: 'Special Topics', cats: ['AddictionRecovery', 'Testimony', 'WorshipMusic', 'BibleQuestion'] },
+    { name: 'Other', cats: ['Finance', 'Youth', 'Other'] }
   ],
   emojis: ['👨', '👩', '🕊️', '🙏', '✝️', '📖', '❤️', '🌟', '🛡️', '⚔️', '⛪', '🎹', '👶', '🧑', '👴']
 };
@@ -7707,16 +7791,45 @@ function switchPage(name) {
 }
 
 // VENT PAGE
+function toggleGroup(el) {
+  const group = el.closest('.category-group');
+  group.classList.toggle('open');
+}
+
+function updateSelectedCount() {
+  const badge = document.getElementById('selectedCount');
+  badge.textContent = `Selected: ${state.selectedCategories.size} categories`;
+}
+
 function renderCategories() {
-  const grid = document.getElementById('categoriesGrid');
-  grid.innerHTML = CONFIG.categories.map(([code, label]) => `
-    <div class="cat-btn" data-code="${code}">
-      <div class="cat-icon-check"></div>
-      ${esc(label)}
-    </div>
-  `).join('');
+  const container = document.getElementById('categoriesContainer');
+  let html = '';
   
-  grid.querySelectorAll('.cat-btn').forEach(btn => {
+  CONFIG.categoryGroups.forEach(group => {
+    const groupCats = CONFIG.categories.filter(([code]) => group.cats.includes(code));
+    html += `
+      <div class="category-group open">
+        <div class="group-header" onclick="toggleGroup(this)">
+          <span>${group.name}</span>
+          <span class="group-toggle">▶</span>
+        </div>
+        <div class="group-content">
+          <div class="categories-grid">
+            ${groupCats.map(([code, label]) => `
+              <div class="cat-btn" data-code="${code}">
+                <div class="cat-icon-check"></div>
+                ${esc(label)}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  });
+  
+  container.innerHTML = html;
+  
+  container.querySelectorAll('.cat-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const c = btn.dataset.code;
       if(state.selectedCategories.has(c)) {
@@ -7725,6 +7838,7 @@ function renderCategories() {
         state.selectedCategories.add(c); btn.classList.add('selected');
       }
       btn.querySelector('.cat-icon-check').textContent = state.selectedCategories.has(c) ? '✓' : '';
+      updateSelectedCount();
     });
   });
 }
@@ -7745,7 +7859,11 @@ async function submitVent() {
     toast('✅ Vent submitted for approval!');
     document.getElementById('ventInput').value = '';
     state.selectedCategories.clear();
-    document.querySelectorAll('.cat-btn').forEach(b => { b.classList.remove('selected'); b.querySelector('.cat-icon-check').textContent=''; });
+    document.querySelectorAll('.cat-btn').forEach(b => { 
+      b.classList.remove('selected'); 
+      b.querySelector('.cat-icon-check').textContent=''; 
+    });
+    updateSelectedCount();
     document.getElementById('charCount').textContent = '0/5000';
     state.feedPage = 1;
   } catch(e) { toast(e.message); }
