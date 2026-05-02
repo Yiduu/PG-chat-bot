@@ -4615,9 +4615,9 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     per_page = 10
     offset = (page - 1) * per_page
     
-    # Get user's comments with post info
+    # Get user's comments with post info (p.category removed - multi-category migration)
     comments = db_fetch_all('''
-        SELECT c.*, p.content as post_content, p.post_id, p.category
+        SELECT c.*, p.content as post_content, p.post_id
         FROM comments c
         JOIN posts p ON c.post_id = p.post_id
         WHERE c.author_id = %s
@@ -4638,7 +4638,7 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
             await replace_with_success(loading_msg, "No comments found")
             await asyncio.sleep(0.5)
         
-        text = "💬 \\*My Comments\\*\n\nYou haven't made any comments yet\\."
+        text = "💬 *My Comments*\n\nYou haven't made any comments yet\."
         keyboard = [
             [InlineKeyboardButton("📚 Back to My Content", callback_data='my_content_menu')],
             [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
