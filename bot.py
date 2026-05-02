@@ -3040,8 +3040,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                     if user_data.get('hide_follower_count'):
                         follower_count = "🔒 Hidden"
+                        following_count = "🔒 Hidden"
                     else:
                         follower_count = str(len(followers))
+                        following_row = db_fetch_one(
+                            "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
+                        )
+                        following_count = str(following_row['count'] if following_row else 0)
                         
                     hide_role = user_data.get('hide_role')
                 else:
@@ -3049,6 +3054,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     level_str = str(level)
                     aura_str = format_aura(rating)
                     follower_count = str(len(followers))
+                    following_row = db_fetch_one(
+                        "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
+                    )
+                    following_count = str(following_row['count'] if following_row else 0)
                     hide_role = False
 
                 is_target_admin = user_data.get('is_admin', False)
@@ -3065,7 +3074,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     profile_text = (
                         f"👤 *{safe_name}* {safe_sex}\n\n"
                         f"🛡 *Role:* {role_display}\n"
-                        f"👥 *Followers:* {follower_count}\n\n"
+                        f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
                         f"📖 *About:*\n_{safe_bio}_\n"
                     )
                 else:
@@ -3081,7 +3090,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"👤 *{safe_name}* {safe_sex}\n\n"
                         f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
                         f"⭐️ *Points:* {safe_rating}\n"
-                        f"👥 *Followers:* {follower_count}\n\n"
+                        f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
                         f"📖 *About:*\n_{safe_bio}_\n"
                     )
 
@@ -4177,6 +4186,12 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     bio = user.get('bio', 'No bio set.')
     level = (rating // 10) + 1
     follower_count = len(followers)
+
+    # Fetch following count (users this person follows)
+    following_row = db_fetch_one(
+        "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (user_id,)
+    )
+    following_count = following_row['count'] if following_row else 0
     
     # PREMIUM Grid Layout
     kb = InlineKeyboardMarkup([
@@ -4209,14 +4224,12 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     safe_level = escape_markdown(str(level), version=2)
     safe_rating = escape_markdown(str(rating), version=2)
     safe_aura = escape_markdown(format_aura(rating), version=2)
-    follower_count = len(followers)
 
-    
     if is_admin:
         profile_text = (
             f"👤 *{safe_name}* {safe_sex}\n\n"
             f"🛡 *Role:* Administrator\n"
-            f"👥 *Followers:* {follower_count}\n\n"
+            f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
             f"📖 *About:*\n_{safe_bio}_\n"
             f"_Use /menu to return_"
         )
@@ -4225,7 +4238,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
             f"👤 *{safe_name}* {safe_sex}\n\n"
             f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
             f"⭐️ *Points:* {safe_rating}\n"
-            f"👥 *Followers:* {follower_count}\n\n"
+            f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
             f"📖 *About:*\n_{safe_bio}_\n"
             f"_Use /menu to return_"
         )
@@ -4604,7 +4617,7 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     
     # Get user's comments with post info
     comments = db_fetch_all('''
-        SELECT c.*, p.content as post_content, p.post_id
+        SELECT c.*, p.content as post_content, p.post_id, p.category
         FROM comments c
         JOIN posts p ON c.post_id = p.post_id
         WHERE c.author_id = %s
