@@ -4600,7 +4600,7 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     
     # Get user's comments with post info
     comments = db_fetch_all('''
-        SELECT c.*, p.content as post_content, p.post_id, p.category
+        SELECT c.*, p.content as post_content, p.post_id
         FROM comments c
         JOIN posts p ON c.post_id = p.post_id
         WHERE c.author_id = %s
