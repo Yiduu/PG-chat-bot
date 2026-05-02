@@ -3066,7 +3066,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"👤 *{safe_name}* {safe_sex}\n\n"
                         f"🛡 *Role:* {role_display}\n"
                         f"👥 *Followers:* {follower_count}\n\n"
-                        f"📖 *About:*\n{safe_bio}\n"
+                        f"📖 *About:*\n_{safe_bio}_\n"
                     )
                 else:
                     # Standardize escaping for V2
@@ -3082,7 +3082,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
                         f"⭐️ *Points:* {safe_rating}\n"
                         f"👥 *Followers:* {follower_count}\n\n"
-                        f"📖 *About:*\n{safe_bio}\n"
+                        f"📖 *About:*\n_{safe_bio}_\n"
                     )
 
 
@@ -4213,7 +4213,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
             f"👤 *{safe_name}* {safe_sex}\n\n"
             f"🛡 *Role:* Administrator\n"
             f"👥 *Followers:* {follower_count}\n\n"
-            f"📖 *About:*\n{safe_bio}\n"
+            f"📖 *About:*\n_{safe_bio}_\n"
             f"_Use /menu to return_"
         )
     else:
@@ -4222,7 +4222,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
             f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
             f"⭐️ *Points:* {safe_rating}\n"
             f"👥 *Followers:* {follower_count}\n\n"
-            f"📖 *About:*\n{safe_bio}\n"
+            f"📖 *About:*\n_{safe_bio}_\n"
             f"_Use /menu to return_"
         )
     
@@ -7403,7 +7403,7 @@ def mini_app_page():
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/vent logo.png" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/ventlogo.png" class="app-logo" alt="Christian Vent Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
