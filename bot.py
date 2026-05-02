@@ -2991,12 +2991,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # Check if blocked to show toggle
                         is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id']))
                         
+                        # Check if chat request already accepted between the two users
+                        accepted_request = db_fetch_one(
+                            "SELECT status FROM chat_requests WHERE "
+                            "((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s)) AND status = 'accepted'",
+                            (current_user_id, user_data['user_id'], user_data['user_id'], current_user_id)
+                        )
+                        
+                        chat_btn_text = "💬 Chat" if accepted_request else "✉️ Request to Chat"
+                        chat_btn_callback = f'message_{user_data["user_id"]}' if accepted_request else f'chatrequest_{user_data["user_id"]}'
+                        
                         if is_following:
                             btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
-                            btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'chatrequest_{user_data["user_id"]}')])
                         else:
                             btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
-                            btn.append([InlineKeyboardButton("✉️ Request to Chat", callback_data=f'chatrequest_{user_data["user_id"]}')])
+                            
+                        btn.append([InlineKeyboardButton(chat_btn_text, callback_data=chat_btn_callback)])
                         
                         if is_blocked:
                             btn.append([InlineKeyboardButton("🔓 Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
