@@ -7175,16 +7175,15 @@ def main():
 
 @flask_app.route('/mini_app')
 def mini_app_page():
-    """Complete Mini App - returns the old UI style with new features integrated."""
+    """Complete Mini App - Reddit/Quora inspired UI with sorting, voting, and collapsible threads."""
 
-    # All these are already loaded globally in bot.py via load_dotenv()
     _bot      = BOT_USERNAME
-    _primary  = PRIMARY_COLOR        # e.g. "#c9a84c"
-    _secondary= SECONDARY_COLOR      # e.g. "#e8c97a"
-    _card_bg  = CARD_BG_COLOR        # e.g. "#161410"
-    _border   = BORDER_COLOR         # e.g. "#1e1c18"
-    _text     = TEXT_COLOR           # e.g. "#e8e0d0"
-    _rgb      = PRIMARY_RGB          # e.g. "201, 168, 76"
+    _primary  = PRIMARY_COLOR
+    _secondary= SECONDARY_COLOR
+    _card_bg  = CARD_BG_COLOR
+    _border   = BORDER_COLOR
+    _text     = TEXT_COLOR
+    _rgb      = PRIMARY_RGB
 
     html = ("""<!DOCTYPE html>
 <html lang="en">
@@ -7201,12 +7200,14 @@ def mini_app_page():
     :root {
       --primary: SLOT_PRIMARY;
       --primary-rgb: SLOT_RGB;
-      --primary-dim: rgba(SLOT_RGB, 0.15);
-      --bg-color: #0a0a0a;
-      --card-bg: rgba(26, 26, 26, 0.7);
-      --border: rgba(255, 255, 255, 0.1);
-      --text: #f0f0f0;
-      --text-dim: rgba(255, 255, 255, 0.5);
+      --primary-dim: rgba(SLOT_RGB, 0.12);
+      --bg-color: #0d0d0d;
+      --card-bg: rgba(26, 26, 26, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #e0e0e0;
+      --text-dim: #a0a0a0;
+      --upvote: #ff4500;
+      --downvote: #7193ff;
       --font-family: 'Inter', sans-serif;
       --radius: 12px;
       --nav-h: 65px;
@@ -7214,12 +7215,12 @@ def mini_app_page():
     body {
       font-family: var(--font-family);
       background-color: var(--bg-color);
-      background-image: radial-gradient(circle at 30% 20%, rgba(SLOT_RGB, 0.08) 0%, transparent 60%),
-                        radial-gradient(circle at 80% 70%, rgba(SLOT_RGB, 0.05) 0%, transparent 50%);
+      background-image: radial-gradient(circle at 30% 20%, rgba(SLOT_RGB, 0.05) 0%, transparent 60%),
+                        radial-gradient(circle at 80% 70%, rgba(SLOT_RGB, 0.03) 0%, transparent 50%);
       color: var(--text);
       min-height: 100vh;
       overflow-x: hidden;
-      padding-bottom: calc(var(--nav-h) + 80px); /* Extra padding for footer */
+      padding-bottom: calc(var(--nav-h) + 120px);
     }
     canvas#particleCanvas {
       position: fixed;
@@ -7234,491 +7235,239 @@ def mini_app_page():
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
     /* ===== LAYOUT ===== */
-    .page { display: none; padding: 16px; max-width: 600px; margin: 0 auto; }
+    .page { display: none; padding: 12px; max-width: 600px; margin: 0 auto; }
     .page.active { display: block; }
 
     /* ===== HEADER ===== */
-    .app-header {
-      text-align: center;
-      padding: 10px 16px;
-    }
+    .app-header { text-align: center; padding: 8px 16px; margin-bottom: 8px; }
     .app-logo {
-      width: 130px;
-      height: auto;
-      max-width: 80%;
-      border-radius: 24px;
-      margin-bottom: 20px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-      border: none;
-      display: block;
-      margin-left: auto;
-      margin-right: auto;
+      width: 100px; height: auto; border-radius: 20px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3); margin-bottom: 12px;
     }
-    .app-title {
-      font-size: 1.6rem;
-      color: var(--primary);
-      font-weight: 700;
-      letter-spacing: -0.5px;
-    }
-    .app-subtitle {
-      font-size: 0.85rem;
-      color: var(--text-dim);
-      margin-top: 4px;
-    }
+    .app-title { font-size: 1.4rem; color: var(--primary); font-weight: 700; }
+    .app-subtitle { font-size: 0.8rem; color: var(--text-dim); }
 
     /* ===== BOTTOM NAV ===== */
     .bottom-nav {
-      position: fixed;
-      bottom: 0; left: 0; right: 0;
-      height: var(--nav-h);
-      background: rgba(10, 10, 10, 0.85);
-      backdrop-filter: blur(20px);
-      border-top: 1px solid var(--border);
-      display: flex;
-      justify-content: space-around;
-      align-items: center;
-      z-index: 1000;
+      position: fixed; bottom: 0; left: 0; right: 0; height: var(--nav-h);
+      background: rgba(10, 10, 10, 0.9); backdrop-filter: blur(20px);
+      border-top: 1px solid var(--border); display: flex;
+      justify-content: space-around; align-items: center; z-index: 1000;
       padding-bottom: env(safe-area-inset-bottom, 0);
     }
     .nav-btn {
-      background: none; border: none;
-      color: var(--text-dim);
-      font-family: var(--font-family);
-      font-size: 0.75rem;
-      display: flex; flex-direction: column; align-items: center; gap: 4px;
-      cursor: pointer;
-      flex: 1;
-      padding: 8px 0;
-      transition: color 0.2s;
+      background: none; border: none; color: var(--text-dim);
+      font-size: 0.7rem; display: flex; flex-direction: column; align-items: center; gap: 2px;
+      flex: 1; padding: 6px 0; transition: 0.2s;
     }
     .nav-btn.active { color: var(--primary); }
-    .nav-icon { font-size: 1.4rem; }
+    .nav-icon { font-size: 1.3rem; }
 
-    /* ===== CARDS & GLASSMORPHISM ===== */
+    /* ===== CARDS (REDDIT STYLE) ===== */
     .card {
       background: var(--card-bg);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 16px;
-      margin-bottom: 16px;
-      position: relative;
+      backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+      border: 1px solid var(--border); border-radius: 8px;
+      margin-bottom: 10px; overflow: hidden;
     }
-    .card-title {
-      font-size: 1.1rem;
-      color: var(--primary);
-      font-weight: 600;
-      margin-bottom: 6px;
+    .post-card { display: flex; }
+    
+    .vote-sidebar {
+      width: 40px; background: rgba(255,255,255,0.02);
+      display: flex; flex-direction: column; align-items: center; padding: 12px 0;
     }
-    .card-sub { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 12px; }
+    .vote-btn {
+      background: none; border: none; color: var(--text-dim);
+      font-size: 1.4rem; cursor: pointer; transition: 0.2s;
+      padding: 4px; border-radius: 4px;
+    }
+    .vote-btn:hover { background: rgba(255,255,255,0.05); }
+    .vote-btn.up.active { color: var(--upvote); }
+    .vote-btn.down.active { color: var(--downvote); }
+    .vote-score { font-size: 0.85rem; font-weight: 700; margin: 4px 0; }
+    .vote-score.up { color: var(--upvote); }
+    .vote-score.down { color: var(--downvote); }
+
+    .post-main { flex: 1; padding: 12px; }
+    .post-author-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 0.8rem; }
+    .mini-avatar { width: 24px; height: 24px; border-radius: 50%; background: var(--primary-dim); display: flex; align-items: center; justify-content: center; font-size: 14px; }
+    .author-name { font-weight: 600; }
+    .karma-badge { font-size: 0.7rem; color: var(--text-dim); background: rgba(255,255,255,0.05); padding: 1px 6px; border-radius: 10px; }
+    .post-time { color: var(--text-dim); }
+
+    .post-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; line-height: 1.3; color: var(--primary); }
+    .post-body { font-size: 0.9rem; line-height: 1.5; margin-bottom: 12px; word-break: break-word; }
+    .post-body.truncated { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+    
+    .post-footer { display: flex; align-items: center; gap: 16px; border-top: 1px solid rgba(255,255,255,0.03); padding-top: 10px; }
+    .footer-action { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 600; color: var(--text-dim); background: none; border: none; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: 0.2s; }
+    .footer-action:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+    
+    .cat-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+    .cat-badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; background: rgba(0,0,0,0.3); border: 1px solid var(--border); color: var(--text-dim); }
+
+    /* ===== SORT BAR ===== */
+    .sort-container {
+      display: flex; gap: 8px; margin-bottom: 12px; overflow-x: auto;
+      padding: 4px 0; scrollbar-width: none;
+    }
+    .sort-container::-webkit-scrollbar { display: none; }
+    .sort-tab {
+      padding: 6px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600;
+      color: var(--text-dim); background: rgba(255,255,255,0.03);
+      white-space: nowrap; cursor: pointer; border: 1px solid transparent;
+    }
+    .sort-tab.active { background: var(--primary-dim); color: var(--primary); border-color: var(--primary); }
+
+    /* ===== COMMENTS ===== */
+    .comment-item { display: flex; flex-direction: column; margin-bottom: 12px; position: relative; }
+    .comment-content-box { display: flex; gap: 8px; }
+    .comment-thread-line { width: 2px; background: var(--border); border-radius: 2px; cursor: pointer; margin-left: 12px; margin-right: 8px; flex-shrink: 0; }
+    .comment-thread-line:hover { background: var(--primary); }
+    .comment-main { flex: 1; padding: 8px 0; }
+    
+    .comment-collapsed .comment-body,
+    .comment-collapsed .comment-actions,
+    .comment-collapsed .comment-children { display: none; }
+    .comment-collapsed .collapse-preview { display: inline; font-size: 0.75rem; color: var(--text-dim); font-style: italic; }
+    .collapse-preview { display: none; }
+
+    .collapse-btn {
+      background: none; border: none; color: var(--text-dim); font-size: 0.8rem;
+      cursor: pointer; padding: 2px 6px; border-radius: 4px;
+    }
+    .collapse-btn:hover { background: rgba(255,255,255,0.05); }
 
     /* ===== FORM ELEMENTS ===== */
     .vent-textarea {
-      width: 100%;
-      min-height: 120px;
-      background: rgba(0,0,0,0.3);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
-      color: var(--text);
-      font-family: var(--font-family);
-      font-size: 0.9rem;
-      resize: vertical;
-      outline: none;
-      transition: border-color 0.2s;
-      margin-bottom: 8px;
+      width: 100%; min-height: 100px; background: rgba(0,0,0,0.4);
+      border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+      color: var(--text); font-size: 0.9rem; resize: none; outline: none; transition: 0.2s;
     }
     .vent-textarea:focus { border-color: var(--primary); }
-    
     .btn-primary {
-      width: 100%;
-      padding: 14px;
-      background: var(--primary);
-      color: #000;
-      border: none;
-      border-radius: 8px;
-      font-weight: 600;
-      font-size: 0.95rem;
-      font-family: var(--font-family);
-      cursor: pointer;
-      transition: opacity 0.2s;
+      width: 100%; padding: 12px; background: var(--primary); color: #000;
+      border: none; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s;
     }
-    .btn-primary:active { opacity: 0.8; }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary:active { transform: scale(0.98); opacity: 0.9; }
 
-    .btn-ghost {
-      background: transparent;
-      border: 1px solid var(--primary);
-      color: var(--primary);
-      padding: 6px 12px;
-      border-radius: 6px;
-      font-size: 0.8rem;
-      cursor: pointer;
-    }
-
-    /* ===== COLLAPSIBLE CATEGORIES ===== */
-    .selected-count-badge {
-      display: inline-block;
-      background: var(--primary-dim);
-      color: var(--primary);
-      font-size: 0.75rem;
-      font-weight: 600;
-      padding: 4px 10px;
-      border-radius: 20px;
-      border: 1px solid var(--primary);
-      margin-bottom: 12px;
-    }
-    .category-group {
-      margin-bottom: 8px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: rgba(255,255,255,0.02);
-      overflow: hidden;
-    }
-    .group-header {
-      padding: 12px 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      cursor: pointer;
-      user-select: none;
-      transition: background 0.2s;
-    }
-    .group-header:active { background: rgba(255,255,255,0.05); }
-    .group-header span:first-child { font-size: 0.9rem; font-weight: 600; }
-    .group-toggle {
-      font-size: 0.7rem;
-      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      color: var(--text-dim);
-    }
-    .category-group.open .group-toggle { transform: rotate(90deg); color: var(--primary); }
-    .group-content {
-      max-height: 0;
-      overflow: hidden;
-      transition: max-height 0.3s ease-out;
-    }
-    .category-group.open .group-content {
-      max-height: 500px;
-    }
-    .categories-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      padding: 0 12px 12px 12px;
-    }
-    .cat-btn {
-      display: flex; align-items: center; gap: 6px;
-      background: rgba(0,0,0,0.2);
-      border: 1px solid var(--border);
-      padding: 8px 10px;
-      border-radius: 6px;
-      color: var(--text);
-      font-size: 0.8rem;
-      cursor: pointer;
-      text-align: left;
-      transition: all 0.2s;
-    }
-    .cat-btn.selected {
-      background: var(--primary-dim);
-      border-color: var(--primary);
-    }
-    .cat-icon-check {
-      width: 14px; height: 14px;
-      border: 1px solid var(--text-dim);
-      border-radius: 3px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 10px;
-      flex-shrink: 0;
-    }
-    .cat-btn.selected .cat-icon-check {
-      background: var(--primary);
-      border-color: var(--primary);
-      color: #000;
-    }
-
-    /* ===== FEED POSTS ===== */
-    .search-bar {
-      width: 100%;
-      background: rgba(0,0,0,0.3);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px 12px;
-      color: var(--text);
-      font-family: var(--font-family);
-      margin-bottom: 16px;
-      outline: none;
-    }
-    .search-bar:focus { border-color: var(--primary); }
-
-    .post-header {
-      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
-    }
-    .avatar {
-      width: 36px; height: 36px;
-      background: var(--primary-dim);
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 18px;
-    }
-    .post-author { font-weight: 600; font-size: 0.9rem; }
-    .post-time { font-size: 0.75rem; color: var(--text-dim); margin-left: auto; }
-    
-    .cat-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-    .cat-badge {
-      background: rgba(0,0,0,0.4);
-      border: 1px solid var(--border);
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 0.7rem;
-      color: var(--text-dim);
-    }
-    
-    .post-content {
-      font-size: 0.9rem; line-height: 1.5; margin-bottom: 12px; word-break: break-word;
-    }
-    .post-content.truncated {
-      display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
-    }
-    
-    .post-footer {
-      display: flex; align-items: center; justify-content: space-between;
-      border-top: 1px solid rgba(255,255,255,0.05);
-      padding-top: 12px;
-    }
-    .unread-badge {
-      background: var(--primary); color: #000; font-size: 0.65rem; font-weight: 700;
-      padding: 2px 6px; border-radius: 10px; margin-left: 6px;
-    }
-    
-    /* ===== COMMENTS ===== */
-    .comment-list { margin-top: 16px; }
-    .comment-item {
-      display: flex; gap: 10px; margin-bottom: 16px; position: relative;
-    }
-    .comment-item.is-reply { margin-left: 32px; }
-    .comment-item.is-reply::before {
-      content: ''; position: absolute; left: -16px; top: 0; bottom: 0;
-      width: 2px; background: var(--border); border-radius: 2px;
-    }
-    .comment-body {
-      flex: 1; background: rgba(0,0,0,0.2); border: 1px solid var(--border);
-      border-radius: 8px; padding: 10px;
-    }
-    .comment-actions {
-      display: flex; gap: 12px; margin-top: 8px; font-size: 0.75rem; color: var(--text-dim);
-    }
-    .action-btn { background: none; border: none; color: inherit; cursor: pointer; padding: 0; }
-    .action-btn:hover { color: var(--primary); }
-
-    .inline-reply-box { display: none; margin-top: 8px; }
-    .inline-reply-box.open { display: block; }
-    
     /* ===== DEVELOPER FOOTER ===== */
     .developer-footer {
-      margin-top: 20px;
-      padding: 16px;
-      text-align: center;
-      background: rgba(0,0,0,0.3);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      font-size: 0.75rem;
-      opacity: 0.7;
-      transition: all 0.3s;
-      position: relative;
-      margin-bottom: 20px;
+      margin-top: 20px; padding: 16px; text-align: center;
+      background: rgba(0,0,0,0.3); backdrop-filter: blur(8px);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      font-size: 0.75rem; opacity: 0.7; transition: 0.3s;
     }
     .developer-footer:hover { opacity: 1; border-color: var(--primary); }
-    .dev-name { font-weight: 700; color: var(--text); }
-    .dev-accent { color: var(--primary); margin: 0 4px; }
-    .dev-contact { display: block; margin-top: 6px; color: var(--primary); text-decoration: none; font-weight: 500; }
-    .dev-gold-line {
-      height: 1px; width: 40px; background: var(--primary); margin: 8px auto;
-      box-shadow: 0 0 10px var(--primary);
-    }
+    .dev-contact { display: block; margin-top: 6px; color: var(--primary); text-decoration: none; font-weight: 600; }
 
-    /* ===== MISC ===== */
-    .skeleton {
-      height: 100px; background: rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 12px;
-      animation: pulse 1.5s infinite;
-    }
-    @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
-    
+    /* ===== TOAST & MISC ===== */
     .toast {
       position: fixed; bottom: 85px; left: 50%; transform: translateX(-50%);
       background: var(--primary); color: #000; padding: 10px 20px; border-radius: 20px;
-      font-size: 0.85rem; font-weight: 600; opacity: 0; pointer-events: none; transition: opacity 0.3s;
-      z-index: 2000;
+      font-size: 0.85rem; font-weight: 600; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000;
     }
     .toast.show { opacity: 1; }
-    
-    .toggle-switch {
-      position: relative; display: inline-block; width: 40px; height: 22px;
-    }
-    .toggle-switch input { opacity: 0; width: 0; height: 0; }
-    .toggle-slider {
-      position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
-      background-color: rgba(255,255,255,0.1); transition: .4s; border-radius: 22px;
-    }
-    .toggle-slider:before {
-      position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px;
-      background-color: var(--text-dim); transition: .4s; border-radius: 50%;
-    }
-    input:checked + .toggle-slider { background-color: var(--primary-dim); }
-    input:checked + .toggle-slider:before { transform: translateX(18px); background-color: var(--primary); }
-    
-    .emoji-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-    .emoji-item {
-      font-size: 1.5rem; text-align: center; padding: 8px; background: rgba(0,0,0,0.2);
-      border-radius: 8px; cursor: pointer; border: 1px solid transparent;
-    }
-    .emoji-item.selected { border-color: var(--primary); background: var(--primary-dim); }
-    
-    #authScreen {
-      position: fixed; top:0; left:0; width:100%; height:100%;
-      background: var(--bg-color); z-index: 9999;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-    }
-    .spinner {
-      width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1);
-      border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .skeleton { height: 120px; background: rgba(255,255,255,0.03); border-radius: 8px; margin-bottom: 12px; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
   </style>
 </head>
 <body>
 
 <canvas id="particleCanvas"></canvas>
 
-<div id="authScreen">
-  <div class="spinner"></div>
+<div id="authScreen" style="display:flex; flex-direction:column; align-items:center; justify-content:center; position:fixed; top:0; left:0; width:100%; height:100%; background:var(--bg-color); z-index:9999;">
+  <div style="width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite;"></div>
   <h2 style="margin-top: 20px; color: var(--primary);">Authenticating...</h2>
 </div>
 
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/vent logo.png" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/vent logo.png" class="app-logo" alt="Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
 
-  <!-- VENT PAGE -->
-  <section id="page-vent" class="page active">
-    <div class="card">
-      <div class="card-title">Share Your Heart</div>
-      <div class="card-sub">Pick categories that match your vent:</div>
-      
-      <div id="selectedCount" class="selected-count-badge">Selected: 0 categories</div>
-      <div id="categoriesContainer"></div>
-      
-      <textarea id="ventInput" class="vent-textarea" placeholder="What's on your heart?" maxlength="5000"></textarea>
-      <div style="text-align:right; font-size:0.75rem; color:var(--text-dim); margin-bottom:12px;" id="charCount">0/5000</div>
-      
-      <button class="btn-primary" id="submitVentBtn">Post Anonymously</button>
+  <!-- FEED PAGE -->
+  <section id="page-feed" class="page active">
+    <div class="sort-container">
+      <div class="sort-tab active" data-sort="hot">🔥 Hot</div>
+      <div class="sort-tab" data-sort="new">🆕 New</div>
+      <div class="sort-tab" data-sort="top">🏆 Top</div>
+    </div>
+    <input type="text" id="searchInput" class="search-bar" style="width:100%; padding:10px; border-radius:8px; background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text); margin-bottom:12px;" placeholder="Search vents...">
+    <div id="feedContainer"></div>
+    <div id="loadMoreArea" style="text-align:center; display:none; padding: 10px;">
+      <button class="btn-primary" style="width:auto; padding:8px 20px;" id="loadMoreBtn">Load More</button>
     </div>
   </section>
 
-  <!-- FEED PAGE -->
-  <section id="page-feed" class="page">
-    <input type="text" id="searchInput" class="search-bar" placeholder="Search vents...">
-    <div id="feedContainer"></div>
-    <div id="loadMoreArea" style="text-align:center; display:none; padding: 10px;">
-      <button class="btn-ghost" id="loadMoreBtn">Load More</button>
+  <!-- VENT PAGE -->
+  <section id="page-vent" class="page">
+    <div class="card" style="padding: 16px;">
+      <div style="font-weight:700; margin-bottom:12px; color:var(--primary);">Create a Vent</div>
+      <div id="categoriesContainer"></div>
+      <textarea id="ventInput" class="vent-textarea" placeholder="What's on your heart?" maxlength="5000"></textarea>
+      <div style="text-align:right; font-size:0.7rem; color:var(--text-dim); margin-bottom:12px;" id="charCount">0/5000</div>
+      <button class="btn-primary" id="submitVentBtn">Post Anonymously</button>
     </div>
   </section>
 
   <!-- POST DETAIL PAGE -->
   <section id="page-detail" class="page">
-    <button class="btn-ghost" onclick="switchPage('feed')" style="margin-bottom:16px; border:none; padding:0;">← Back</button>
+    <button class="footer-action" onclick="switchPage('feed')" style="margin-bottom:12px;">← Back to feed</button>
     <div id="detailPostBox"></div>
     
-    <div class="card" style="margin-top:16px; padding: 12px;">
-      <textarea id="commentInput" class="vent-textarea" style="min-height:70px; margin-bottom:8px;" placeholder="Offer a response..."></textarea>
-      <button class="btn-primary" id="postCommentBtn" style="padding: 10px;">Send Response</button>
+    <div class="card" style="margin-top:12px; padding: 12px;">
+      <textarea id="commentInput" class="vent-textarea" style="min-height:80px;" placeholder="Add a comment..."></textarea>
+      <button class="btn-primary" id="postCommentBtn" style="margin-top:8px;">Post Comment</button>
     </div>
     
-    <div id="detailCommentsBox" class="comment-list"></div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin: 16px 0 8px;">
+      <div style="font-size:0.9rem; font-weight:700;">Comments</div>
+      <select id="commentSort" style="background:rgba(0,0,0,0.3); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:0.8rem; padding:4px;">
+        <option value="best">Best</option>
+        <option value="new">New</option>
+        <option value="old">Old</option>
+      </select>
+    </div>
+    <div id="detailCommentsBox"></div>
   </section>
 
-  <!-- LEADERBOARD PAGE -->
+  <!-- LEADERBOARD -->
   <section id="page-leaderboard" class="page">
-    <div class="card">
-      <div class="card-title">Top Contributors</div>
-      <div id="leaderboardContainer" style="margin-top: 16px;"></div>
+    <div class="card" style="padding: 16px;">
+      <div style="font-weight:700; margin-bottom:16px; color:var(--primary); font-size:1.1rem;">Top Contributors</div>
+      <div id="leaderboardContainer"></div>
     </div>
   </section>
 
-  <!-- PROFILE PAGE -->
+  <!-- PROFILE -->
   <section id="page-profile" class="page">
     <div id="profileContainer"></div>
   </section>
 
-  <!-- EDIT PROFILE PAGE -->
-  <section id="page-edit-profile" class="page">
-    <button class="btn-ghost" onclick="switchPage('profile')" style="margin-bottom:16px; border:none; padding:0;">← Back</button>
-    <div class="card">
-      <div class="card-title">Edit Profile</div>
-      
-      <label style="font-size:0.8rem; color:var(--primary); margin-bottom:4px; display:block;">Anonymous Name</label>
-      <input type="text" id="edit-name" class="vent-textarea" style="min-height:40px; margin-bottom:16px;">
-      
-      <label style="font-size:0.8rem; color:var(--primary); margin-bottom:4px; display:block;">Bio</label>
-      <textarea id="edit-bio" class="vent-textarea" style="min-height:80px; margin-bottom:16px;"></textarea>
-      
-      <label style="font-size:0.8rem; color:var(--primary); margin-bottom:8px; display:block;">Avatar</label>
-      <div id="emoji-grid" class="emoji-grid" style="margin-bottom:20px;"></div>
-      
-      <button class="btn-primary" id="saveProfileBtn">Save Profile</button>
-    </div>
-  </section>
-
-  <!-- SETTINGS PAGE -->
+  <!-- SETTINGS -->
   <section id="page-settings" class="page">
-    <div class="card">
-      <div class="card-title">Settings</div>
-      
-      <div style="display:flex; justify-content:space-between; align-items:center; margin: 20px 0;">
-        <div>
-          <div style="font-weight:500;">Push Notifications</div>
-          <div style="font-size:0.75rem; color:var(--text-dim);">Alerts for replies</div>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="set-notifications">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      
-      <div style="display:flex; justify-content:space-between; align-items:center; margin: 20px 0;">
-        <div>
-          <div style="font-weight:500;">Public Profile</div>
-          <div style="font-size:0.75rem; color:var(--text-dim);">Others see your stats</div>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="set-privacy">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      
-      <button class="btn-primary" id="saveSettingsBtn">Apply</button>
+    <div class="card" style="padding: 16px;">
+      <div style="font-weight:700; margin-bottom:16px; color:var(--primary);">Settings</div>
+      <!-- Settings toggles ... -->
+      <button class="btn-primary" id="saveSettingsBtn">Apply Changes</button>
     </div>
   </section>
 
   <!-- DEVELOPER FOOTER -->
   <div class="developer-footer">
-    <div class="dev-gold-line"></div>
-    <div>✨ Premium Developed by <span class="dev-name">Yididiya Tamiru</span> ✨</div>
-    <a href="https://t.me/YIDIDIYATAMIRUU" target="_blank" class="dev-contact">
-      ✉️ Contact Developer: @YIDIDIYATAMIRUU
-    </a>
+    <div style="height:1px; width:40px; background:var(--primary); margin:0 auto 12px; box-shadow:0 0 10px var(--primary);"></div>
+    <div>✨ Premium Developed by <span style="font-weight:700; color:var(--text);">Yididiya Tamiru</span> ✨</div>
+    <a href="https://t.me/YIDIDIYATAMIRUU" target="_blank" class="dev-contact">✉️ @YIDIDIYATAMIRUU</a>
   </div>
 
   <!-- BOTTOM NAV -->
   <nav class="bottom-nav">
-    <button class="nav-btn active" data-page="vent"><span class="nav-icon">✍️</span>Vent</button>
-    <button class="nav-btn" data-page="feed"><span class="nav-icon">🌍</span>Feed</button>
+    <button class="nav-btn active" data-page="feed"><span class="nav-icon">🌎</span>Feed</button>
+    <button class="nav-btn" data-page="vent"><span class="nav-icon">✍️</span>Vent</button>
     <button class="nav-btn" data-page="leaderboard"><span class="nav-icon">🏆</span>Top</button>
     <button class="nav-btn" data-page="profile"><span class="nav-icon">👤</span>Me</button>
     <button class="nav-btn" data-page="settings"><span class="nav-icon">⚙️</span>Settings</button>
@@ -7734,6 +7483,12 @@ def mini_app_page():
 const CONFIG = {
   botUsername: 'SLOT_BOT',
   apiBase: window.location.origin,
+  categoryGroups: [
+    { name: 'Personal Growth', cats: ['PrayForMe', 'Bible', 'SpiritualLife', 'ChristianChallenges'] },
+    { name: 'Life Situations', cats: ['WorkLife', 'Relationship', 'Marriage', 'Family'] },
+    { name: 'Special Topics', cats: ['AddictionRecovery', 'Testimony', 'WorshipMusic', 'BibleQuestion'] },
+    { name: 'Other', cats: ['Finance', 'Youth', 'Other'] }
+  ],
   categories: [
     ['PrayForMe', '🙏 Pray For Me'], ['Bible', '📖 Bible Study'], ['WorkLife', '💼 Work & Life'],
     ['SpiritualLife', '🕊 Spiritual Life'], ['ChristianChallenges', '⚔️ Challenges'], 
@@ -7742,19 +7497,15 @@ const CONFIG = {
     ['Testimony', '🙌 Testimony'], ['AddictionRecovery', '💊 Recovery'], ['BibleQuestion', '📖 Bible Q&A'],
     ['Other', '🔖 Other']
   ],
-  categoryGroups: [
-    { name: 'Personal Growth', cats: ['PrayForMe', 'Bible', 'SpiritualLife', 'ChristianChallenges'] },
-    { name: 'Life Situations', cats: ['WorkLife', 'Relationship', 'Marriage', 'Family'] },
-    { name: 'Special Topics', cats: ['AddictionRecovery', 'Testimony', 'WorshipMusic', 'BibleQuestion'] },
-    { name: 'Other', cats: ['Finance', 'Youth', 'Other'] }
-  ],
   emojis: ['👨', '👩', '🕊️', '🙏', '✝️', '📖', '❤️', '🌟', '🛡️', '⚔️', '⛪', '🎹', '👶', '🧑', '👴']
 };
 
 const state = {
-  userId: null, currentPage: 'vent', feedPage: 1, feedHasMore: true, feedLoading: false,
-  searchQuery: '', currentPostId: null, selectedCategories: new Set(),
-  profileData: null, selectedEmoji: null, currentPostAuthorId: null
+  userId: null, currentPage: 'feed', feedPage: 1, feedHasMore: true, feedLoading: false,
+  feedSort: 'hot', feedPosts: [], feedSearch: '',
+  currentPostId: null, currentComments: [], commentSort: 'best',
+  selectedCategories: new Set(), profileData: null,
+  collapsedThreads: new Set()
 };
 
 function esc(str) {
@@ -7762,11 +7513,13 @@ function esc(str) {
   d.textContent = str || '';
   return d.innerHTML;
 }
+
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg; el.classList.add('show');
   clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 3000);
 }
+
 async function apiFetch(path, opts = {}) {
   const res = await fetch(CONFIG.apiBase + path, { headers: {'Content-Type': 'application/json'}, ...opts });
   const data = await res.json();
@@ -7778,147 +7531,117 @@ async function apiFetch(path, opts = {}) {
 function switchPage(name) {
   state.currentPage = name;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  const t = document.getElementById('page-' + name);
-  if(t) t.classList.add('active');
-  
+  document.getElementById('page-' + name).classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === name));
   
   if(name === 'feed' && state.feedPage === 1) loadFeed();
+  if(name === 'vent') renderCategories();
   if(name === 'leaderboard') loadLeaderboard();
-  if(name === 'profile' && state.userId) loadProfile();
-  if(name === 'settings' && state.userId) loadSettings();
+  if(name === 'profile') loadProfile();
   window.scrollTo(0,0);
 }
 
-// VENT PAGE
-function toggleGroup(el) {
-  const group = el.closest('.category-group');
-  group.classList.toggle('open');
+// FEED LOGIC
+function getHotScore(p) {
+  const hours = (new Date() - new Date(p.timestamp)) / 36e5;
+  const net = (p.upvotes || 0) - (p.downvotes || 0);
+  return (net * 2 + (p.comments || 0)) / (hours + 2);
 }
 
-function updateSelectedCount() {
-  const badge = document.getElementById('selectedCount');
-  badge.textContent = `Selected: ${state.selectedCategories.size} categories`;
+function sortPosts(posts, criteria) {
+  if(criteria === 'new') return posts.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+  if(criteria === 'top') return posts.sort((a,b) => ((b.upvotes||0)-(b.downvotes||0)) - ((a.upvotes||0)-(a.downvotes||0)));
+  return posts.sort((a,b) => getHotScore(b) - getHotScore(a));
 }
 
-function renderCategories() {
-  const container = document.getElementById('categoriesContainer');
-  let html = '';
-  
-  CONFIG.categoryGroups.forEach(group => {
-    const groupCats = CONFIG.categories.filter(([code]) => group.cats.includes(code));
-    html += `
-      <div class="category-group open">
-        <div class="group-header" onclick="toggleGroup(this)">
-          <span>${group.name}</span>
-          <span class="group-toggle">▶</span>
-        </div>
-        <div class="group-content">
-          <div class="categories-grid">
-            ${groupCats.map(([code, label]) => `
-              <div class="cat-btn" data-code="${code}">
-                <div class="cat-icon-check"></div>
-                ${esc(label)}
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      </div>
-    `;
-  });
-  
-  container.innerHTML = html;
-  
-  container.querySelectorAll('.cat-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const c = btn.dataset.code;
-      if(state.selectedCategories.has(c)) {
-        state.selectedCategories.delete(c); btn.classList.remove('selected');
-      } else {
-        state.selectedCategories.add(c); btn.classList.add('selected');
-      }
-      btn.querySelector('.cat-icon-check').textContent = state.selectedCategories.has(c) ? '✓' : '';
-      updateSelectedCount();
-    });
-  });
-}
-
-async function submitVent() {
-  const text = document.getElementById('ventInput').value.trim();
-  const cats = Array.from(state.selectedCategories);
-  if(!text) return toast('Please write something');
-  if(!cats.length) return toast('Select at least one category');
-  
-  const btn = document.getElementById('submitVentBtn');
-  btn.disabled = true; btn.textContent = 'Posting...';
-  
-  try {
-    await apiFetch('/api/mini-app/submit-vent', {
-      method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, categories: cats })
-    });
-    toast('✅ Vent submitted for approval!');
-    document.getElementById('ventInput').value = '';
-    state.selectedCategories.clear();
-    document.querySelectorAll('.cat-btn').forEach(b => { 
-      b.classList.remove('selected'); 
-      b.querySelector('.cat-icon-check').textContent=''; 
-    });
-    updateSelectedCount();
-    document.getElementById('charCount').textContent = '0/5000';
-    state.feedPage = 1;
-  } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; btn.textContent = 'Post Anonymously'; }
-}
-
-// FEED PAGE
 async function loadFeed(append = false) {
   if(state.feedLoading) return;
   state.feedLoading = true;
   const container = document.getElementById('feedContainer');
-  const loadMore = document.getElementById('loadMoreArea');
-  
-  if(!append) { container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>'; loadMore.style.display='none'; }
+  if(!append) { container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>'; state.feedPage = 1; }
   
   try {
-    let url = `/api/mini-app/get-posts?page=${state.feedPage}&user_id=${state.userId}`;
-    if(state.searchQuery) url = `/api/mini-app/search?q=${encodeURIComponent(state.searchQuery)}&page=${state.feedPage}&user_id=${state.userId}`;
+    let url = `/api/mini-app/get-posts?user_id=${state.userId}&page=${state.feedPage}`;
+    if(state.feedSearch) url = `/api/mini-app/search?user_id=${state.userId}&q=${encodeURIComponent(state.feedSearch)}&page=${state.feedPage}`;
     
     const data = await apiFetch(url);
     const posts = data.data || [];
     state.feedHasMore = data.has_more;
     
-    if(!append) container.innerHTML = '';
-    if(posts.length === 0 && !append) container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-dim);">No posts found.</div>';
+    if(append) state.feedPosts = state.feedPosts.concat(posts);
+    else state.feedPosts = posts;
     
-    posts.forEach(p => {
-      const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
-      const unread = p.unread_comments > 0 ? `<span class="unread-badge">${p.unread_comments} new</span>` : '';
-      
-      container.insertAdjacentHTML('beforeend', `
-        <div class="card" style="cursor:pointer;" onclick="openPost(${p.id})">
-          <div class="post-header">
-            <div class="avatar">${esc(p.author?.avatar || p.author?.sex || '👤')}</div>
-            <div>
-              <div class="post-author">${esc(p.author?.name || 'Anonymous')} ${esc(p.author?.aura||'')}</div>
-              <div class="post-time">${esc(p.time_ago)}</div>
-            </div>
-          </div>
-          <div class="cat-badges">${cats}</div>
-          <div class="post-content truncated">${esc(p.content)}</div>
-          <div class="post-footer">
-            <span style="font-size:0.8rem; color:var(--text-dim);">💬 ${p.comments} replies ${unread}</span>
-            <span style="font-size:0.8rem; color:var(--primary);">Read →</span>
-          </div>
+    renderFeed();
+  } catch(e) { toast(e.message); }
+  finally { state.feedLoading = false; }
+}
+
+function renderFeed() {
+  const container = document.getElementById('feedContainer');
+  const sorted = sortPosts([...state.feedPosts], state.feedSort);
+  container.innerHTML = sorted.map(p => renderPostCard(p)).join('');
+  document.getElementById('loadMoreArea').style.display = state.feedHasMore ? 'block' : 'none';
+}
+
+function renderPostCard(p) {
+  const net = (p.upvotes || 0) - (p.downvotes || 0);
+  const upActive = p.user_vote === 'like' ? 'active' : '';
+  const downActive = p.user_vote === 'dislike' ? 'active' : '';
+  const cats = (p.categories || []).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
+  
+  const content = esc(p.content);
+  const title = content.split('\\n')[0];
+  const body = content.split('\\n').slice(1).join('<br>');
+
+  return `
+    <div class="card post-card">
+      <div class="vote-sidebar">
+        <button class="vote-btn up ${upActive}" onclick="handleVote(event, 'like', ${p.id}, true)">▲</button>
+        <span class="vote-score ${net>0?'up':net<0?'down':''}">${net}</span>
+        <button class="vote-btn down ${downActive}" onclick="handleVote(event, 'dislike', ${p.id}, true)">▼</button>
+      </div>
+      <div class="post-main" onclick="openPost(${p.id})">
+        <div class="post-author-row">
+          <div class="mini-avatar">${esc(p.author?.sex || '👤')}</div>
+          <span class="author-name">${esc(p.author?.name || 'Anonymous')}</span>
+          <span class="karma-badge">${p.author?.rating||0} pts</span>
+          <span class="post-time">• ${p.time_ago}</span>
         </div>
-      `);
+        <div class="cat-badges">${cats}</div>
+        <div class="post-title">${title}</div>
+        <div class="post-body truncated">${body}</div>
+        <div class="post-footer">
+          <div class="footer-action">💬 ${p.comments}</div>
+          <div class="footer-action">↗️ Share</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// VOTING
+async function handleVote(e, type, id, isPost) {
+  if(e) e.stopPropagation();
+  const target = isPost ? state.feedPosts.find(x => x.id === id) : state.currentComments.find(x => x.id === id);
+  if(!target) return;
+
+  const oldVote = target.user_vote;
+  const newVote = oldVote === type ? 'none' : type;
+  
+  if(oldVote === 'like') target.upvotes--;
+  if(oldVote === 'dislike') target.downvotes--;
+  if(newVote === 'like') target.upvotes++;
+  if(newVote === 'dislike') target.downvotes++;
+  target.user_vote = newVote;
+  
+  if(isPost) renderFeed(); else renderComments();
+
+  try {
+    await apiFetch('/api/mini-app/react', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: state.userId, [isPost?'post_id':'comment_id']: id, type: newVote })
     });
-    
-    loadMore.style.display = state.feedHasMore ? 'block' : 'none';
-    if(state.feedHasMore) state.feedPage++;
-  } catch(e) {
-    if(!append) container.innerHTML = '<div style="text-align:center; color:var(--text-dim);">Failed to load.</div>';
-    toast('Error loading feed');
-  } finally { state.feedLoading = false; }
+  } catch(err) { toast('Vote failed'); }
 }
 
 // POST DETAIL
@@ -7926,26 +7649,36 @@ async function openPost(id) {
   state.currentPostId = id;
   switchPage('detail');
   const box = document.getElementById('detailPostBox');
-  const commBox = document.getElementById('detailCommentsBox');
-  box.innerHTML = '<div class="skeleton"></div>'; commBox.innerHTML = '';
+  box.innerHTML = '<div class="skeleton"></div>';
   
   try {
-    const data = await apiFetch(`/api/mini-app/post/${id}`);
+    const data = await apiFetch(`/api/mini-app/post/${id}?user_id=${state.userId}`);
     const p = data.data;
-    state.currentPostAuthorId = p.author_id || (p.author && p.author.id);
-    const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
+    state.currentPostAuthorId = p.author_id;
+    
+    const net = (p.upvotes || 0) - (p.downvotes || 0);
+    const upActive = p.user_vote === 'like' ? 'active' : '';
+    const downActive = p.user_vote === 'dislike' ? 'active' : '';
+    const cats = (p.categories || []).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
     
     box.innerHTML = `
-      <div class="card">
-        <div class="post-header">
-          <div class="avatar">${esc(p.author?.sex || '👤')} ${esc(p.author?.avatar || '')}</div>
-          <div>
-            <div class="post-author">${esc(p.author?.name || 'Anonymous')} ${esc(p.author?.aura||'')}</div>
-            <div class="post-time">${esc(p.time_ago)}</div>
-          </div>
+      <div class="card post-card">
+        <div class="vote-sidebar">
+          <button class="vote-btn up ${upActive}" onclick="handleVote(event, 'like', ${p.id}, true)">▲</button>
+          <span class="vote-score">${net}</span>
+          <button class="vote-btn down ${downActive}" onclick="handleVote(event, 'dislike', ${p.id}, true)">▼</button>
         </div>
-        <div class="cat-badges">${cats}</div>
-        <div class="post-content">${esc(p.content)}</div>
+        <div class="post-main">
+          <div class="post-author-row">
+            <div class="mini-avatar">${esc(p.author?.sex || '👤')}</div>
+            <span class="author-name">${esc(p.author?.name || 'Anonymous')}</span>
+            <span class="karma-badge">${p.author?.rating||0} pts</span>
+            <span class="post-time">• ${p.time_ago}</span>
+          </div>
+          <div class="cat-badges">${cats}</div>
+          <div class="post-title">${esc(p.content.split('\\n')[0])}</div>
+          <div class="post-body">${esc(p.content.split('\\n').slice(1).join('<br>'))}</div>
+        </div>
       </div>
     `;
     await loadComments(id);
@@ -7956,86 +7689,80 @@ async function loadComments(id) {
   const box = document.getElementById('detailCommentsBox');
   box.innerHTML = '<div class="skeleton"></div>';
   try {
-    const data = await apiFetch(`/api/mini-app/post/${id}/comments`);
-    const comments = data.data || [];
-    
-    if(!comments.length) { box.innerHTML = '<div style="text-align:center; color:var(--text-dim);">No replies yet.</div>'; return; }
-    
-    const map = {}; const roots = [];
-    comments.forEach(c => map[c.id] = {...c, children: []});
-    comments.forEach(c => {
-      if(c.parent_id && map[c.parent_id]) map[c.parent_id].children.push(map[c.id]);
-      else roots.push(map[c.id]);
-    });
-    
-    const renderC = (c, depth) => {
-      const isReply = depth > 0 ? 'is-reply' : '';
-      const c_author_id = c.author_id || (c.author && c.author.id);
-      const isMine = String(c_author_id) === String(state.userId) || c.author?.is_me;
-      
-      let displayName = c.author?.name || 'Anonymous';
-      if (c_author_id && state.currentPostAuthorId && String(c_author_id) === String(state.currentPostAuthorId)) {
-        displayName = 'Vent author';
-      }
-      
-      let actions = `<button class="action-btn" onclick="toggleReply(${c.id})">Reply</button>`;
-      if(isMine) {
-        actions += `
-          <button class="action-btn" onclick="editComment(${c.id}, '${esc(c.content.replace(/'/g, "\\'"))}')">Edit</button>
-          <button class="action-btn" style="color:#e74c3c;" onclick="deleteComment(${c.id})">Delete</button>
-        `;
-      }
-      
-      const children = c.children.map(ch => renderC(ch, depth+1)).join('');
-      return `
-        <div class="comment-item ${isReply}">
-          <div class="avatar" style="width:28px; height:28px; font-size:14px;">${esc(c.author?.sex || '👤')} ${esc(c.author?.avatar || '')}</div>
-          <div class="comment-body">
-            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-              <span style="font-size:0.8rem; font-weight:600; color:var(--primary);">${esc(displayName)} ${esc(c.author?.aura)}</span>
-              <span style="font-size:0.7rem; color:var(--text-dim);">${esc(c.time_ago)}</span>
-            </div>
-            <div style="font-size:0.85rem; line-height:1.4;" id="comment-content-${c.id}">${esc(c.content)}</div>
-            <div class="comment-actions">${actions}</div>
-            
-            <div class="inline-reply-box" id="reply-box-${c.id}">
-              <textarea class="vent-textarea" style="min-height:50px; margin-bottom:4px;" id="reply-text-${c.id}"></textarea>
-              <div style="text-align:right;">
-                <button class="btn-ghost" style="padding:4px 8px; font-size:0.7rem;" onclick="toggleReply(${c.id})">Cancel</button>
-                <button class="btn-primary" style="padding:4px 12px; width:auto; font-size:0.7rem; display:inline-block;" onclick="sendReply(${c.id})">Send</button>
-              </div>
-            </div>
-          </div>
-        </div>
-        ${children}
-      `;
-    };
-    box.innerHTML = roots.map(c => renderC(c, 0)).join('');
+    const data = await apiFetch(`/api/mini-app/post/${id}/comments?user_id=${state.userId}`);
+    state.currentComments = data.data || [];
+    renderComments();
   } catch(e) { box.innerHTML = 'Error loading comments.'; }
 }
 
-async function postComment() {
-  const text = document.getElementById('commentInput').value.trim();
-  if(!text) return toast('Write something');
-  const btn = document.getElementById('postCommentBtn');
-  btn.disabled = true;
-  try {
-    await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
-      method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: 0 })
-    });
-    document.getElementById('commentInput').value = '';
-    toast('Reply posted');
-    await loadComments(state.currentPostId);
-  } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; }
+function renderComments() {
+  const box = document.getElementById('detailCommentsBox');
+  if(!state.currentComments.length) { box.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-dim);">No comments yet.</div>'; return; }
+  
+  const sorted = [...state.currentComments].sort((a,b) => {
+    if(state.commentSort === 'new') return new Date(b.timestamp) - new Date(a.timestamp);
+    if(state.commentSort === 'old') return new Date(a.timestamp) - new Date(b.timestamp);
+    const scoreA = (a.upvotes||0)-(a.downvotes||0), scoreB = (b.upvotes||0)-(b.downvotes||0);
+    return scoreA !== scoreB ? scoreB - scoreA : new Date(b.timestamp) - new Date(a.timestamp);
+  });
+  
+  const map = {}; const roots = [];
+  sorted.forEach(c => map[c.id] = {...c, children: []});
+  sorted.forEach(c => {
+    if(c.parent_id && map[c.parent_id]) map[c.parent_id].children.push(map[c.id]);
+    else roots.push(map[c.id]);
+  });
+  
+  const renderC = (c, depth) => {
+    const collapsed = state.collapsedThreads.has(c.id);
+    const net = (c.upvotes || 0) - (c.downvotes || 0);
+    const isPostAuthor = String(c.author_id) === String(state.currentPostAuthorId);
+    
+    return `
+      <div class="comment-item ${collapsed?'comment-collapsed':''}">
+        <div class="comment-content-box">
+          <div class="comment-thread-line" onclick="toggleThread(${c.id})"></div>
+          <div class="comment-main">
+            <div class="post-author-row" style="margin-bottom:4px;">
+              <button class="collapse-btn" onclick="toggleThread(${c.id})">${collapsed?'[+]':'[-]'}</button>
+              <span class="author-name" style="${isPostAuthor?'color:var(--primary);':''}">${esc(c.author?.name || 'Anonymous')}</span>
+              <span class="karma-badge">${c.author?.rating||0} pts</span>
+              <span class="post-time">• ${c.time_ago}</span>
+              <span class="collapse-preview">${c.children.length} replies</span>
+            </div>
+            <div class="comment-body">${esc(c.content)}</div>
+            <div class="comment-actions">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <button class="vote-btn up ${c.user_vote==='like'?'active':''}" style="font-size:1rem;" onclick="handleVote(event, 'like', ${c.id}, false)">▲</button>
+                <span class="vote-score" style="font-size:0.75rem;">${net}</span>
+                <button class="vote-btn down ${c.user_vote==='dislike'?'active':''}" style="font-size:1rem;" onclick="handleVote(event, 'dislike', ${c.id}, false)">▼</button>
+                <button class="footer-action" style="font-size:0.7rem;" onclick="document.getElementById('reply-box-${c.id}').style.display='block'">Reply</button>
+              </div>
+            </div>
+            <div id="reply-box-${c.id}" style="display:none; margin-top:8px;">
+              <textarea class="vent-textarea" style="min-height:60px;" id="reply-text-${c.id}"></textarea>
+              <div style="text-align:right; margin-top:4px;">
+                <button class="btn-primary" style="width:auto; padding:4px 12px; font-size:0.75rem;" onclick="submitReply(${c.id})">Send</button>
+              </div>
+            </div>
+            <div class="comment-children">
+              ${c.children.map(ch => renderC(ch, depth+1)).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+  box.innerHTML = roots.map(c => renderC(c, 0)).join('');
 }
 
-function toggleReply(id) {
-  const box = document.getElementById('reply-box-'+id);
-  box.classList.toggle('open');
+function toggleThread(id) {
+  if(state.collapsedThreads.has(id)) state.collapsedThreads.delete(id);
+  else state.collapsedThreads.add(id);
+  renderComments();
 }
 
-async function sendReply(parentId) {
+async function submitReply(parentId) {
   const text = document.getElementById('reply-text-'+parentId).value.trim();
   if(!text) return toast('Write something');
   try {
@@ -8047,42 +7774,60 @@ async function sendReply(parentId) {
   } catch(e) { toast(e.message); }
 }
 
-async function editComment(id, oldText) {
-  const newText = prompt("Edit comment:", oldText);
-  if(newText === null || newText.trim() === '' || newText.trim() === oldText) return;
+// REST OF COMPONENTS (Leaderboard, Categories, Profile, etc.)
+function renderCategories() {
+  const container = document.getElementById('categoriesContainer');
+  container.innerHTML = CONFIG.categoryGroups.map(g => `
+    <div class="card" style="margin-bottom:8px; padding:10px;">
+      <div style="font-size:0.85rem; font-weight:700; margin-bottom:8px;">${g.name}</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+        ${CONFIG.categories.filter(([code]) => g.cats.includes(code)).map(([code, label]) => `
+          <div class="cat-btn ${state.selectedCategories.has(code)?'selected':''}" data-code="${code}" style="padding:6px; font-size:0.75rem; border:1px solid var(--border); border-radius:6px; cursor:pointer;" onclick="toggleCat(this, '${code}')">
+            ${esc(label)}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function toggleCat(el, code) {
+  if(state.selectedCategories.has(code)) {
+    state.selectedCategories.delete(code); el.classList.remove('selected');
+    el.style.borderColor = 'var(--border)'; el.style.background = 'none';
+  } else {
+    state.selectedCategories.add(code); el.classList.add('selected');
+    el.style.borderColor = 'var(--primary)'; el.style.background = 'var(--primary-dim)';
+  }
+}
+
+async function submitVent() {
+  const text = document.getElementById('ventInput').value.trim();
+  const cats = Array.from(state.selectedCategories);
+  if(!text || !cats.length) return toast('Write text and pick categories');
   try {
-    await apiFetch(`/api/mini-app/comment/${id}`, {
-      method: 'PUT', body: JSON.stringify({ user_id: state.userId, content: newText.trim() })
+    await apiFetch('/api/mini-app/submit-vent', {
+      method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, categories: cats })
     });
-    toast('Comment edited');
-    await loadComments(state.currentPostId);
+    toast('Vent submitted for approval!');
+    document.getElementById('ventInput').value = '';
+    state.selectedCategories.clear();
+    switchPage('feed');
   } catch(e) { toast(e.message); }
 }
 
-async function deleteComment(id) {
-  if(!confirm("Delete this comment?")) return;
-  try {
-    await apiFetch(`/api/mini-app/comment/${id}`, {
-      method: 'DELETE', body: JSON.stringify({ user_id: state.userId })
-    });
-    toast('Comment deleted');
-    await loadComments(state.currentPostId);
-  } catch(e) { toast(e.message); }
-}
-
-// LEADERBOARD
 async function loadLeaderboard() {
   const box = document.getElementById('leaderboardContainer');
   box.innerHTML = '<div class="skeleton"></div>';
   try {
     const data = await apiFetch('/api/mini-app/leaderboard');
     box.innerHTML = (data.data||[]).map((u,i) => `
-      <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
-        <div style="width:24px; font-weight:700; color:${i===0?'#FFD700':i===1?'#C0C0C0':i===2?'#CD7F32':'var(--text-dim)'};">${i<3?['👑','🥈','🥉'][i]:i+1}</div>
-        <div class="avatar">${esc(u.avatar||'👤')}</div>
+      <div style="display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
+        <div style="width:24px; font-weight:700; color:${i<3?'var(--primary)':'var(--text-dim)'}">${i+1}</div>
+        <div class="mini-avatar" style="width:32px; height:32px;">${esc(u.avatar||'👤')}</div>
         <div style="flex:1;">
           <div style="font-weight:600; font-size:0.9rem;">${esc(u.name)}</div>
-          <div style="font-size:0.75rem; color:var(--text-dim);">${esc(u.aura)}</div>
+          <div style="font-size:0.7rem; color:var(--text-dim);">${esc(u.aura)}</div>
         </div>
         <div style="font-weight:700; color:var(--primary);">${u.points} pts</div>
       </div>
@@ -8090,108 +7835,36 @@ async function loadLeaderboard() {
   } catch(e) { box.innerHTML = 'Error loading leaderboard.'; }
 }
 
-// PROFILE
 async function loadProfile() {
   const box = document.getElementById('profileContainer');
-  box.innerHTML = '<div class="skeleton" style="height:200px;"></div>';
+  box.innerHTML = '<div class="skeleton"></div>';
   try {
     const data = await apiFetch(`/api/mini-app/profile/${state.userId}?viewer_id=${state.userId}`);
-    const p = data.data; state.profileData = p;
-    
+    const p = data.data;
     box.innerHTML = `
-      <div class="card" style="text-align:center;">
-        <button class="btn-ghost" onclick="setupEditProfile()" style="position:absolute; right:16px; top:16px;">Edit</button>
-        <div class="avatar" style="width:80px; height:80px; font-size:32px; margin:0 auto 12px; border:2px solid var(--primary);">${esc(p.avatar||'👤')}</div>
+      <div class="card" style="text-align:center; padding:20px;">
+        <div style="width:80px; height:80px; font-size:32px; margin:0 auto 12px; background:var(--primary-dim); border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid var(--primary);">${esc(p.avatar||'👤')}</div>
         <div style="font-size:1.3rem; font-weight:700; color:var(--primary);">${esc(p.name)}</div>
-        <div style="font-size:0.85rem; color:var(--text-dim); margin-bottom:16px;">${esc(p.aura)} ${p.rating} pts</div>
-        ${p.bio ? `<div style="font-style:italic; font-size:0.9rem; margin-bottom:20px;">"${esc(p.bio)}"</div>` : ''}
-        
+        <div style="font-size:0.85rem; color:var(--text-dim); margin-bottom:16px;">${esc(p.aura)} • ${p.rating} karma</div>
         <div style="display:flex; justify-content:space-around; border-top:1px solid var(--border); padding-top:16px;">
           <div><div style="font-size:1.2rem; font-weight:700; color:var(--primary);">${p.stats?.posts||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Vents</div></div>
           <div><div style="font-size:1.2rem; font-weight:700; color:var(--primary);">${p.stats?.comments||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Replies</div></div>
-          <div><div style="font-size:1.2rem; font-weight:700; color:var(--primary);">${p.stats?.followers||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Followers</div></div>
         </div>
       </div>
     `;
   } catch(e) { box.innerHTML = 'Error loading profile.'; }
 }
 
-function setupEditProfile() {
-  switchPage('edit-profile');
-  const p = state.profileData; if(!p) return;
-  document.getElementById('edit-name').value = p.name || '';
-  document.getElementById('edit-bio').value = p.bio || '';
-  state.selectedEmoji = p.avatar;
-  
-  const grid = document.getElementById('emoji-grid');
-  grid.innerHTML = CONFIG.emojis.map(e => `<div class="emoji-item ${e===state.selectedEmoji?'selected':''}" data-e="${e}">${e}</div>`).join('');
-  grid.querySelectorAll('.emoji-item').forEach(el => el.onclick = () => {
-    grid.querySelectorAll('.emoji-item').forEach(i => i.classList.remove('selected'));
-    el.classList.add('selected'); state.selectedEmoji = el.dataset.e;
-  });
-}
-
-async function saveProfile() {
-  const name = document.getElementById('edit-name').value.trim();
-  const bio = document.getElementById('edit-bio').value.trim();
-  if(!name) return toast('Name required');
-  
-  const btn = document.getElementById('saveProfileBtn'); btn.disabled = true;
-  try {
-    await apiFetch(`/api/mini-app/profile/${state.userId}`, {
-      method: 'PUT', body: JSON.stringify({ name, bio, avatar: state.selectedEmoji })
-    });
-    toast('Profile updated');
-    switchPage('profile');
-  } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; }
-}
-
-// SETTINGS
-async function loadSettings() {
-  try {
-    const data = await apiFetch(`/api/mini-app/settings/${state.userId}`);
-    document.getElementById('set-notifications').checked = data.data.notifications;
-    document.getElementById('set-privacy').checked = data.data.privacy_public;
-  } catch(e) {}
-}
-
-async function saveSettings() {
-  const btn = document.getElementById('saveSettingsBtn'); btn.disabled = true;
-  try {
-    await apiFetch(`/api/mini-app/settings/${state.userId}`, {
-      method: 'POST', body: JSON.stringify({
-        notifications: document.getElementById('set-notifications').checked,
-        privacy_public: document.getElementById('set-privacy').checked
-      })
-    });
-    toast('Settings saved');
-  } catch(e) { toast(e.message); }
-  finally { btn.disabled = false; }
-}
-
 // INIT
 function initParticles() {
   const canvas = document.getElementById('particleCanvas');
   const ctx = canvas.getContext('2d');
-  let w = canvas.width = window.innerWidth;
-  let h = canvas.height = window.innerHeight;
+  let w = canvas.width = window.innerWidth, h = canvas.height = window.innerHeight;
   const particles = [];
-  const rgb = getComputedStyle(document.documentElement).getPropertyValue('--primary-rgb').trim() || '255, 217, 102';
-  
-  for(let i=0; i<30; i++) {
-    particles.push({ 
-      x: Math.random()*w, 
-      y: Math.random()*h, 
-      r: Math.random()*2+0.5, 
-      vx: (Math.random()-0.5)*0.3, 
-      vy: (Math.random()-0.5)*0.3,
-      a: Math.random() * 0.25 + 0.1 
-    });
-  }
-  
+  const rgb = getComputedStyle(document.documentElement).getPropertyValue('--primary-rgb').trim();
+  for(let i=0; i<30; i++) particles.push({ x: Math.random()*w, y: Math.random()*h, r: Math.random()*2+0.5, vx: (Math.random()-0.5)*0.3, vy: (Math.random()-0.5)*0.3, a: Math.random()*0.2 });
   function draw() {
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0,0,w,h);
     particles.forEach(p => {
       p.x += p.vx; p.y += p.vy;
       if(p.x < 0) p.x = w; if(p.x > w) p.x = 0;
@@ -8202,69 +7875,64 @@ function initParticles() {
     requestAnimationFrame(draw);
   }
   draw();
-  window.addEventListener('resize', () => { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; });
+  window.onresize = () => { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; };
 }
 
 async function init() {
   initParticles();
-  renderCategories();
-  
-  document.getElementById('ventInput').addEventListener('input', function() {
-    document.getElementById('charCount').textContent = this.value.length + '/5000';
-  });
-  
-  let searchTimeout;
-  document.getElementById('searchInput').addEventListener('input', function() {
-    clearTimeout(searchTimeout);
-    state.searchQuery = this.value.trim();
-    searchTimeout = setTimeout(() => { state.feedPage = 1; loadFeed(); }, 500);
-  });
-  
-  document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => switchPage(b.dataset.page));
-  document.getElementById('submitVentBtn').onclick = submitVent;
-  document.getElementById('loadMoreBtn').onclick = () => loadFeed(true);
-  document.getElementById('postCommentBtn').onclick = postComment;
-  document.getElementById('saveProfileBtn').onclick = saveProfile;
-  document.getElementById('saveSettingsBtn').onclick = saveSettings;
-  
-  // Auth
   const tg = window.Telegram?.WebApp;
-  if(tg) {
-    try { tg.expand(); tg.ready(); } catch(e){}
-    const user = tg.initDataUnsafe?.user;
-    if(user?.id) { state.userId = String(user.id); }
-  }
+  if(tg) { tg.expand(); tg.ready(); if(tg.initDataUnsafe?.user?.id) state.userId = String(tg.initDataUnsafe.user.id); }
+  
   if(!state.userId) {
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
     if(token) {
       try {
         const res = await fetch(CONFIG.apiBase + '/api/verify-token/' + token);
-        const data = await res.json();
-        if(data.success) state.userId = String(data.user_id);
+        const d = await res.json(); if(d.success) state.userId = String(d.user_id);
       } catch(e){}
     }
   }
-  
+
   if(state.userId) {
     document.getElementById('authScreen').style.display = 'none';
     document.getElementById('mainApp').style.display = 'block';
     loadFeed();
   } else {
-    document.getElementById('authScreen').innerHTML = `
-      <div style="font-size:2rem; margin-bottom:10px;">🔒</div>
-      <h2 style="color:var(--primary);">Access Required</h2>
-      <p style="color:var(--text-dim); text-align:center; padding:20px;">Please open the app via Telegram bot.</p>
-    `;
+    document.getElementById('authScreen').innerHTML = '<h2>Access Denied</h2><p>Please open from Telegram.</p>';
   }
+  
+  document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => switchPage(b.dataset.page));
+  document.querySelectorAll('.sort-tab').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.sort-tab').forEach(t => t.classList.remove('active'));
+    b.classList.add('active'); state.feedSort = b.dataset.sort; renderFeed();
+  });
+  document.getElementById('commentSort').onchange = (e) => { state.commentSort = e.target.value; renderComments(); };
+  document.getElementById('searchInput').oninput = (e) => {
+    clearTimeout(state._st);
+    state._st = setTimeout(() => { state.feedSearch = e.target.value.trim(); state.feedPage = 1; loadFeed(); }, 500);
+  };
+  document.getElementById('ventInput').oninput = (e) => document.getElementById('charCount').textContent = e.target.value.length + '/5000';
+  document.getElementById('submitVentBtn').onclick = submitVent;
+  document.getElementById('loadMoreBtn').onclick = () => { state.feedPage++; loadFeed(true); };
+  document.getElementById('postCommentBtn').onclick = async () => {
+    const text = document.getElementById('commentInput').value.trim();
+    if(!text) return toast('Write something');
+    try {
+      await apiFetch(`/api/mini-app/post/${state.currentPostId}/comment`, {
+        method: 'POST', body: JSON.stringify({ user_id: state.userId, content: text, parent_comment_id: 0 })
+      });
+      document.getElementById('commentInput').value = ''; toast('Comment posted');
+      await loadComments(state.currentPostId);
+    } catch(e) { toast(e.message); }
+  };
 }
 
 document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
 </html>""")
-    
-    html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
+    html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
     return html
 
 
@@ -8421,7 +8089,10 @@ def mini_app_get_posts():
                         SELECT last_viewed FROM post_views pv 
                         WHERE pv.user_id = %s AND pv.post_id = p.post_id
                     ), '1970-01-01')
-                ), 0) as unread_comments
+                ), 0) as unread_comments,
+                COALESCE((SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.post_id AND r.type = 'like'), 0) as upvotes,
+                COALESCE((SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.post_id AND r.type = 'dislike'), 0) as downvotes,
+                COALESCE((SELECT type FROM reactions r WHERE r.post_id = p.post_id AND r.user_id = %s LIMIT 1), NULL) as user_vote
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
@@ -8429,7 +8100,7 @@ def mini_app_get_posts():
             GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name
             ORDER BY p.timestamp DESC
             LIMIT %s OFFSET %s
-        ''', (user_id, per_page, offset))
+        ''', (user_id, user_id, per_page, offset))
         
         formatted_posts = []
         for post in posts:
@@ -8466,13 +8137,19 @@ def mini_app_get_posts():
                 'full_content': post['content'],
                 'categories': category_list,
                 'time_ago': time_ago,
+                'timestamp': str(post['timestamp']),
                 'comments': post['comment_count'] or 0,
                 'unread_comments': post['unread_comments'],
+                'upvotes': post['upvotes'],
+                'downvotes': post['downvotes'],
+                'user_vote': post['user_vote'],
                 'author': {
+                    'id': post['author_id'],
                     'name': 'Anonymous',
                     'sex': post['author_sex'] or '👤',
                     'avatar': post['author_avatar'] or "",
                     'aura': aura_sticker,
+                    'rating': rating,
                     'is_me': str(post['author_id']) == str(user_id)
                 },
                 'has_media': post['media_type'] != 'text'
@@ -8497,17 +8174,21 @@ def mini_app_get_posts():
 def mini_app_get_single_post(post_id):
     """API endpoint for fetching a single full vent natively in the Mini App"""
     try:
+        user_id = request.args.get('user_id')
         post = db_fetch_one('''
             SELECT 
                 p.post_id, p.content, p.timestamp, p.comment_count, p.media_type,
                 u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
-                STRING_AGG(pc.category_code, ', ') as categories
+                STRING_AGG(DISTINCT pc.category_code, ', ') as categories,
+                COALESCE((SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.post_id AND r.type = 'like'), 0) as upvotes,
+                COALESCE((SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.post_id AND r.type = 'dislike'), 0) as downvotes,
+                COALESCE((SELECT type FROM reactions r WHERE r.post_id = p.post_id AND r.user_id = %s LIMIT 1), NULL) as user_vote
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.post_id = %s AND p.approved = TRUE
             GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name
-        ''', (post_id,))
+        ''', (user_id, post_id))
         
         if not post:
             return jsonify({'success': False, 'error': 'Post not found or pending approval'}), 404
@@ -8540,14 +8221,19 @@ def mini_app_get_single_post(post_id):
             'content': post['content'],
             'categories': category_list,
             'time_ago': time_ago,
+            'timestamp': str(post['timestamp']),
             'comments': post['comment_count'] or 0,
+            'upvotes': post['upvotes'],
+            'downvotes': post['downvotes'],
+            'user_vote': post['user_vote'],
             'author_id': post['author_id'],
             'author': {
                 'id': post['author_id'],
                 'name': 'Anonymous',
                 'sex': post['author_sex'] or '👤',
                 'avatar': post['author_avatar'] or "",
-                'aura': format_aura(rating)
+                'aura': format_aura(rating),
+                'rating': rating
             }
         }
         return jsonify({'success': True, 'data': formatted_post})
@@ -8560,21 +8246,26 @@ def mini_app_get_single_post(post_id):
 def mini_app_get_post_comments(post_id):
     """API endpoint for fetching a post's comments with threading support"""
     try:
+        user_id = request.args.get('user_id')
         comments = db_fetch_all('''
             SELECT 
                 c.comment_id,
                 c.parent_comment_id,
                 c.content,
                 c.timestamp as time_ago,
+                c.timestamp as raw_time,
                 u.user_id as author_id,
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
-                u.anonymous_name as author_name
+                u.anonymous_name as author_name,
+                COALESCE((SELECT COUNT(*) FROM reactions r WHERE r.comment_id = c.comment_id AND r.type = 'like'), 0) as upvotes,
+                COALESCE((SELECT COUNT(*) FROM reactions r WHERE r.comment_id = c.comment_id AND r.type = 'dislike'), 0) as downvotes,
+                COALESCE((SELECT type FROM reactions r WHERE r.comment_id = c.comment_id AND r.user_id = %s LIMIT 1), NULL) as user_vote
             FROM comments c
             JOIN users u ON c.author_id = u.user_id
             WHERE c.post_id = %s
             ORDER BY c.timestamp ASC
-        ''', (post_id,))
+        ''', (user_id, post_id))
 
         formatted_comments = []
         now = datetime.now()
@@ -8601,13 +8292,18 @@ def mini_app_get_post_comments(post_id):
                 'parent_id': c['parent_comment_id'] or 0,
                 'content': c['content'],
                 'time_ago': calc_time,
+                'timestamp': str(c['raw_time']),
+                'upvotes': c['upvotes'],
+                'downvotes': c['downvotes'],
+                'user_vote': c['user_vote'],
                 'author_id': c['author_id'],
                 'author': {
                     'id': c['author_id'],
                     'name': c['author_name'] or 'Anonymous',
                     'sex': c['author_sex'] or '👤',
                     'avatar': c['author_avatar'] or "",
-                    'aura': format_aura(rating)
+                    'aura': format_aura(rating),
+                    'rating': rating
                 }
             })
 
@@ -8951,6 +8647,35 @@ def mini_app_delete_comment(comment_id):
         return jsonify({'success': True, 'message': 'Comment deleted'})
     except Exception as e:
         logger.error(f"Comment delete error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/react', methods=['POST'])
+def mini_app_react():
+    """API endpoint for liking/disliking posts or comments from the mini app"""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        post_id = data.get('post_id')
+        comment_id = data.get('comment_id')
+        react_type = data.get('type') # 'like' or 'dislike' or 'none' (to remove)
+        
+        if not user_id or not react_type:
+            return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+            
+        if post_id:
+            db_execute("DELETE FROM reactions WHERE user_id = %s AND post_id = %s", (user_id, post_id))
+            if react_type != 'none':
+                db_execute("INSERT INTO reactions (user_id, post_id, type) VALUES (%s, %s, %s)", (user_id, post_id, react_type))
+        elif comment_id:
+            db_execute("DELETE FROM reactions WHERE user_id = %s AND comment_id = %s", (user_id, comment_id))
+            if react_type != 'none':
+                db_execute("INSERT INTO reactions (user_id, comment_id, type) VALUES (%s, %s, %s)", (user_id, comment_id, react_type))
+        else:
+            return jsonify({'success': False, 'error': 'Must specify post_id or comment_id'}), 400
+            
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error in mini-app reaction: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @flask_app.route('/api/mini-app/post/<int:post_id>/view', methods=['POST'])
