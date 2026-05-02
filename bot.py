@@ -1988,7 +1988,8 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
     author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (post['author_id'],))
     author_name = get_display_name(author)
     
-    post_preview = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
+    # Increased to 4000 characters for full admin review (respects Telegram's 4096 limit)
+    post_preview = post['content'][:4000] + ('...' if len(post['content']) > 4000 else '')
     
     keyboard = InlineKeyboardMarkup([
         [
@@ -2554,8 +2555,8 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ]
         ])
         
-        # Use HTML for more reliable escaping
-        preview = post['content'][:400] + '...' if len(post['content']) > 400 else post['content']
+        # Use HTML for more reliable escaping. Increased to 2000 for better admin review.
+        preview = post['content'][:2000] + ('...' if len(post['content']) > 2000 else '')
         safe_preview = html.escape(preview)
         safe_name = html.escape(post['anonymous_name'] or "Anonymous")
         safe_cats = html.escape(post['categories'] or 'Other')
@@ -7402,7 +7403,7 @@ def mini_app_page():
 <div id="mainApp" style="display:none;">
 
   <header class="app-header">
-    <img src="/static/images/ventlogo.jpg" class="app-logo" alt="Christian Vent Logo">
+    <img src="/static/images/vent logo.png" class="app-logo" alt="Christian Vent Logo">
     <div class="app-title">Christian Vent</div>
     <div class="app-subtitle">Share securely & anonymously</div>
   </header>
