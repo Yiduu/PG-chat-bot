@@ -4847,8 +4847,6 @@ async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE,
         keyboard.append([
             InlineKeyboardButton("👁 View", callback_data=f"report_view_{rep['report_id']}"),
             InlineKeyboardButton("✅ Dismiss", callback_data=f"report_dismiss_{rep['report_id']}"),
-        ])
-        keyboard.append([
             InlineKeyboardButton("❌ Delete Content", callback_data=f"report_delete_{rep['report_id']}"),
             InlineKeyboardButton("⚠️ Warn User", callback_data=f"report_warn_{rep['report_id']}"),
         ])
