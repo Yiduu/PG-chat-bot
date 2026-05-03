@@ -5496,24 +5496,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['editing_comment'] = comment_id
                 
                 # Message 1: Copyable content
-                # For pre/code blocks in MarkdownV2, only ` and \ need escaping
-                content_escaped = comment['content'].replace('\\', '\\\\').replace('`', '\\`')
+                # Use HTML <pre> for a reliable tap-to-copy block in Telegram
+                content_escaped = html.escape(comment['content'])
                 
                 await query.message.reply_text(
-                    "📋 *Copy the text below* \(tap the box to copy only the text\):\n\n"
-                    f"```{content_escaped}```",
-                    parse_mode=ParseMode.MARKDOWN_V2
+                    "📋 <b>Copy the text below</b> (tap the box to copy only the text):\n\n"
+                    f"<pre>{content_escaped}</pre>",
+                    parse_mode=ParseMode.HTML
                 )
                 
                 # Message 2: Instructions
                 await query.message.reply_text(
-                    "✏️ *Edit your comment*\n\n"
-                    "Paste the copied text, make your changes, then send the *entire corrected comment* as a new message\.\n\n"
-                    "Tap ❌ Cancel to abort\.",
+                    "✏️ <b>Edit your comment</b>\n\n"
+                    "Paste the copied text, make your changes, then send the <b>entire corrected comment</b> as a new message.\n\n"
+                    "Tap ❌ Cancel to abort.",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
                     ]),
-                    parse_mode=ParseMode.MARKDOWN_V2
+                    parse_mode=ParseMode.HTML
                 )
                 return
             else:
@@ -5946,23 +5946,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['editing_post'] = True
                 
                 # Message 1: Copyable content
-                content_escaped = pending_post['content'].replace('\\', '\\\\').replace('`', '\\`')
+                content_escaped = html.escape(pending_post['content'])
                 
                 await query.message.reply_text(
-                    "📋 *Copy the text below* \(tap the box to copy only the text\):\n\n"
-                    f"```{content_escaped}```",
-                    parse_mode=ParseMode.MARKDOWN_V2
+                    "📋 <b>Copy the text below</b> (tap the box to copy only the text):\n\n"
+                    f"<pre>{content_escaped}</pre>",
+                    parse_mode=ParseMode.HTML
                 )
                 
                 # Message 2: Instructions
                 await query.message.reply_text(
-                    "✏️ *Edit your post*\n\n"
-                    "Paste the copied text, make your changes, then send the *entire corrected post* as a new message\.\n\n"
-                    "Tap ❌ Cancel to abort\.",
+                    "✏️ <b>Edit your post</b>\n\n"
+                    "Paste the copied text, make your changes, then send the <b>entire corrected post</b> as a new message.\n\n"
+                    "Tap ❌ Cancel to abort.",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
                     ]),
-                    parse_mode=ParseMode.MARKDOWN_V2
+                    parse_mode=ParseMode.HTML
                 )
                 return
             
