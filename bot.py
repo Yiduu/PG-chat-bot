@@ -5494,13 +5494,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                     
                 context.user_data['editing_comment'] = comment_id
+                
+                # Message 1: Copyable content
+                # For pre/code blocks in MarkdownV2, only ` and \ need escaping
+                content_escaped = comment['content'].replace('\\', '\\\\').replace('`', '\\`')
+                
                 await query.message.reply_text(
-                    f"✏️ *Editing your comment:*\n\n{escape_markdown(comment['content'], version=2)}\n\nPlease type your new comment:",
+                    "📋 *Copy the text below* \(tap the box to copy only the text\):\n\n"
+                    f"```{content_escaped}```",
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+                
+                # Message 2: Instructions
+                await query.message.reply_text(
+                    "✏️ *Edit your comment*\n\n"
+                    "Paste the copied text, make your changes, then send the *entire corrected comment* as a new message\.\n\n"
+                    "Tap ❌ Cancel to abort\.",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
                     ]),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
+                return
             else:
                 await query.answer("❌ You can only edit your own comments", show_alert=True)
 
@@ -5930,24 +5945,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Store that we're in edit mode
                 context.user_data['editing_post'] = True
                 
-                # Edit based on message type
-                try:
-                    await query.message.edit_text(
-                        f"✏️ *Edit your post:*\n\n{escape_markdown(pending_post['content'], version=2)}\n\nPlease type your edited post:",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
-                        ]),
-                        parse_mode=ParseMode.MARKDOWN_V2
-                    )
-                except BadRequest:
-                    # If it's a media message, edit the caption
-                    await query.message.edit_caption(
-                        caption=f"✏️ *Edit your post:*\n\n{escape_markdown(pending_post['content'], version=2)}\n\nPlease type your edited post:",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
-                        ]),
-                        parse_mode=ParseMode.MARKDOWN_V2
-                    )
+                # Message 1: Copyable content
+                content_escaped = pending_post['content'].replace('\\', '\\\\').replace('`', '\\`')
+                
+                await query.message.reply_text(
+                    "📋 *Copy the text below* \(tap the box to copy only the text\):\n\n"
+                    f"```{content_escaped}```",
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+                
+                # Message 2: Instructions
+                await query.message.reply_text(
+                    "✏️ *Edit your post*\n\n"
+                    "Paste the copied text, make your changes, then send the *entire corrected post* as a new message\.\n\n"
+                    "Tap ❌ Cancel to abort\.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                    ]),
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
                 return
             
             elif query.data == 'cancel_post':
