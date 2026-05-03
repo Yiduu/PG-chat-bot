@@ -6535,54 +6535,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     main_menu_buttons = ["✍️ Share", "👤 Profile", "📚 Posts", "🏆 Top", "⚙️ Settings", "🌐 Open App", "❌ Cancel", "/cancel"]
     
     if text in main_menu_buttons or text.lower() == "cancel":
-        # Check if user is in any input/waiting state
-        in_waiting_state = user and (
-            user.get('waiting_for_post') or 
-            user.get('waiting_for_comment') or 
-            user.get('awaiting_name') or 
-            user.get('waiting_for_private_message') or 
-            user.get('awaiting_bio') or
-            context.user_data.get('broadcasting') or
-            context.user_data.get('editing_comment') or
-            context.user_data.get('editing_post') or
-            context.user_data.get('awaiting_rejection_reason') or
-            context.user_data.get('reporting')
-        )
+        # UNCONDITIONALLY reset all waiting states when a menu button is pressed
+        # We pass None for chat_id to reset quietly, as we'll send the specific menu next
+        await reset_user_waiting_states(user_id, None, context)
         
-        if in_waiting_state:
-            # Reset all waiting states
-            await reset_user_waiting_states(
-                user_id, 
-                update.message.chat.id, 
-                context
-            )
-            
-            # Clear any context data
-            context_keys = ['editing_comment', 'editing_post', 'thread_from_post_id', 
-                           'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type', 'reporting']
-            for key in context_keys:
-                if key in context.user_data:
-                    del context.user_data[key]
-            
-            if text in ["❌ Cancel", "/cancel"] or text.lower() == "cancel":
-                await update.message.reply_text(
-                    "❌ Input cancelled.",
-                    reply_markup=get_main_menu(user_id)
-                )
-                return
-            else:
-                # User clicked another menu button (like "Share") while in an input state
-                # Fall through to let the normal button handlers process it after state reset
-                pass
-        elif text in ["❌ Cancel", "/cancel"] or text.lower() == "cancel":
+        # Reload user object from DB to ensure subsequent flags are FALSE
+        user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        
+        # Early exit for explicit cancellation
+        if text in ["❌ Cancel", "/cancel"] or text.lower() == "cancel":
             await update.message.reply_text(
-                "You're not currently in an input state.",
+                "❌ Input cancelled.",
                 reply_markup=get_main_menu(user_id)
             )
             return
+        
+        # For other main menu buttons (e.g. "✍️ Share"), we fall through 
+        # so the handlers below can process the command with a clean state.
 
     # NEW: Handle rejection reason capture from admin
     if context.user_data.get('awaiting_rejection_reason'):
+        if text in main_menu_buttons: return
         post_id = context.user_data.get('rejecting_post')
         if post_id:
             logger.info(f"Admin {user_id} providing reason for post {post_id}")
@@ -6591,6 +6564,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # NEW: Handle report reason capture from user
     if context.user_data.get('reporting'):
+        if text in main_menu_buttons: return
         reporting = context.user_data.get('reporting')
         reason = text.strip() if text else ""
 
@@ -6638,6 +6612,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # NEW: Handle comment editing
 
     if 'editing_comment' in context.user_data:
+        if text in main_menu_buttons: return
         comment_id = context.user_data['editing_comment']
         comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
         
@@ -6667,6 +6642,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # FIX: Handle pending post editing (NEW CODE STARTS HERE)
     if 'editing_post' in context.user_data and context.user_data['editing_post']:
+        if text in main_menu_buttons: return
         pending_post = context.user_data.get('pending_post')
         if pending_post:
             # Update the pending post content
@@ -6719,6 +6695,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['thread_from_post_id'] = thread_from_post_id
     
     if user and user['waiting_for_post']:
+        if text in main_menu_buttons: return
         category = user.get('selected_categories')
         if not category:
             category = user.get('selected_category') # Fallback for transition
@@ -6779,6 +6756,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     elif user and user['waiting_for_comment']:
+        if text in main_menu_buttons: return
         post_id = user['comment_post_id']
     
         parent_comment_id = 0
@@ -6854,6 +6832,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif user and user['waiting_for_private_message']:
+        if text in main_menu_buttons: return
         target_id = user['private_message_target']
         message_content = text
         
@@ -6901,6 +6880,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if user and user.get('awaiting_name'):
+        if text in main_menu_buttons: return
         new_name = text.strip()
         if new_name and len(new_name) <= 30:
             db_execute(
@@ -6934,6 +6914,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     if user and user.get('awaiting_bio'):
+        if text in main_menu_buttons: return
         if not text:
             await update.message.reply_text("❌ Bio must be text. Please try again.")
             return
