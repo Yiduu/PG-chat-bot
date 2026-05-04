@@ -3765,28 +3765,26 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             msg = await context.bot.send_voice(**send_kwargs)
             
         elif comment_type in ['gif', 'sticker'] and file_id:
-            # For Stickers and GIFs, send author info as a separate text message with the keyboard
-            # because stickers don't support keyboards/captions, and GIFs look better this way.
-            text_kwargs = send_kwargs.copy()
-            text_kwargs['text'] = message_text
-            text_kwargs['disable_web_page_preview'] = True
+            # Send media first, then author info as a reply (so info appears below)
+            # The media message handles the initial threading (reply to parent)
+            media_kwargs = {
+                'chat_id': chat_id,
+                'reply_to_message_id': send_kwargs.get('reply_to_message_id')
+            }
             
-            # Send the info message (this will hold the keyboard)
-            msg = await context.bot.send_message(**text_kwargs)
-            
-            # Then send the media as a reply to the info message
             if comment_type == 'sticker':
-                await context.bot.send_sticker(
-                    chat_id=chat_id,
-                    sticker=file_id,
-                    reply_to_message_id=msg.message_id
-                )
+                media_msg = await context.bot.send_sticker(sticker=file_id, **media_kwargs)
             else: # gif
-                await context.bot.send_animation(
-                    chat_id=chat_id,
-                    animation=file_id,
-                    reply_to_message_id=msg.message_id
-                )
+                media_msg = await context.bot.send_animation(animation=file_id, **media_kwargs)
+            
+            # Now send author info and keyboard as a reply to the media message
+            # This message will be stored in DB as the reference for future replies
+            info_kwargs = send_kwargs.copy()
+            info_kwargs['text'] = message_text
+            info_kwargs['reply_to_message_id'] = media_msg.message_id
+            info_kwargs['disable_web_page_preview'] = True
+            
+            msg = await context.bot.send_message(**info_kwargs)
             
         else:
             # Fallback for unknown types
@@ -3814,25 +3812,21 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 elif comment_type == 'voice':
                     msg = await context.bot.send_voice(**fallback_kwargs)
                 elif comment_type in ['gif', 'sticker']:
-                    # Fallback for sticker/gif: send text message without reply_to, then media
-                    fallback_text_kwargs = {k: v for k, v in fallback_kwargs.items()}
-                    fallback_text_kwargs['text'] = message_text
-                    fallback_text_kwargs['disable_web_page_preview'] = True
-                    
-                    msg = await context.bot.send_message(**fallback_text_kwargs)
-                    
+                    # Fallback for sticker/gif: media first (standalone), then info as reply
+                    m_kwargs = {'chat_id': chat_id}
                     if comment_type == 'sticker':
-                        await context.bot.send_sticker(
-                            chat_id=chat_id,
-                            sticker=file_id,
-                            reply_to_message_id=msg.message_id
-                        )
+                        m_msg = await context.bot.send_sticker(sticker=file_id, **m_kwargs)
                     else: # gif
-                        await context.bot.send_animation(
-                            chat_id=chat_id,
-                            animation=file_id,
-                            reply_to_message_id=msg.message_id
-                        )
+                        m_msg = await context.bot.send_animation(animation=file_id, **m_kwargs)
+                    
+                    msg = await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=message_text,
+                        reply_markup=kb,
+                        parse_mode=ParseMode.MARKDOWN_V2,
+                        reply_to_message_id=m_msg.message_id,
+                        disable_web_page_preview=True
+                    )
                 
                 if msg:
                     db_execute("UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s", (msg.message_id, comment_id))
