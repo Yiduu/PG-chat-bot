@@ -2196,6 +2196,8 @@ def get_last_week_winners():
     return last_date, winners
 
 # ==================== ADMIN PANEL ====================
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
