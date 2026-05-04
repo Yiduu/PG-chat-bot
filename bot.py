@@ -3986,7 +3986,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             send_kwargs['caption'] = message_text
             msg = await context.bot.send_voice(**send_kwargs)
             
-        elif comment_type in ['gif', 'sticker'] and file_id:
+        elif comment_type in ['gif', 'sticker', 'photo'] and file_id:
             # Send media first, then author info as a reply (so info appears below)
             # The media message handles the initial threading (reply to parent)
             media_kwargs = {
@@ -3996,6 +3996,8 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             
             if comment_type == 'sticker':
                 media_msg = await context.bot.send_sticker(sticker=file_id, **media_kwargs)
+            elif comment_type == 'photo':
+                media_msg = await context.bot.send_photo(photo=file_id, **media_kwargs)
             else: # gif
                 media_msg = await context.bot.send_animation(animation=file_id, **media_kwargs)
             
@@ -4033,11 +4035,13 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                     msg = await context.bot.send_message(**fallback_kwargs)
                 elif comment_type == 'voice':
                     msg = await context.bot.send_voice(**fallback_kwargs)
-                elif comment_type in ['gif', 'sticker']:
-                    # Fallback for sticker/gif: media first (standalone), then info as reply
+                elif comment_type in ['gif', 'sticker', 'photo']:
+                    # Fallback for sticker/gif/photo: media first (standalone), then info as reply
                     m_kwargs = {'chat_id': chat_id}
                     if comment_type == 'sticker':
                         m_msg = await context.bot.send_sticker(sticker=file_id, **m_kwargs)
+                    elif comment_type == 'photo':
+                        m_msg = await context.bot.send_photo(photo=file_id, **m_kwargs)
                     else: # gif
                         m_msg = await context.bot.send_animation(animation=file_id, **m_kwargs)
                     
