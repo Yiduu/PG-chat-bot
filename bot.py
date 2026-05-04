@@ -2086,12 +2086,14 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
 async def show_admin_weekly_tools(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show the weekly tools sub-menu for admins"""
     query = update.callback_query
+    await query.answer()
     
     keyboard = [
         [InlineKeyboardButton("🔍 Test Weekly Calculation", callback_data='weekly_test')],
         [InlineKeyboardButton("🚀 Force Weekly Announcement", callback_data='weekly_force')],
         [InlineKeyboardButton("📅 View Last Winners", callback_data='weekly_last')],
         [InlineKeyboardButton("🔧 Fix Weekly Schedule", callback_data='weekly_fix_schedule')],
+        [InlineKeyboardButton("📊 View Job Status", callback_data='weekly_status')],
         [InlineKeyboardButton("🔙 Back to Admin Panel", callback_data='admin_panel')]
     ]
     
@@ -2106,16 +2108,14 @@ async def show_admin_weekly_tools(update: Update, context: ContextTypes.DEFAULT_
         parse_mode=ParseMode.MARKDOWN
     )
 
-async def test_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Command: /test_weekly - Show top users for last 7 days without announcing"""
-    user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
-    if not user or not user['is_admin']:
-        return
-
+async def weekly_test_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback: Test weekly calculation (no announcement)"""
+    query = update.callback_query
+    await query.answer("🔍 Calculating...")
+    
     top_users = calculate_top_weekly_contributors()
     if not top_users:
-        await update.message.reply_text("ℹ️ No users earned points in the last 7 days.")
+        await query.message.reply_text("ℹ️ No users earned points in the last 7 days.")
         return
 
     winners_info = []
@@ -2126,17 +2126,14 @@ async def test_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         winners_info.append(f"{badges[idx]} {name} – {user_data['weekly_points']} pts")
 
     text = "📊 *Weekly Points (Last 7 days)*\n\n" + "\n".join(winners_info) + "\n\n_Admin only – no announcement sent._"
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
-async def force_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Command: /force_weekly - Immediately run award_weekly_badges"""
-    user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
-    if not user or not user['is_admin']:
-        return
-
-    status_msg = await update.message.reply_text("🚀 Forcing weekly announcement job... please wait.")
+async def weekly_force_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback: Force weekly announcement"""
+    query = update.callback_query
+    await query.answer("🚀 Starting job...")
     
+    status_msg = await query.message.reply_text("🚀 Forcing weekly announcement job... please wait.")
     summary = await award_weekly_badges(context)
     
     if summary['success']:
@@ -2151,39 +2148,132 @@ async def force_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYP
     
     await status_msg.edit_text(report, parse_mode=ParseMode.MARKDOWN)
 
-async def weekly_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Command: /weekly_status - Show scheduling status"""
-    user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
-    if not user or not user['is_admin']:
+async def weekly_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback: View last week's winners"""
+    query = update.callback_query
+    await query.answer()
+    
+    last_date, winners = get_last_week_winners()
+    if not winners:
+        await query.message.reply_text("ℹ️ No winners recorded in weekly_rankings.")
+        return
+    
+    winners_info = []
+    for w in winners:
+        winners_info.append(f"{w['badge_emoji']} {w['anonymous_name']} – {w['points_earned']} pts")
+    
+    text = f"🏆 *Last Week's Winners* (week starting {last_date})\n\n" + "\n".join(winners_info)
+    await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+async def weekly_fix_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback: Reschedule the weekly job"""
+    query = update.callback_query
+    await query.answer()
+    
+    job_queue = context.application.job_queue
+    if job_queue is None:
+        await query.edit_message_text("❌ Job queue is not available. Bot may need restart.")
         return
 
+    # Remove existing job if any
+    current_job = context.bot_data.get('weekly_job')
+    if not current_job:
+        # Fallback search by name
+        for job in job_queue.jobs():
+            if job.name == "weekly_badges":
+                current_job = job
+                break
+
+    if current_job:
+        current_job.schedule_removal()
+        logger.info("Removed existing weekly job")
+
+    # Schedule new job
+    new_job = job_queue.run_daily(
+        award_weekly_badges,
+        time=time(0, 0, tzinfo=timezone.utc),
+        days=(0,),
+        name="weekly_badges"
+    )
+    context.bot_data['weekly_job'] = new_job
+
+    await query.edit_message_text(
+        "✅ Weekly job rescheduled.\n"
+        "Next run: Monday at 00:00 UTC.",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def weekly_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback: Show job scheduling status"""
+    query = update.callback_query
+    await query.answer()
+    
     job_queue = context.application.job_queue
     if not job_queue:
-        await update.message.reply_text("❌ JobQueue is not initialized!")
+        await query.message.reply_text("❌ JobQueue is not initialized!")
         return
 
-    jobs = job_queue.jobs()
-    weekly_job = next((j for j in jobs if j.callback.__name__ == 'award_weekly_badges'), None)
+    # Try reference then search
+    job = context.bot_data.get('weekly_job')
+    if not job:
+        job = next((j for j in job_queue.jobs() if j.name == "weekly_badges"), None)
     
-    if weekly_job:
-        next_run = weekly_job.next_t
-        await update.message.reply_text(
+    if job:
+        next_run = job.next_t
+        await query.message.reply_text(
             f"📅 *Weekly Job Status*\n\n"
             f"• Scheduled: ✅ Yes\n"
             f"• Next run: `{next_run.strftime('%Y-%m-%d %H:%M:%S')} UTC`",
             parse_mode=ParseMode.MARKDOWN
         )
     else:
-        await update.message.reply_text("📅 *Weekly Job Status*\n\n• Scheduled: ❌ No", parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text("📅 *Weekly Job Status*\n\n• Scheduled: ❌ No", parse_mode=ParseMode.MARKDOWN)
+
+# Re-implement command versions (proxies to callbacks logic or vice versa)
+async def test_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']: return
+    
+    top_users = calculate_top_weekly_contributors()
+    if not top_users:
+        await update.message.reply_text("ℹ️ No users earned points in the last 7 days.")
+        return
+    winners_info = []
+    badges = ["🥇", "🥈", "🥉"]
+    for idx, user_data in enumerate(top_users):
+        u = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_data['user_id'],))
+        name = u['anonymous_name'] if u else "Anonymous"
+        winners_info.append(f"{badges[idx]} {name} – {user_data['weekly_points']} pts")
+    text = "📊 *Weekly Points (Last 7 days)*\n\n" + "\n".join(winners_info) + "\n\n_Admin only – no announcement sent._"
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+async def force_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']: return
+    status_msg = await update.message.reply_text("🚀 Forcing weekly announcement job...")
+    summary = await award_weekly_badges(context)
+    if summary['success']:
+        report = f"✅ *Weekly job completed.*\n• DMs sent: {summary['dms_sent']}\n• Badges updated: {summary['winners_count']}"
+    else:
+        report = f"❌ *Weekly job failed:*\n`{summary['error']}`"
+    await status_msg.edit_text(report, parse_mode=ParseMode.MARKDOWN)
+
+async def weekly_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']: return
+    job = next((j for j in context.application.job_queue.jobs() if j.name == "weekly_badges"), None)
+    if job:
+        await update.message.reply_text(f"📅 *Weekly Job Status*\n• Scheduled: ✅\n• Next run: `{job.next_t.strftime('%Y-%m-%d %H:%M:%S')} UTC`", parse_mode=ParseMode.MARKDOWN)
+    else:
+        await update.message.reply_text("📅 *Weekly Job Status*\n• Scheduled: ❌", parse_mode=ParseMode.MARKDOWN)
 
 def get_last_week_winners():
     """Fetch the most recent winners from weekly_rankings"""
-    # Find the most recent week_start
     last_week = db_fetch_one("SELECT MAX(week_start) as last_date FROM weekly_rankings")
-    if not last_week or not last_week['last_date']:
-        return None, []
-    
+    if not last_week or not last_week['last_date']: return None, []
     last_date = last_week['last_date']
     winners = db_fetch_all("""
         SELECT r.points_earned, r.badge_emoji, u.anonymous_name
@@ -2192,7 +2282,6 @@ def get_last_week_winners():
         WHERE r.week_start = %s
         ORDER BY r.rank ASC
     """, (last_date,))
-    
     return last_date, winners
 
 # ==================== ADMIN PANEL ====================
@@ -6250,69 +6339,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_admin_weekly_tools(update, context)
             
         elif query.data == 'weekly_test':
-            top_users = calculate_top_weekly_contributors()
-            if not top_users:
-                await query.answer("ℹ️ No users earned points in the last 7 days.", show_alert=True)
-                return
-            
-            winners_info = []
-            badges = ["🥇", "🥈", "🥉"]
-            for idx, user_data in enumerate(top_users):
-                u = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_data['user_id'],))
-                name = u['anonymous_name'] if u else "Anonymous"
-                winners_info.append(f"{badges[idx]} {name} – {user_data['weekly_points']} pts")
-            
-            text = "📊 *Weekly Points (Last 7 days)*\n\n" + "\n".join(winners_info) + "\n\n_Admin only – no announcement sent._"
-            await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-            await query.answer()
+            await weekly_test_callback(update, context)
 
         elif query.data == 'weekly_force':
-            await query.answer("🚀 Forcing weekly job...", show_alert=False)
-            status_msg = await query.message.reply_text("🚀 Forcing weekly announcement job... please wait.")
-            summary = await award_weekly_badges(context)
-            if summary['success']:
-                report = (
-                    "✅ *Weekly job completed.*\n"
-                    f"• Winners announced: {'✅' if summary['announcement_sent'] else '❌'}\n"
-                    f"• DMs sent: {summary['dms_sent']}\n"
-                    f"• Badges updated: {summary['winners_count']}"
-                )
-            else:
-                report = f"❌ *Weekly job failed:*\n`{summary['error']}`"
-            await status_msg.edit_text(report, parse_mode=ParseMode.MARKDOWN)
+            await weekly_force_callback(update, context)
 
         elif query.data == 'weekly_last':
-            last_date, winners = get_last_week_winners()
-            if not winners:
-                await query.answer("ℹ️ No winners recorded in weekly_rankings.", show_alert=True)
-                return
-            
-            winners_info = []
-            for w in winners:
-                winners_info.append(f"{w['badge_emoji']} {w['anonymous_name']} – {w['points_earned']} pts")
-            
-            text = f"🏆 *Last Week's Winners* (week starting {last_date})\n\n" + "\n".join(winners_info)
-            await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-            await query.answer()
+            await weekly_last_callback(update, context)
 
         elif query.data == 'weekly_fix_schedule':
-            job_queue = context.application.job_queue
-            if not job_queue:
-                await query.answer("❌ JobQueue not found!", show_alert=True)
-                return
+            await weekly_fix_schedule(update, context)
             
-            # Remove existing weekly job if any
-            for job in job_queue.jobs():
-                if job.callback.__name__ == 'award_weekly_badges':
-                    job.schedule_removal()
-            
-            # Reschedule
-            job_queue.run_daily(
-                award_weekly_badges,
-                time=time(0, 0, tzinfo=timezone.utc),
-                days=(0,)
-            )
-            await query.answer("📅 Weekly job rescheduled for Mondays at 00:00 UTC", show_alert=True)
+        elif query.data == 'weekly_status':
+            await weekly_status_callback(update, context)
             
         elif query.data == 'admin_panel':
             await admin_panel(update, context)
@@ -7385,13 +7424,13 @@ def main():
     logger.info(f"✅ Flask health check server started on port {port}")
     
     # Schedule Weekly Badges (Every Monday at 00:00 UTC)
+    from telegram.ext import JobQueue
     if app.job_queue is None:
         try:
-            from telegram.ext import JobQueue
             app.job_queue = JobQueue()
             app.job_queue.set_application(app)
             app.job_queue.start()
-            logger.info("📅 JobQueue was None, explicitly created and started.")
+            logger.info("✅ Job queue initialized manually.")
         except Exception as jq_e:
             logger.error(f"Failed to initialize JobQueue: {jq_e}")
 
@@ -7399,12 +7438,14 @@ def main():
     if job_queue:
         # Check if already scheduled to avoid duplicates
         existing_jobs = job_queue.jobs()
-        if not any(j.callback.__name__ == 'award_weekly_badges' for j in existing_jobs):
-            job_queue.run_daily(
+        if not any(j.name == "weekly_badges" for j in existing_jobs):
+            job = job_queue.run_daily(
                 award_weekly_badges,
                 time=time(0, 0, tzinfo=timezone.utc),
-                days=(0,)  # Monday = 0
+                days=(0,),  # Monday = 0
+                name="weekly_badges"
             )
+            app.bot_data['weekly_job'] = job
             logger.info("📅 Weekly badge awarding job scheduled for Mondays at 00:00 UTC")
         else:
             logger.info("📅 Weekly badge job already scheduled.")
