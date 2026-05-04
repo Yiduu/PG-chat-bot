@@ -2170,36 +2170,33 @@ async def weekly_fix_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     
-    job_queue = context.application.job_queue
-    if job_queue is None:
-        await query.edit_message_text("❌ Job queue is not available. Bot may need restart.")
+    user_id = str(query.from_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']:
+        await query.edit_message_text("❌ Admin only.")
         return
 
-    # Remove existing job if any
-    current_job = context.bot_data.get('weekly_job')
-    if not current_job:
-        # Fallback search by name
-        for job in job_queue.jobs():
-            if job.name == "weekly_badges":
-                current_job = job
-                break
+    job_queue = context.application.job_queue
+    if job_queue is None:
+        await query.edit_message_text("❌ Job queue not available. Please restart the bot.")
+        return
 
-    if current_job:
-        current_job.schedule_removal()
-        logger.info("Removed existing weekly job")
+    # Remove existing job with the same name (if any)
+    existing_jobs = job_queue.jobs()
+    for job in existing_jobs:
+        if job.name == "weekly_badges":
+            job.schedule_removal()
+            logger.info("Removed existing weekly job")
 
-    # Schedule new job
-    new_job = job_queue.run_daily(
+    # Reschedule
+    job_queue.run_daily(
         award_weekly_badges,
         time=time(0, 0, tzinfo=timezone.utc),
         days=(0,),
         name="weekly_badges"
     )
-    context.bot_data['weekly_job'] = new_job
-
     await query.edit_message_text(
-        "✅ Weekly job rescheduled.\n"
-        "Next run: Monday at 00:00 UTC.",
+        "✅ Weekly job rescheduled.\nNext run: Monday at 00:00 UTC.",
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -2213,10 +2210,8 @@ async def weekly_status_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text("❌ JobQueue is not initialized!")
         return
 
-    # Try reference then search
-    job = context.bot_data.get('weekly_job')
-    if not job:
-        job = next((j for j in job_queue.jobs() if j.name == "weekly_badges"), None)
+    # Search for job by name
+    job = next((j for j in job_queue.jobs() if j.name == "weekly_badges"), None)
     
     if job:
         next_run = job.next_t
@@ -7430,7 +7425,7 @@ def main():
             app.job_queue = JobQueue()
             app.job_queue.set_application(app)
             app.job_queue.start()
-            logger.info("✅ Job queue initialized manually.")
+            logger.info("✅ Job queue manually started.")
         except Exception as jq_e:
             logger.error(f"Failed to initialize JobQueue: {jq_e}")
 
@@ -7439,16 +7434,17 @@ def main():
         # Check if already scheduled to avoid duplicates
         existing_jobs = job_queue.jobs()
         if not any(j.name == "weekly_badges" for j in existing_jobs):
-            job = job_queue.run_daily(
+            job_queue.run_daily(
                 award_weekly_badges,
                 time=time(0, 0, tzinfo=timezone.utc),
                 days=(0,),  # Monday = 0
                 name="weekly_badges"
             )
-            app.bot_data['weekly_job'] = job
-            logger.info("📅 Weekly badge awarding job scheduled for Mondays at 00:00 UTC")
+            logger.info("📅 Weekly badge job scheduled for Mondays at 00:00 UTC")
         else:
             logger.info("📅 Weekly badge job already scheduled.")
+    else:
+        logger.error("❌ Failed to initialize job queue.")
 
     # Start polling
     logger.info("Starting bot polling...")
