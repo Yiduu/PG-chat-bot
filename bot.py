@@ -3751,7 +3751,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
     try:
         escaped_content = escape_markdown_v2(content) if content else ""
         # FIX: always use comment's own author fields (already built in author_text by callers)
-        message_text = f"{escaped_content}\n\n{author_text}"
+        message_text = f"{escaped_content}\n\n{author_text}" if escaped_content else author_text
         
         msg = None
         if comment_type == 'text':
@@ -3764,21 +3764,29 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             send_kwargs['caption'] = message_text
             msg = await context.bot.send_voice(**send_kwargs)
             
-        elif comment_type == 'gif' and file_id:
-            send_kwargs['animation'] = file_id
-            send_kwargs['caption'] = message_text
-            msg = await context.bot.send_animation(**send_kwargs)
+        elif comment_type in ['gif', 'sticker'] and file_id:
+            # For Stickers and GIFs, send author info as a separate text message with the keyboard
+            # because stickers don't support keyboards/captions, and GIFs look better this way.
+            text_kwargs = send_kwargs.copy()
+            text_kwargs['text'] = message_text
+            text_kwargs['disable_web_page_preview'] = True
             
-        elif comment_type == 'sticker' and file_id:
-            # Sticker doesn't support caption or parse_mode in the same way
-            sticker_kwargs = {
-                'chat_id': chat_id,
-                'sticker': file_id,
-                'reply_markup': kb
-            }
-            if 'reply_to_message_id' in send_kwargs:
-                sticker_kwargs['reply_to_message_id'] = send_kwargs['reply_to_message_id']
-            msg = await context.bot.send_sticker(**sticker_kwargs)
+            # Send the info message (this will hold the keyboard)
+            msg = await context.bot.send_message(**text_kwargs)
+            
+            # Then send the media as a reply to the info message
+            if comment_type == 'sticker':
+                await context.bot.send_sticker(
+                    chat_id=chat_id,
+                    sticker=file_id,
+                    reply_to_message_id=msg.message_id
+                )
+            else: # gif
+                await context.bot.send_animation(
+                    chat_id=chat_id,
+                    animation=file_id,
+                    reply_to_message_id=msg.message_id
+                )
             
         else:
             # Fallback for unknown types
@@ -3805,14 +3813,26 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                     msg = await context.bot.send_message(**fallback_kwargs)
                 elif comment_type == 'voice':
                     msg = await context.bot.send_voice(**fallback_kwargs)
-                elif comment_type == 'gif':
-                    msg = await context.bot.send_animation(**fallback_kwargs)
-                elif comment_type == 'sticker':
-                    # Handle sticker fallback separately
-                    s_kwargs = {k: v for k, v in (sticker_kwargs if 'sticker_kwargs' in locals() else {}) if k != 'reply_to_message_id'}
-                    if not s_kwargs and 'sticker' in locals(): # safety
-                         s_kwargs = {'chat_id': chat_id, 'sticker': file_id, 'reply_markup': kb}
-                    msg = await context.bot.send_sticker(**s_kwargs)
+                elif comment_type in ['gif', 'sticker']:
+                    # Fallback for sticker/gif: send text message without reply_to, then media
+                    fallback_text_kwargs = {k: v for k, v in fallback_kwargs.items()}
+                    fallback_text_kwargs['text'] = message_text
+                    fallback_text_kwargs['disable_web_page_preview'] = True
+                    
+                    msg = await context.bot.send_message(**fallback_text_kwargs)
+                    
+                    if comment_type == 'sticker':
+                        await context.bot.send_sticker(
+                            chat_id=chat_id,
+                            sticker=file_id,
+                            reply_to_message_id=msg.message_id
+                        )
+                    else: # gif
+                        await context.bot.send_animation(
+                            chat_id=chat_id,
+                            animation=file_id,
+                            reply_to_message_id=msg.message_id
+                        )
                 
                 if msg:
                     db_execute("UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s", (msg.message_id, comment_id))
