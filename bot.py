@@ -1499,8 +1499,9 @@ def get_display_name(user_data):
 
 def get_display_sex(user_data):
     if user_data and user_data.get('sex'):
-        return user_data['sex']
-    return '👤'
+        if user_data['sex'] in ('👨', '👩'):
+            return user_data['sex']
+    return ""
 
 def get_user_rank(user_id):
     users = db_fetch_all('''
@@ -1614,7 +1615,8 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             display_name = f"{user['weekly_badge']} {display_name}"
             
         safe_name = escape_markdown(display_name, version=2)
-        safe_sex = escape_markdown(user['sex'], version=2)
+        sex_val = user['sex'] if user['sex'] in ('👨', '👩') else ""
+        safe_sex = escape_markdown(sex_val, version=2)
         safe_total = escape_markdown(str(user['total']), version=2)
         safe_aura = escape_markdown(format_aura(user['total']), version=2)
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{user['user_id']}"
@@ -1628,7 +1630,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         safe_rank = escape_markdown(rank_prefix, version=2)
 
         leaderboard_text += (
-            f"{safe_rank} {safe_sex} "
+            f"{safe_rank}{' ' + safe_sex if safe_sex else ''} "
             f"[{safe_name}]({profile_link})\n"
             f"   {safe_total} pts {safe_aura}\n\n"
         )
@@ -1644,13 +1646,14 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_data:
             user_contributions = calculate_user_rating(user_id)
             safe_user_name = escape_markdown(user_data['anonymous_name'], version=2)
-            safe_user_sex = escape_markdown(user_data['sex'], version=2)
+            user_sex_val = user_data['sex'] if user_data['sex'] in ('👨', '👩') else ""
+            safe_user_sex = escape_markdown(user_sex_val, version=2)
             safe_user_aura = escape_markdown(format_aura(user_contributions), version=2)
             safe_user_pts = escape_markdown(str(user_contributions), version=2)
             safe_user_rank = escape_markdown(str(user_rank), version=2)
             
             leaderboard_text += f"*Your position:* {safe_user_rank}\n"
-            leaderboard_text += f"{safe_user_sex} {safe_user_name} • {safe_user_pts} pts {safe_user_aura}\n\n"
+            leaderboard_text += f"{safe_user_sex}{' ' if safe_user_sex else ''}{safe_user_name} • {safe_user_pts} pts {safe_user_aura}\n\n"
     
     # Add subtle footer
     leaderboard_text += "_Click names to view profiles • Updated daily_"
@@ -3304,7 +3307,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         role_display = "🔒 Hidden"
 
                     profile_text = (
-                        f"👤 *{safe_name}* {safe_sex}\n\n"
+                        f"👤 *{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
                         f"🛡 *Role:* {role_display}\n"
                         f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
                         f"📖 *About:*\n{safe_bio}\n"
@@ -3319,7 +3322,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     safe_aura = escape_markdown(aura_str, version=2)
 
                     profile_text = (
-                        f"👤 *{safe_name}* {safe_sex}\n\n"
+                        f"👤 *{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
                         f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
                         f"⭐️ *Points:* {safe_rating}\n"
                         f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
@@ -3817,7 +3820,8 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
             timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S').strftime('%b %d, %H:%M')
         else:
             timestamp = msg['timestamp'].strftime('%b %d, %H:%M')
-        messages_text += f"👤 *{msg['sender_name']}* {msg['sender_sex']} ({timestamp}):\n"
+        sender_sex = msg['sender_sex'] if msg['sender_sex'] in ('👨', '👩') else ""
+        messages_text += f"👤 *{msg['sender_name']}*{' ' + sender_sex if sender_sex else ''} ({timestamp}):\n"
         messages_text += f"{escape_markdown(msg['content'], version=2)}\n\n"
         messages_text += "━━━━━━━━━━━━━━━━━━━━━\n\n"
     
@@ -4204,7 +4208,10 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             # Normal user: show full display (sex + custom avatar + name + aura)
             sex_emoji = comment.get('sex') or '👤'
             avatar_emoji = comment.get('avatar_emoji')
-            author_avatar = f"{sex_emoji} {avatar_emoji}" if avatar_emoji else sex_emoji
+            if sex_emoji in ('👨', '👩'):
+                author_avatar = f"{sex_emoji} {avatar_emoji}" if avatar_emoji else sex_emoji
+            else:
+                author_avatar = avatar_emoji if avatar_emoji else '👤'
             author_label = f"_[{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}]({profile_link})_"
             author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
@@ -4233,7 +4240,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         # Single page — standalone add comment button
         await context.bot.send_message(
             chat_id,
-            "➕ Add your thoughts to the post",
+            "➕ Add your thoughts to the conversation",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Add comment", callback_data=f"writecomment_{post_id}")]])
         )
 async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None):
@@ -4264,7 +4271,10 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
         # Normal user
         author_sex = display_sex or '👤'
         author_label = f"_[{escape_markdown(display_name, version=2)}]({reply_profile_link})_"
-        author_avatar = f"{author_sex} {avatar_emoji}" if avatar_emoji else author_sex
+        if author_sex in ('👨', '👩'):
+            author_avatar = f"{author_sex} {avatar_emoji}" if avatar_emoji else author_sex
+        else:
+            author_avatar = avatar_emoji if avatar_emoji else '👤'
         reply_author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
     # Pass pre-fetched reaction data if available (e.g. from show_more_replies)
@@ -4497,7 +4507,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
 
     if is_admin:
         profile_text = (
-            f"👤 *{safe_name}* {safe_sex}\n\n"
+            f"👤 *{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
             f"🛡 *Role:* Administrator\n"
             f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
             f"📖 *About:*\n{safe_bio}\n"
@@ -4505,7 +4515,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         )
     else:
         profile_text = (
-            f"👤 *{safe_name}* {safe_sex}\n\n"
+            f"👤 *{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
             f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
             f"⭐️ *Points:* {safe_rating}\n"
             f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
@@ -5432,7 +5442,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("⚧️ Changing sex...", show_alert=False)
             btns = [
                 [InlineKeyboardButton("👨 Male", callback_data='sex_male')],
-                [InlineKeyboardButton("👩 Female", callback_data='sex_female')]
+                [InlineKeyboardButton("👩 Female", callback_data='sex_female')],
+                [InlineKeyboardButton("👤 Remove/Hide Sex", callback_data='sex_hide')]
             ]
             await query.message.reply_text("⚧️ Select your sex:", reply_markup=InlineKeyboardMarkup(btns))
 
@@ -5441,6 +5452,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sex = '👨'
             elif query.data == 'sex_female':
                 sex = '👩'
+            elif query.data == 'sex_hide':
+                sex = '👤'
             else:
                 sex = '👤'  # fallback
             
