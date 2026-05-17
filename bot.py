@@ -4233,7 +4233,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         # Single page — standalone add comment button
         await context.bot.send_message(
             chat_id,
-            "➕ Add your thoughts to the conversation",
+            "➕ Add your thoughts to the post",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Add comment", callback_data=f"writecomment_{post_id}")]])
         )
 async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None):
