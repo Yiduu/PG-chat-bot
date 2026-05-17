@@ -7653,77 +7653,117 @@ def mini_app_page():
       background: none; border: none;
       color: var(--text-dim);
       font-family: var(--font-family);
-      font-size: 0.75rem;
+      font-size: 0.75rem; font-weight: 500;
       display: flex; flex-direction: column; align-items: center; gap: 4px;
       cursor: pointer;
       flex: 1;
       padding: 8px 0;
-      transition: color 0.2s;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     }
-    .nav-btn.active { color: var(--primary); }
-    .nav-icon { font-size: 1.4rem; }
+    .nav-btn.active { 
+      color: var(--primary); 
+      text-shadow: 0 0 12px rgba(SLOT_RGB, 0.4);
+    }
+    .nav-icon { 
+      font-size: 1.4rem; 
+      transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+      display: inline-block; 
+    }
+    .nav-btn:hover .nav-icon {
+      transform: translateY(-2px) scale(1.15);
+    }
 
     /* ===== CARDS & GLASSMORPHISM ===== */
     .card {
       background: var(--card-bg);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid var(--border);
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       border-radius: var(--radius);
-      padding: 16px;
+      padding: 18px;
       margin-bottom: 16px;
       position: relative;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.15);
     }
     .card-title {
-      font-size: 1.1rem;
+      font-size: 1.15rem;
       color: var(--primary);
-      font-weight: 600;
+      font-weight: 700;
       margin-bottom: 6px;
+      letter-spacing: -0.3px;
     }
-    .card-sub { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 12px; }
+    .card-sub { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 14px; }
 
     /* ===== FORM ELEMENTS ===== */
     .vent-textarea {
       width: 100%;
       min-height: 120px;
-      background: rgba(0,0,0,0.3);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      padding: 14px;
       color: var(--text);
       font-family: var(--font-family);
-      font-size: 0.9rem;
+      font-size: 0.95rem;
       resize: vertical;
       outline: none;
-      transition: border-color 0.2s;
-      margin-bottom: 8px;
+      box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      margin-bottom: 12px;
     }
-    .vent-textarea:focus { border-color: var(--primary); }
+    .vent-textarea:focus { 
+      border-color: var(--primary); 
+      box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 12px rgba(SLOT_RGB, 0.3);
+      background: rgba(0, 0, 0, 0.6);
+    }
     
     .btn-primary {
       width: 100%;
-      padding: 14px;
-      background: var(--primary);
+      padding: 15px;
+      background: linear-gradient(135deg, var(--primary), #e6c04b);
       color: #000;
       border: none;
-      border-radius: 8px;
-      font-weight: 600;
-      font-size: 0.95rem;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 0.98rem;
       font-family: var(--font-family);
       cursor: pointer;
-      transition: opacity 0.2s;
+      box-shadow: 0 4px 15px rgba(SLOT_RGB, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
-    .btn-primary:active { opacity: 0.8; }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(SLOT_RGB, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    }
+    .btn-primary:active { 
+      transform: translateY(1px);
+      box-shadow: 0 2px 8px rgba(SLOT_RGB, 0.2); 
+    }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
 
     .btn-ghost {
-      background: transparent;
-      border: 1px solid var(--primary);
+      background: rgba(SLOT_RGB, 0.05);
+      border: 1px solid rgba(SLOT_RGB, 0.4);
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
       color: var(--primary);
-      padding: 6px 12px;
-      border-radius: 6px;
-      font-size: 0.8rem;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.85rem; font-weight: 600;
       cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .btn-ghost:hover {
+      background: rgba(SLOT_RGB, 0.15);
+      border-color: var(--primary);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(SLOT_RGB, 0.2);
     }
 
     /* ===== COLLAPSIBLE CATEGORIES ===== */
@@ -7777,48 +7817,65 @@ def mini_app_page():
       padding: 0 12px 12px 12px;
     }
     .cat-btn {
-      display: flex; align-items: center; gap: 6px;
-      background: rgba(0,0,0,0.2);
-      border: 1px solid var(--border);
-      padding: 8px 10px;
-      border-radius: 6px;
-      color: var(--text);
-      font-size: 0.8rem;
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      padding: 10px 14px;
+      border-radius: 10px;
+      color: var(--text); font-weight: 500;
+      font-size: 0.85rem;
       cursor: pointer;
       text-align: left;
-      transition: all 0.2s;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .cat-btn:hover {
+      background: rgba(255, 255, 255, 0.07);
+      transform: translateY(-1px);
+      border-color: rgba(255, 255, 255, 0.15);
     }
     .cat-btn.selected {
-      background: var(--primary-dim);
+      background: linear-gradient(135deg, rgba(SLOT_RGB, 0.25), rgba(SLOT_RGB, 0.15));
       border-color: var(--primary);
+      box-shadow: 0 4px 15px rgba(SLOT_RGB, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
     .cat-icon-check {
-      width: 14px; height: 14px;
+      width: 16px; height: 16px;
       border: 1px solid var(--text-dim);
-      border-radius: 3px;
+      border-radius: 4px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 10px;
+      font-size: 11px;
       flex-shrink: 0;
+      transition: all 0.2s ease;
     }
     .cat-btn.selected .cat-icon-check {
       background: var(--primary);
       border-color: var(--primary);
       color: #000;
+      transform: scale(1.1);
     }
 
     /* ===== FEED POSTS ===== */
     .search-bar {
       width: 100%;
-      background: rgba(0,0,0,0.3);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px 12px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      padding: 12px 16px;
       color: var(--text);
-      font-family: var(--font-family);
-      margin-bottom: 16px;
+      font-family: var(--font-family); font-size: 0.95rem;
+      margin-bottom: 20px;
       outline: none;
+      box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     }
-    .search-bar:focus { border-color: var(--primary); }
+    .search-bar:focus { 
+      border-color: var(--primary); 
+      box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 12px rgba(SLOT_RGB, 0.3);
+      background: rgba(0, 0, 0, 0.6);
+    }
 
     .post-header {
       display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
@@ -7962,44 +8019,54 @@ def mini_app_page():
     
     .react-trigger-btn {
       background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--border);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 20px;
-      padding: 5px 12px;
-      font-size: 0.8rem;
+      padding: 6px 14px; font-weight: 500;
+      font-size: 0.82rem;
       color: var(--text-dim);
       cursor: pointer;
       display: flex;
       align-items: center;
       gap: 6px;
-      transition: background 0.2s, color 0.2s;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
     .react-trigger-btn:hover {
-      background: rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.25);
       color: var(--text);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
     
     /* Reaction Pill Badge */
     .reaction-pill {
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 20px;
-      padding: 4px 10px;
-      font-size: 0.8rem;
+      padding: 5px 12px; font-weight: 600;
+      font-size: 0.82rem;
       display: inline-flex;
       align-items: center;
-      gap: 4px;
+      gap: 6px;
       cursor: pointer;
       user-select: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
     .reaction-pill:hover {
-      background: rgba(255, 255, 255, 0.07);
-      transform: scale(1.05);
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: scale(1.06);
     }
     .reaction-pill.active {
-      background: var(--primary-dim);
+      background: linear-gradient(135deg, rgba(SLOT_RGB, 0.25), rgba(SLOT_RGB, 0.15));
       border-color: var(--primary);
-      box-shadow: 0 0 8px rgba(SLOT_RGB, 0.2);
+      box-shadow: 0 4px 15px rgba(SLOT_RGB, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
     .reaction-pill.active .reaction-emoji {
       animation: emoji-pulse 0.3s ease-out;
@@ -8069,19 +8136,24 @@ def mini_app_page():
     
     .chat-item-row {
       background: rgba(255, 255, 255, 0.03);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      padding: 16px;
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
       cursor: pointer;
-      transition: background 0.2s, transform 0.2s;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     }
     
     .chat-item-row:hover {
       background: rgba(255, 255, 255, 0.06);
-      transform: translateY(-1px);
+      border-color: rgba(255, 255, 255, 0.15);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
     }
     
     .chat-item-row .chat-details {
@@ -8220,17 +8292,20 @@ def mini_app_page():
     }
     
     .chat-msg-row.sent .chat-msg-bubble {
-      background: var(--primary);
-      color: #000;
+      background: linear-gradient(135deg, var(--primary), #e6c04b);
+      color: #000; font-weight: 500;
       border-bottom-right-radius: 4px;
-      box-shadow: 0 4px 12px rgba(SLOT_RGB, 0.15);
+      box-shadow: 0 4px 15px rgba(SLOT_RGB, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.3);
     }
     
     .chat-msg-row.received .chat-msg-bubble {
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       color: var(--text);
       border-bottom-left-radius: 4px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
     }
     
     .chat-msg-info {
