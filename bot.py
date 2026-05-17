@@ -1642,13 +1642,14 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_rank = get_user_rank(user_id)
     
     if user_rank:
-        user_data = db_fetch_one("SELECT anonymous_name, sex FROM users WHERE user_id = %s", (user_id,))
+        user_data = db_fetch_one("SELECT anonymous_name, sex, is_admin FROM users WHERE user_id = %s", (user_id,))
         if user_data:
             user_contributions = calculate_user_rating(user_id)
             safe_user_name = escape_markdown(user_data['anonymous_name'], version=2)
             user_sex_val = user_data['sex'] if user_data['sex'] in ('👨', '👩') else ""
             safe_user_sex = escape_markdown(user_sex_val, version=2)
-            safe_user_aura = escape_markdown(format_aura(user_contributions), version=2)
+            user_aura_val = "🔵" if user_data.get('is_admin') else format_aura(user_contributions)
+            safe_user_aura = escape_markdown(user_aura_val, version=2)
             safe_user_pts = escape_markdown(str(user_contributions), version=2)
             safe_user_rank = escape_markdown(str(user_rank), version=2)
             
@@ -3268,7 +3269,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         rating_str = str(rating)
                         level_str = str(level)
-                        aura_str = format_aura(rating)
+                        is_target_admin = user_data.get('is_admin', False)
+                        aura_str = "🔵" if is_target_admin else format_aura(rating)
                         
                     if user_data.get('hide_bio'):
                         bio = "_[Hidden by user]_"
@@ -3287,7 +3289,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     rating_str = str(rating)
                     level_str = str(level)
-                    aura_str = format_aura(rating)
+                    is_target_admin = user_data.get('is_admin', False)
+                    aura_str = "🔵" if is_target_admin else format_aura(rating)
                     follower_count = str(len(followers))
                     following_row = db_fetch_one(
                         "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
@@ -4503,7 +4506,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     safe_bio = escape_markdown(bio, version=2)
     safe_level = escape_markdown(str(level), version=2)
     safe_rating = escape_markdown(str(rating), version=2)
-    safe_aura = escape_markdown(format_aura(rating), version=2)
+    safe_aura = escape_markdown("🔵" if is_admin else format_aura(rating), version=2)
 
     if is_admin:
         profile_text = (
@@ -8728,6 +8731,7 @@ def mini_app_get_posts():
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
                 u.anonymous_name as author_name,
+                u.is_admin as author_is_admin,
                 STRING_AGG(DISTINCT pc.category_code, ',') as categories,
                 COALESCE((
                     SELECT COUNT(*) 
@@ -8742,7 +8746,7 @@ def mini_app_get_posts():
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.approved = TRUE
-            GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name
+            GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
             ORDER BY p.timestamp DESC
             LIMIT %s OFFSET %s
         ''', (user_id, per_page, offset))
@@ -8772,7 +8776,7 @@ def mini_app_get_posts():
                 content_preview = content_preview[:297] + '...'
             
             rating = calculate_user_rating(post['author_id'])
-            aura_sticker = format_aura(rating)
+            aura_sticker = "🔵" if post['author_is_admin'] else format_aura(rating)
             
             category_list = post['categories'].split(',') if post['categories'] else ['Other']
             
@@ -8817,12 +8821,13 @@ def mini_app_get_single_post(post_id):
             SELECT 
                 p.post_id, p.content, p.timestamp, p.comment_count, p.media_type,
                 u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
+                u.is_admin as author_is_admin,
                 STRING_AGG(pc.category_code, ', ') as categories
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.post_id = %s AND p.approved = TRUE
-            GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name
+            GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
         ''', (post_id,))
         
         if not post:
@@ -8863,7 +8868,7 @@ def mini_app_get_single_post(post_id):
                 'name': 'Anonymous',
                 'sex': post['author_sex'] or '👤',
                 'avatar': post['author_avatar'] or "",
-                'aura': format_aura(rating)
+                'aura': "🔵" if post['author_is_admin'] else format_aura(rating)
             }
         }
         return jsonify({'success': True, 'data': formatted_post})
@@ -8885,7 +8890,8 @@ def mini_app_get_post_comments(post_id):
                 u.user_id as author_id,
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
-                u.anonymous_name as author_name
+                u.anonymous_name as author_name,
+                u.is_admin as author_is_admin
             FROM comments c
             JOIN users u ON c.author_id = u.user_id
             WHERE c.post_id = %s
@@ -8923,7 +8929,7 @@ def mini_app_get_post_comments(post_id):
                     'name': c['author_name'] or 'Anonymous',
                     'sex': c['author_sex'] or '👤',
                     'avatar': c['author_avatar'] or "",
-                    'aura': format_aura(rating)
+                    'aura': "🔵" if c['author_is_admin'] else format_aura(rating)
                 }
             })
 
@@ -9040,7 +9046,7 @@ def mini_app_profile(user_id):
         )
         follower_count = followers['count'] if followers else 0
         
-        aura_display = format_aura(rating)
+        aura_display = "🔵" if user.get('is_admin') else format_aura(rating)
         rating_display = rating
         
         # Apply privacy
