@@ -8130,7 +8130,7 @@ def mini_app_page():
       left: 0;
       width: 100%;
       height: 100%;
-      background: var(--bg);
+      background: var(--bg-color);
       z-index: 2000;
       display: flex;
       flex-direction: column;
@@ -10098,6 +10098,47 @@ def mini_app_get_chats():
         logger.error(f"Error getting chats: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+def format_ethiopian_time(dt):
+    """Format datetime into Western (EAT) + Ethiopian Amharic time format."""
+    if not dt:
+        return ""
+    if isinstance(dt, str):
+        try:
+            dt = datetime.strptime(dt, '%Y-%m-%d %H:%M:%S')
+        except:
+            return dt
+            
+    # If server is in UTC, adjust to Ethiopia time (UTC+3)
+    now_local = datetime.now()
+    now_utc = datetime.utcnow()
+    if abs((now_local - now_utc).total_seconds()) < 60:
+        dt = dt + timedelta(hours=3)
+        
+    western_str = dt.strftime('%I:%M %p')
+    
+    H = dt.hour
+    M = dt.minute
+    
+    if H >= 6 and H < 12:
+        period = "ጠዋት"
+    elif H >= 12 and H < 16:
+        period = "ከሰዓት"
+    elif H >= 16 and H < 18:
+        period = "ምሽት"
+    elif H >= 18:
+        period = "ማታ"
+    else:
+        period = "ሌሊት"
+        
+    eth_hour = (H - 6) if H >= 6 else (H + 6)
+    if eth_hour == 0:
+        eth_hour = 12
+    elif eth_hour > 12:
+        eth_hour -= 12
+        
+    eth_str = f"{eth_hour}:{M:02d} {period}"
+    return f"{western_str} ({eth_str})"
+
 @flask_app.route('/api/mini-app/chats/<partner_id>', methods=['GET'])
 def mini_app_get_messages(partner_id):
     try:
@@ -10133,7 +10174,7 @@ def mini_app_get_messages(partner_id):
                 'sender_id': r['sender_id'],
                 'receiver_id': r['receiver_id'],
                 'content': r['content'],
-                'timestamp': msg_time.strftime('%I:%M %p'),
+                'timestamp': format_ethiopian_time(msg_time),
                 'is_read': r['is_read'],
                 'is_mine': str(r['sender_id']) == str(user_id)
             })
@@ -10175,20 +10216,22 @@ def mini_app_send_message():
             sender_name = sender['anonymous_name'] if sender else 'Anonymous'
             sender_icon = sender['avatar_emoji'] or sender['sex'] or '👤'
             
-            from telebot.types import InlineKeyboardMarkup as TGInlineKeyboardMarkup, InlineKeyboardButton as TGInlineKeyboardButton
-            keyboard = TGInlineKeyboardMarkup()
-            keyboard.add(TGInlineKeyboardButton("💬 Open Private Chats", url=f"https://t.me/{BOT_USERNAME}"))
-            
-            bot.send_message(
-                chat_id=int(receiver_id),
-                text=f"💬 *New Private Message!*\n\n*{sender_icon} {sender_name}* says:\n_{content}_",
-                parse_mode="Markdown",
-                reply_markup=keyboard
-            )
+            url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+            payload = {
+                "chat_id": int(receiver_id),
+                "text": f"💬 *New Private Message!*\n\n*{sender_icon} {sender_name}* says:\n_{content}_",
+                "parse_mode": "Markdown",
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [{"text": "💬 Open Private Chats", "url": f"https://t.me/{BOT_USERNAME}"}]
+                    ]
+                }
+            }
+            requests.post(url, json=payload, timeout=5)
         except Exception as alert_err:
             logger.error(f"Failed to dispatch Telegram chat push alert: {alert_err}")
             
-        msg_time = datetime.now()
+        msg_time = res['timestamp'] if (res and 'timestamp' in res) else datetime.now()
         return jsonify({
             'success': True,
             'data': {
@@ -10196,7 +10239,7 @@ def mini_app_send_message():
                 'sender_id': sender_id,
                 'receiver_id': receiver_id,
                 'content': content,
-                'timestamp': msg_time.strftime('%I:%M %p'),
+                'timestamp': format_ethiopian_time(msg_time),
                 'is_read': False,
                 'is_mine': True
             }
