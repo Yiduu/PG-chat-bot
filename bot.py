@@ -4218,22 +4218,23 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         if new_msg_id:
             msg_ids[comment_id] = new_msg_id
     
-    # Pagination
-    if total_pages > 1:
-        buttons = []
-        if page > 1: buttons.append(InlineKeyboardButton("⬅️ Older", callback_data=f"viewcomments_{post_id}_{page-1}"))
-        if page < total_pages: buttons.append(InlineKeyboardButton("Newer ➡️", callback_data=f"viewcomments_{post_id}_{page+1}"))
-        await context.bot.send_message(chat_id, f"📄 Page {page}/{total_pages}", reply_markup=InlineKeyboardMarkup([buttons]))
+    # Pagination ➕ Add comment button
+    is_last_page = page >= total_pages
 
-    # "Add a comment" button — only shown on the last page
-    if page >= total_pages:
-        add_comment_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("+ Add comment", callback_data=f"writecomment_{post_id}")]
-        ])
+    if total_pages > 1:
+        nav_buttons = []
+        if page > 1: nav_buttons.append(InlineKeyboardButton("⬅️ Older", callback_data=f"viewcomments_{post_id}_{page-1}"))
+        if page < total_pages: nav_buttons.append(InlineKeyboardButton("Newer ➡️", callback_data=f"viewcomments_{post_id}_{page+1}"))
+        rows = [nav_buttons]
+        if is_last_page:
+            rows.append([InlineKeyboardButton("➕ Add comment", callback_data=f"writecomment_{post_id}")])
+        await context.bot.send_message(chat_id, f"📄 Page {page}/{total_pages}", reply_markup=InlineKeyboardMarkup(rows))
+    elif is_last_page:
+        # Single page — standalone add comment button
         await context.bot.send_message(
             chat_id,
-            "‎",
-            reply_markup=add_comment_kb
+            "➕ Add your thoughts to the conversation",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Add comment", callback_data=f"writecomment_{post_id}")]])
         )
 async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None):
     """Send a single reply message with proper formatting using pre-fetched user data if available"""
