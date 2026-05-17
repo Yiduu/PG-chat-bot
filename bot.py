@@ -255,6 +255,9 @@ def init_db():
                     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_post_user ON reactions (post_id, user_id) WHERE post_id IS NOT NULL")
                     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_comment_user ON reactions (comment_id, user_id) WHERE comment_id IS NOT NULL")
                     c.execute("CREATE INDEX IF NOT EXISTS idx_reactions_lookup ON reactions (post_id, comment_id, type)")
+                    
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_pm_lookup ON private_messages (sender_id, receiver_id, timestamp DESC)")
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_pm_unread ON private_messages (receiver_id, is_read)")
 
                 # Add timestamp to blocks
                 c.execute("""
@@ -8048,6 +8051,301 @@ def mini_app_page():
       0% { transform: translate(0, 0) scale(0.5); opacity: 1; }
       100% { transform: translate(var(--dx), var(--dy)) scale(1.5) rotate(var(--dr)); opacity: 0; }
     }
+
+    /* ===== PERSONAL PRIVATE CHATS ===== */
+    .chats-inbox {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 15px;
+    }
+    
+    .chat-item-row {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.2s;
+    }
+    
+    .chat-item-row:hover {
+      background: rgba(255, 255, 255, 0.06);
+      transform: translateY(-1px);
+    }
+    
+    .chat-item-row .chat-details {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .chat-item-row .chat-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    
+    .chat-item-row .chat-name {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    
+    .chat-item-row .chat-time {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+    
+    .chat-item-row .chat-preview {
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .unread-chat-badge {
+      background: var(--primary);
+      color: #000;
+      font-weight: bold;
+      font-size: 0.75rem;
+      min-width: 18px;
+      height: 18px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 4px;
+      box-shadow: 0 0 8px rgba(SLOT_RGB, 0.4);
+    }
+    
+    /* Sliding Chat Room Pane */
+    .chat-room-pane {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    
+    .chat-room-pane.active {
+      transform: translateX(0);
+    }
+    
+    .chat-room-header {
+      background: rgba(20, 20, 20, 0.85);
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 10;
+    }
+    
+    .chat-back-btn {
+      background: none;
+      border: none;
+      color: var(--text);
+      font-size: 1.2rem;
+      cursor: pointer;
+      padding: 4px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .chat-room-title-area {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .chat-room-partner-name {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    
+    .chat-messages-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    
+    .chat-msg-row {
+      display: flex;
+      flex-direction: column;
+      max-width: 75%;
+    }
+    
+    .chat-msg-row.sent {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+    
+    .chat-msg-row.received {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+    
+    .chat-msg-bubble {
+      padding: 10px 14px;
+      border-radius: 18px;
+      font-size: 0.88rem;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+    
+    .chat-msg-row.sent .chat-msg-bubble {
+      background: var(--primary);
+      color: #000;
+      border-bottom-right-radius: 4px;
+      box-shadow: 0 4px 12px rgba(SLOT_RGB, 0.15);
+    }
+    
+    .chat-msg-row.received .chat-msg-bubble {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-bottom-left-radius: 4px;
+    }
+    
+    .chat-msg-info {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 4px;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+    }
+    
+    .chat-msg-tick {
+      font-size: 0.8rem;
+      color: var(--primary);
+      opacity: 0.6;
+    }
+    .chat-msg-tick.read {
+      opacity: 1;
+    }
+    
+    .chat-input-bar {
+      border-top: 1px solid var(--border);
+      padding: 12px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: rgba(20, 20, 20, 0.85);
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
+    }
+    
+    .chat-input-textarea {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 10px 16px;
+      color: var(--text);
+      font-size: 0.88rem;
+      resize: none;
+      height: 40px;
+      line-height: 20px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .chat-input-textarea:focus {
+      border-color: var(--primary);
+    }
+    
+    /* ===== USER PROFILE BOTTOM SHEET MODAL ===== */
+    .user-profile-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3000;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      pointer-events: none;
+    }
+    .user-profile-modal.active {
+      pointer-events: auto;
+    }
+    .user-profile-modal-backdrop {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .user-profile-modal.active .user-profile-modal-backdrop {
+      opacity: 1;
+    }
+    .user-profile-modal-sheet {
+      position: relative;
+      background: rgba(25, 25, 25, 0.95);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-top: 1px solid var(--border);
+      border-top-left-radius: 28px;
+      border-top-right-radius: 28px;
+      padding: 24px 20px 36px;
+      box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.5);
+      transform: translateY(100%);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1);
+      z-index: 10;
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+    .user-profile-modal.active .user-profile-modal-sheet {
+      transform: translateY(0);
+    }
+    .modal-sheet-drag-handle {
+      width: 40px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 2px;
+      margin: 0 auto 16px;
+    }
+    .modal-close-btn {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: var(--text);
+      width: 30px;
+      height: 30px;
+      border-radius: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -8168,6 +8466,16 @@ def mini_app_page():
     </div>
   </section>
 
+  <!-- CHATS INBOX PAGE -->
+  <section id="page-chats" class="page">
+    <div class="card">
+      <div class="card-title">Messages</div>
+      <div class="chats-inbox" id="chatsInboxContainer">
+        <div class="skeleton"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- DEVELOPER FOOTER -->
   <div class="developer-footer">
     <div class="dev-gold-line"></div>
@@ -8181,10 +8489,43 @@ def mini_app_page():
   <nav class="bottom-nav">
     <button class="nav-btn active" data-page="vent"><span class="nav-icon">✍️</span>Vent</button>
     <button class="nav-btn" data-page="feed"><span class="nav-icon">🌍</span>Feed</button>
+    <button class="nav-btn" data-page="chats"><span class="nav-icon">💬</span>Chats</button>
     <button class="nav-btn" data-page="leaderboard"><span class="nav-icon">🏆</span>Top</button>
     <button class="nav-btn" data-page="profile"><span class="nav-icon">👤</span>Me</button>
     <button class="nav-btn" data-page="settings"><span class="nav-icon">⚙️</span>Settings</button>
   </nav>
+
+  <!-- SLIDING CHAT ROOM PANE -->
+  <div id="chatRoomPane" class="chat-room-pane">
+    <div class="chat-room-header">
+      <button class="chat-back-btn" onclick="closeChatRoom()">←</button>
+      <div class="chat-room-title-area">
+        <div class="avatar" id="chatRoomPartnerAvatar" style="width:36px; height:36px; font-size:16px;">👤</div>
+        <div class="chat-room-partner-name" id="chatRoomPartnerName">Anonymous</div>
+      </div>
+    </div>
+    
+    <div class="chat-messages-scroll" id="chatMessagesScroll">
+      <!-- Messages injected here -->
+    </div>
+    
+    <div class="chat-input-bar">
+      <textarea class="chat-input-textarea" id="chatInputTextarea" placeholder="Type a message..." rows="1"></textarea>
+      <button class="btn-primary" style="width:auto; padding:10px 20px; border-radius:20px; font-size:0.88rem;" onclick="sendMessageInRoom()">Send</button>
+    </div>
+  </div>
+
+  <!-- USER PROFILE BOTTOM SHEET MODAL -->
+  <div id="userProfileModal" class="user-profile-modal">
+    <div class="user-profile-modal-backdrop" onclick="closeUserProfileModal()"></div>
+    <div class="user-profile-modal-sheet">
+      <div class="modal-sheet-drag-handle"></div>
+      <button class="modal-close-btn" onclick="closeUserProfileModal()">✕</button>
+      <div id="userProfileModalContent">
+        <!-- Content injected dynamically -->
+      </div>
+    </div>
+  </div>
 
 </div>
 
@@ -8337,6 +8678,203 @@ function createParticleBurst(x, y, emoji) {
   }
 }
 
+// CHATS JS STATE
+let activeChatPartnerId = null;
+let activeChatPollInterval = null;
+
+async function loadChatsInbox() {
+  const container = document.getElementById('chatsInboxContainer');
+  container.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
+  try {
+    const data = await apiFetch(`/api/mini-app/chats?user_id=${state.userId}`);
+    const chats = data.data || [];
+    container.innerHTML = '';
+    
+    if (chats.length === 0) {
+      container.innerHTML = '<div style="text-align:center; padding:40px 20px; color:var(--text-dim);">No messages yet. Start a chat from any profile!</div>';
+      return;
+    }
+    
+    chats.forEach(c => {
+      const unreadBadge = c.unread_count > 0 ? `<span class="unread-chat-badge">${c.unread_count}</span>` : '';
+      const avatarContent = esc(c.partner_avatar || c.partner_sex || '👤');
+      const partnerName = esc(c.partner_name || 'Anonymous');
+      const prefix = c.is_mine ? '<span style="color:var(--primary); font-weight:500;">You:</span> ' : '';
+      
+      container.insertAdjacentHTML('beforeend', `
+        <div class="chat-item-row" onclick="openChatRoom('${c.partner_id}', '${partnerName.replace(/'/g, "\\'")}', '${esc(c.partner_sex)}', '${esc(c.partner_avatar)}')">
+          <div class="avatar" style="width:40px; height:40px; font-size:18px;">${avatarContent}</div>
+          <div class="chat-details">
+            <div class="chat-header-row">
+              <span class="chat-name">${partnerName}</span>
+              <span class="chat-time">${esc(c.time_ago)}</span>
+            </div>
+            <div class="chat-header-row" style="margin-top:2px;">
+              <span class="chat-preview">${prefix}${esc(c.last_message)}</span>
+              ${unreadBadge}
+            </div>
+          </div>
+        </div>
+      `);
+    });
+  } catch (e) {
+    container.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding:20px;">Failed to load messages.</div>';
+  }
+}
+
+async function openChatRoom(partnerId, partnerName, partnerSex, partnerAvatar) {
+  activeChatPartnerId = partnerId;
+  
+  // Set UI Header
+  const avatarEl = document.getElementById('chatRoomPartnerAvatar');
+  avatarEl.textContent = partnerAvatar || partnerSex || '👤';
+  
+  const nameEl = document.getElementById('chatRoomPartnerName');
+  nameEl.textContent = partnerName || 'Anonymous';
+  
+  // Clear input
+  document.getElementById('chatInputTextarea').value = '';
+  
+  // Show Pane
+  document.getElementById('chatRoomPane').classList.add('active');
+  
+  // Initial load messages
+  await fetchChatMessages(true);
+  
+  // Start polling
+  clearInterval(activeChatPollInterval);
+  activeChatPollInterval = setInterval(fetchChatMessages, 3000);
+}
+
+function closeChatRoom() {
+  activeChatPartnerId = null;
+  clearInterval(activeChatPollInterval);
+  document.getElementById('chatRoomPane').classList.remove('active');
+  // Reload inbox to reflect any read status
+  loadChatsInbox();
+}
+
+async function fetchChatMessages(shouldScroll = false) {
+  if (!activeChatPartnerId) return;
+  
+  try {
+    const data = await apiFetch(`/api/mini-app/chats/${activeChatPartnerId}?user_id=${state.userId}`);
+    const messages = data.data || [];
+    const scrollBox = document.getElementById('chatMessagesScroll');
+    
+    // Remember scroll height before injection
+    const wasAtBottom = scrollBox.scrollHeight - scrollBox.scrollTop <= scrollBox.clientHeight + 100;
+    
+    let html = '';
+    messages.forEach(m => {
+      const bubbleClass = m.is_mine ? 'sent' : 'received';
+      const readTick = m.is_read ? '<span class="chat-msg-tick read">✓✓</span>' : '<span class="chat-msg-tick">✓✓</span>';
+      const tick = m.is_mine ? readTick : '';
+      
+      html += `
+        <div class="chat-msg-row ${bubbleClass}">
+          <div class="chat-msg-bubble">${esc(m.content)}</div>
+          <div class="chat-msg-info">
+            <span>${esc(m.timestamp)}</span>
+            ${tick}
+          </div>
+        </div>
+      `;
+    });
+    
+    scrollBox.innerHTML = html;
+    
+    if (shouldScroll || wasAtBottom) {
+      scrollBox.scrollTop = scrollBox.scrollHeight;
+    }
+  } catch (e) {
+    // Fail silently to prevent alert spamming during poll
+  }
+}
+
+async function sendMessageInRoom() {
+  const input = document.getElementById('chatInputTextarea');
+  const content = input.value.trim();
+  if (!content || !activeChatPartnerId) return;
+  
+  // Play Light Haptic
+  if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback) {
+    window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+  }
+  
+  // Spark particle burst
+  const btn = event.currentTarget;
+  const rect = btn.getBoundingClientRect();
+  createParticleBurst(rect.left + rect.width/2, rect.top, '✉️');
+  
+  input.value = '';
+  
+  try {
+    const res = await apiFetch('/api/mini-app/chats/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        sender_id: state.userId,
+        receiver_id: activeChatPartnerId,
+        content: content
+      })
+    });
+    
+    if (res.success) {
+      await fetchChatMessages(true);
+    }
+  } catch (e) {
+    toast(e.message || 'Failed to send message');
+  }
+}
+
+// USER PROFILE MODAL JS
+async function openUserProfileModal(userId) {
+  if (!userId) return;
+  if (String(userId) === String(state.userId)) {
+    switchPage('profile');
+    return;
+  }
+  
+  const modal = document.getElementById('userProfileModal');
+  const content = document.getElementById('userProfileModalContent');
+  modal.classList.add('active');
+  content.innerHTML = '<div class="skeleton" style="height:150px;"></div>';
+  
+  try {
+    const data = await apiFetch(`/api/mini-app/profile/${userId}?viewer_id=${state.userId}`);
+    const p = data.data;
+    
+    content.innerHTML = `
+      <div style="text-align:center;">
+        <div class="avatar" style="width:72px; height:72px; font-size:30px; margin:0 auto 12px; border:2px solid var(--primary);">${esc(p.avatar||p.sex||'👤')}</div>
+        <div style="font-size:1.25rem; font-weight:700; color:var(--primary);">${esc(p.name)}</div>
+        <div style="font-size:0.85rem; color:var(--text-dim); margin-bottom:16px;">${esc(p.aura)} ${p.rating} pts</div>
+        
+        <div style="display:flex; justify-content:space-around; border-top:1px solid var(--border); border-bottom:1px solid var(--border); padding:16px 0; margin-bottom:20px;">
+          <div><div style="font-size:1.1rem; font-weight:700; color:var(--primary);">${p.stats?.posts||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Vents</div></div>
+          <div><div style="font-size:1.1rem; font-weight:700; color:var(--primary);">${p.stats?.comments||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Replies</div></div>
+          <div><div style="font-size:1.1rem; font-weight:700; color:var(--primary);">${p.stats?.followers||0}</div><div style="font-size:0.7rem; color:var(--text-dim);">Followers</div></div>
+        </div>
+        
+        <button class="btn-primary" style="padding:12px; font-size:1rem; border-radius:24px; display:flex; align-items:center; justify-content:center; gap:8px;" onclick="startPrivateChatFromModal('${p.id}', '${esc(p.name.replace(/'/g, "\\'"))}', '${esc(p.sex)}', '${esc(p.avatar)}')">
+          ✉️ Send Private Message
+        </button>
+      </div>
+    `;
+  } catch(e) {
+    content.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding:20px;">Failed to load profile.</div>';
+  }
+}
+
+function closeUserProfileModal() {
+  document.getElementById('userProfileModal').classList.remove('active');
+}
+
+function startPrivateChatFromModal(partnerId, partnerName, partnerSex, partnerAvatar) {
+  closeUserProfileModal();
+  openChatRoom(partnerId, partnerName, partnerSex, partnerAvatar);
+}
+
 // NAVIGATION
 function switchPage(name) {
   state.currentPage = name;
@@ -8350,6 +8888,7 @@ function switchPage(name) {
   if(name === 'leaderboard') loadLeaderboard();
   if(name === 'profile' && state.userId) loadProfile();
   if(name === 'settings' && state.userId) loadSettings();
+  if(name === 'chats' && state.userId) loadChatsInbox();
   window.scrollTo(0,0);
 }
 
@@ -8484,7 +9023,7 @@ async function loadFeed(append = false) {
       
       container.insertAdjacentHTML('beforeend', `
         <div class="card" style="cursor:pointer;" onclick="openPost(${p.id})">
-          <div class="post-header">
+          <div class="post-header" onclick="event.stopPropagation(); openUserProfileModal('${p.author?.id}')">
             <div class="avatar">${esc(p.author?.avatar || p.author?.sex || '👤')}</div>
             <div>
               <div class="post-author">${esc(p.author?.name || 'Anonymous')} ${esc(p.author?.aura||'')}</div>
@@ -8551,7 +9090,7 @@ async function openPost(id) {
     
     box.innerHTML = `
       <div class="card">
-        <div class="post-header">
+        <div class="post-header" style="cursor:pointer;" onclick="openUserProfileModal('${p.author?.id}')">
           <div class="avatar">${esc(p.author?.sex || '👤')} ${esc(p.author?.avatar || '')}</div>
           <div>
             <div class="post-author">${esc(p.author?.name || 'Anonymous')} ${esc(p.author?.aura||'')}</div>
@@ -8629,10 +9168,10 @@ async function loadComments(id) {
       const children = c.children.map(ch => renderC(ch, depth+1)).join('');
       return `
         <div class="comment-item ${isReply}">
-          <div class="avatar" style="width:28px; height:28px; font-size:14px;">${esc(c.author?.sex || '👤')} ${esc(c.author?.avatar || '')}</div>
+          <div class="avatar" style="width:28px; height:28px; font-size:14px; cursor:pointer;" onclick="openUserProfileModal('${c_author_id}')">${esc(c.author?.sex || '👤')} ${esc(c.author?.avatar || '')}</div>
           <div class="comment-body">
             <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-              <span style="font-size:0.8rem; font-weight:600; color:var(--primary);">${esc(displayName)} ${esc(c.author?.aura)}</span>
+              <span style="font-size:0.8rem; font-weight:600; color:var(--primary); cursor:pointer;" onclick="openUserProfileModal('${c_author_id}')">${esc(displayName)} ${esc(c.author?.aura)}</span>
               <span style="font-size:0.7rem; color:var(--text-dim);">${esc(c.time_ago)}</span>
             </div>
             <div style="font-size:0.85rem; line-height:1.4;" id="comment-content-${c.id}">${esc(c.content)}</div>
@@ -8718,7 +9257,7 @@ async function loadLeaderboard() {
   try {
     const data = await apiFetch('/api/mini-app/leaderboard');
     box.innerHTML = (data.data||[]).map((u,i) => `
-      <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
+      <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05); cursor:pointer;" onclick="openUserProfileModal('${u.id}')">
         <div style="width:24px; font-weight:700; color:${i===0?'#FFD700':i===1?'#C0C0C0':i===2?'#CD7F32':'var(--text-dim)'};">${i<3?['👑','🥈','🥉'][i]:i+1}</div>
         <div class="avatar">${esc(u.avatar||'👤')}</div>
         <div style="flex:1;">
@@ -9477,6 +10016,193 @@ def mini_app_toggle_reaction():
         
     except Exception as e:
         logger.error(f"Error toggle reaction: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/chats', methods=['GET'])
+def mini_app_get_chats():
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Missing user_id'}), 400
+            
+        # DISTINCT ON query to get the latest message per partner, omitting aura points as requested
+        rows = db_fetch_all("""
+            WITH last_messages AS (
+                SELECT DISTINCT ON (partner_id)
+                    CASE 
+                        WHEN sender_id = %s THEN receiver_id 
+                        ELSE sender_id 
+                    END AS partner_id,
+                    content,
+                    timestamp,
+                    is_read,
+                    sender_id
+                FROM private_messages
+                WHERE sender_id = %s OR receiver_id = %s
+                ORDER BY partner_id, timestamp DESC
+            )
+            SELECT 
+                lm.partner_id,
+                lm.content,
+                lm.timestamp,
+                lm.is_read,
+                lm.sender_id,
+                u.anonymous_name as partner_name,
+                u.sex as partner_sex,
+                u.avatar_emoji as partner_avatar,
+                u.is_admin as partner_is_admin,
+                COALESCE((
+                    SELECT COUNT(*) 
+                    FROM private_messages 
+                    WHERE sender_id = lm.partner_id 
+                      AND receiver_id = %s 
+                      AND is_read = FALSE
+                ), 0) as unread_count
+            FROM last_messages lm
+            JOIN users u ON lm.partner_id = u.user_id
+            ORDER BY lm.timestamp DESC
+        """, (user_id, user_id, user_id, user_id))
+        
+        chats = []
+        for r in (rows or []):
+            if isinstance(r['timestamp'], str):
+                msg_time = datetime.strptime(r['timestamp'], '%Y-%m-%d %H:%M:%S')
+            else:
+                msg_time = r['timestamp']
+            
+            now = datetime.now()
+            diff = now - msg_time
+            if diff.days > 0:
+                time_str = f"{diff.days}d ago"
+            elif diff.seconds > 3600:
+                time_str = f"{diff.seconds // 3600}h ago"
+            elif diff.seconds > 60:
+                time_str = f"{diff.seconds // 60}m ago"
+            else:
+                time_str = "Just now"
+                
+            chats.append({
+                'partner_id': r['partner_id'],
+                'partner_name': r['partner_name'] or 'Anonymous',
+                'partner_sex': r['partner_sex'] or '👤',
+                'partner_avatar': r['partner_avatar'] or '',
+                'partner_is_admin': r['partner_is_admin'],
+                'last_message': r['content'],
+                'time_ago': time_str,
+                'is_mine': str(r['sender_id']) == str(user_id),
+                'unread_count': r['unread_count']
+            })
+            
+        return jsonify({'success': True, 'data': chats})
+    except Exception as e:
+        logger.error(f"Error getting chats: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/chats/<partner_id>', methods=['GET'])
+def mini_app_get_messages(partner_id):
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Missing user_id'}), 400
+            
+        # Mark incoming messages from this partner as read
+        db_execute("""
+            UPDATE private_messages 
+            SET is_read = TRUE 
+            WHERE sender_id = %s AND receiver_id = %s AND is_read = FALSE
+        """, (partner_id, user_id))
+        
+        # Get messages history
+        rows = db_fetch_all("""
+            SELECT message_id, sender_id, receiver_id, content, timestamp, is_read
+            FROM private_messages
+            WHERE (sender_id = %s AND receiver_id = %s)
+               OR (sender_id = %s AND receiver_id = %s)
+            ORDER BY timestamp ASC
+        """, (user_id, partner_id, partner_id, user_id))
+        
+        messages = []
+        for r in (rows or []):
+            if isinstance(r['timestamp'], str):
+                msg_time = datetime.strptime(r['timestamp'], '%Y-%m-%d %H:%M:%S')
+            else:
+                msg_time = r['timestamp']
+            
+            messages.append({
+                'id': r['message_id'],
+                'sender_id': r['sender_id'],
+                'receiver_id': r['receiver_id'],
+                'content': r['content'],
+                'timestamp': msg_time.strftime('%I:%M %p'),
+                'is_read': r['is_read'],
+                'is_mine': str(r['sender_id']) == str(user_id)
+            })
+            
+        return jsonify({'success': True, 'data': messages})
+    except Exception as e:
+        logger.error(f"Error getting messages: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/chats/send', methods=['POST'])
+def mini_app_send_message():
+    try:
+        data = request.json or {}
+        sender_id = str(data.get('sender_id', ''))
+        receiver_id = str(data.get('receiver_id', ''))
+        content = data.get('content', '').strip()
+        
+        if not sender_id or not receiver_id or not content:
+            return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+            
+        # Block check
+        block_check = db_fetch_one("""
+            SELECT 1 FROM blocks 
+            WHERE (blocker_id = %s AND blocked_id = %s)
+        """, (receiver_id, sender_id))
+        if block_check:
+            return jsonify({'success': False, 'error': 'You are blocked by this user.'}), 403
+            
+        # Save message
+        res = db_execute("""
+            INSERT INTO private_messages (sender_id, receiver_id, content) 
+            VALUES (%s, %s, %s) 
+            RETURNING message_id, timestamp
+        """, (sender_id, receiver_id, content), fetchone=True)
+        
+        # Try sending background Telegram Bot notification
+        try:
+            sender = db_fetch_one("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (sender_id,))
+            sender_name = sender['anonymous_name'] if sender else 'Anonymous'
+            sender_icon = sender['avatar_emoji'] or sender['sex'] or '👤'
+            
+            from telebot.types import InlineKeyboardMarkup as TGInlineKeyboardMarkup, InlineKeyboardButton as TGInlineKeyboardButton
+            keyboard = TGInlineKeyboardMarkup()
+            keyboard.add(TGInlineKeyboardButton("💬 Open Private Chats", url=f"https://t.me/{BOT_USERNAME}"))
+            
+            bot.send_message(
+                chat_id=int(receiver_id),
+                text=f"💬 *New Private Message!*\n\n*{sender_icon} {sender_name}* says:\n_{content}_",
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+        except Exception as alert_err:
+            logger.error(f"Failed to dispatch Telegram chat push alert: {alert_err}")
+            
+        msg_time = datetime.now()
+        return jsonify({
+            'success': True,
+            'data': {
+                'id': res['message_id'] if res else None,
+                'sender_id': sender_id,
+                'receiver_id': receiver_id,
+                'content': content,
+                'timestamp': msg_time.strftime('%I:%M %p'),
+                'is_read': False,
+                'is_mine': True
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error sending message: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @flask_app.route('/api/mini-app/leaderboard', methods=['GET'])
