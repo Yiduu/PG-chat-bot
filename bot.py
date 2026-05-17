@@ -4232,7 +4232,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         ])
         await context.bot.send_message(
             chat_id,
-            "\u200b",
+            "‎",
             reply_markup=add_comment_kb
         )
 async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None):
