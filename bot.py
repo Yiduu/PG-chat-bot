@@ -7588,7 +7588,7 @@ def mini_app_page():
       color: var(--text);
       min-height: 100vh;
       overflow-x: hidden;
-      padding-bottom: calc(var(--nav-h) + 80px); /* Extra padding for footer */
+      padding-bottom: calc(var(--nav-h) + 120px); /* Extra padding for footer and nav */
     }
 
     /* ===== SCROLLBAR ===== */
@@ -7629,19 +7629,25 @@ def mini_app_page():
       margin-top: 4px;
     }
 
-    /* ===== BOTTOM NAV ===== */
+    /* ===== BOTTOM NAV & FOOTER ===== */
     .bottom-nav {
       position: fixed;
       bottom: 0; left: 0; right: 0;
-      height: var(--nav-h);
-      background: rgba(10, 10, 10, 0.85);
+      background: rgba(10, 10, 10, 0.92);
       backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       border-top: 1px solid var(--border);
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    .bottom-nav-links {
       display: flex;
       justify-content: space-around;
       align-items: center;
-      z-index: 1000;
-      padding-bottom: env(safe-area-inset-bottom, 0);
+      height: var(--nav-h);
+      width: 100%;
     }
     .nav-btn {
       background: none; border: none;
@@ -7878,28 +7884,22 @@ def mini_app_page():
     .inline-reply-box.open { display: block; }
     
     /* ===== DEVELOPER FOOTER ===== */
-    .developer-footer {
-      margin-top: 20px;
-      padding: 16px;
+    .static-dev-footer {
       text-align: center;
-      background: rgba(0,0,0,0.3);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      font-size: 0.75rem;
-      opacity: 0.7;
-      transition: all 0.3s;
-      position: relative;
-      margin-bottom: 20px;
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      padding: 2px 10px 8px 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      line-height: 1.4;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.2);
     }
-    .developer-footer:hover { opacity: 1; border-color: var(--primary); }
-    .dev-name { font-weight: 700; color: var(--text); }
-    .dev-accent { color: var(--primary); margin: 0 4px; }
-    .dev-contact { display: block; margin-top: 6px; color: var(--primary); text-decoration: none; font-weight: 500; }
-    .dev-gold-line {
-      height: 1px; width: 40px; background: var(--primary); margin: 8px auto;
-      box-shadow: 0 0 10px var(--primary);
+    .static-dev-footer a {
+      color: var(--primary);
+      text-decoration: none;
+      display: block;
+      margin-top: 2px;
+      font-weight: 500;
     }
 
     /* ===== MISC ===== */
@@ -8481,24 +8481,21 @@ def mini_app_page():
     </div>
   </section>
 
-  <!-- DEVELOPER FOOTER -->
-  <div class="developer-footer">
-    <div class="dev-gold-line"></div>
-    <div>✨ Premium Developed by <span class="dev-name">Yididiya Tamiru</span> ✨</div>
-    <a href="https://t.me/YIDIDIYATAMIRUU" target="_blank" class="dev-contact">
-      ✉️ Contact Developer: @YIDIDIYATAMIRUU
-    </a>
+  <!-- BOTTOM NAV & DEVELOPER FOOTER -->
+  <div class="bottom-nav">
+    <nav class="bottom-nav-links">
+      <button class="nav-btn active" data-page="vent"><span class="nav-icon">✍️</span>Vent</button>
+      <button class="nav-btn" data-page="feed"><span class="nav-icon">🌍</span>Feed</button>
+      <button class="nav-btn" data-page="chats"><span class="nav-icon">💬</span>Chats</button>
+      <button class="nav-btn" data-page="leaderboard"><span class="nav-icon">🏆</span>Top</button>
+      <button class="nav-btn" data-page="profile"><span class="nav-icon">👤</span>Me</button>
+      <button class="nav-btn" data-page="settings"><span class="nav-icon">⚙️</span>Settings</button>
+    </nav>
+    <div class="static-dev-footer">
+      <div>Yididiya Tamiru</div>
+      <a href="https://t.me/YIDIDIYATAMIRUU" target="_blank">Contact Developer: @YIDIDIYATAMIRUU</a>
+    </div>
   </div>
-
-  <!-- BOTTOM NAV -->
-  <nav class="bottom-nav">
-    <button class="nav-btn active" data-page="vent"><span class="nav-icon">✍️</span>Vent</button>
-    <button class="nav-btn" data-page="feed"><span class="nav-icon">🌍</span>Feed</button>
-    <button class="nav-btn" data-page="chats"><span class="nav-icon">💬</span>Chats</button>
-    <button class="nav-btn" data-page="leaderboard"><span class="nav-icon">🏆</span>Top</button>
-    <button class="nav-btn" data-page="profile"><span class="nav-icon">👤</span>Me</button>
-    <button class="nav-btn" data-page="settings"><span class="nav-icon">⚙️</span>Settings</button>
-  </nav>
 
   <!-- SLIDING CHAT ROOM PANE -->
   <div id="chatRoomPane" class="chat-room-pane">
