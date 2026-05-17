@@ -241,6 +241,21 @@ def init_db():
                     c.execute("ALTER TABLE reactions ADD COLUMN timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
                     logger.info("Added timestamp column to reactions table")
 
+                # Add post_id to reactions table and update indexes
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='reactions' AND column_name='post_id'
+                """)
+                if not c.fetchone():
+                    c.execute("ALTER TABLE reactions ALTER COLUMN comment_id DROP NOT NULL")
+                    c.execute("ALTER TABLE reactions ADD COLUMN post_id INTEGER REFERENCES posts(post_id) DEFAULT NULL")
+                    logger.info("Added post_id column to reactions table")
+                    
+                    c.execute("ALTER TABLE reactions DROP CONSTRAINT IF EXISTS reactions_comment_id_user_id_key")
+                    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_post_user ON reactions (post_id, user_id) WHERE post_id IS NOT NULL")
+                    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_comment_user ON reactions (comment_id, user_id) WHERE comment_id IS NOT NULL")
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_reactions_lookup ON reactions (post_id, comment_id, type)")
+
                 # Add timestamp to blocks
                 c.execute("""
                     SELECT column_name FROM information_schema.columns 
@@ -1290,20 +1305,39 @@ def calculate_user_rating(user_id):
     comm_res = db_fetch_one("SELECT COUNT(*) as count FROM comments WHERE author_id = %s", (user_id,))
     comm_points = (comm_res['count'] if comm_res else 0) * 2
     
-    # 3. Reactions Points (Likes +1, Dislikes -2)
-    # We join with comments to find reactions ON the user's content
-    rx_res = db_fetch_one("""
-        SELECT 
-            SUM(CASE WHEN r.type = 'like' THEN 1 ELSE 0 END) as likes,
-            SUM(CASE WHEN r.type = 'dislike' THEN 1 ELSE 0 END) as dislikes
+    # 3. Reactions Points (Dynamic Weights on both Comments and Posts)
+    comment_rx = db_fetch_all("""
+        SELECT r.type, COUNT(*) as count
         FROM reactions r
         JOIN comments c ON r.comment_id = c.comment_id
-        WHERE c.author_id = %s
+        WHERE c.author_id = %s AND r.comment_id IS NOT NULL
+        GROUP BY r.type
     """, (user_id,))
     
-    likes = rx_res['likes'] if rx_res and rx_res['likes'] else 0
-    dislikes = rx_res['dislikes'] if rx_res and rx_res['dislikes'] else 0
-    rx_points = (likes * 1) - (dislikes * 2)
+    post_rx = db_fetch_all("""
+        SELECT r.type, COUNT(*) as count
+        FROM reactions r
+        JOIN posts p ON r.post_id = p.post_id
+        WHERE p.author_id = %s AND r.post_id IS NOT NULL
+        GROUP BY r.type
+    """, (user_id,))
+    
+    weights = {
+        'like': 1,
+        'dislike': -2,
+        '🙏': 2,
+        '❤️': 2,
+        '🔥': 2,
+        '😢': 1,
+        '😡': -2,
+        '👎': -2
+    }
+    
+    rx_points = 0
+    for row in (comment_rx or []) + (post_rx or []):
+        r_type = row['type']
+        r_count = row['count']
+        rx_points += r_count * weights.get(r_type, 1)
     
     # 4. Block Points (-10 per block received)
     block_res = db_fetch_one("SELECT COUNT(*) as count FROM blocks WHERE blocked_id = %s", (user_id,))
@@ -7905,6 +7939,115 @@ def mini_app_page():
       border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ===== REACTIONS SYSTEM ===== */
+    .reactions-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+      align-items: center;
+      position: relative;
+    }
+    
+    .react-trigger-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 5px 12px;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.2s, color 0.2s;
+    }
+    .react-trigger-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text);
+    }
+    
+    /* Reaction Pill Badge */
+    .reaction-pill {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 0.8rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .reaction-pill:hover {
+      background: rgba(255, 255, 255, 0.07);
+      transform: scale(1.05);
+    }
+    .reaction-pill.active {
+      background: var(--primary-dim);
+      border-color: var(--primary);
+      box-shadow: 0 0 8px rgba(SLOT_RGB, 0.2);
+    }
+    .reaction-pill.active .reaction-emoji {
+      animation: emoji-pulse 0.3s ease-out;
+    }
+    @keyframes emoji-pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.4); }
+      100% { transform: scale(1); }
+    }
+    
+    /* Reaction Dock (Floating Panel) */
+    .reaction-dock {
+      position: absolute;
+      bottom: 35px;
+      left: 0;
+      background: rgba(20, 20, 20, 0.95);
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
+      border: 1px solid var(--border);
+      border-radius: 30px;
+      padding: 6px 12px;
+      display: flex;
+      gap: 10px;
+      z-index: 1000;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      animation: dock-pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      transform-origin: bottom left;
+    }
+    @keyframes dock-pop {
+      0% { transform: scale(0.3) translateY(20px); opacity: 0; }
+      100% { transform: scale(1) translateY(0); opacity: 1; }
+    }
+    .dock-emoji {
+      font-size: 1.5rem;
+      cursor: pointer;
+      transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      user-select: none;
+      display: inline-block;
+    }
+    .dock-emoji:hover {
+      transform: scale(1.45) translateY(-5px);
+    }
+    .dock-emoji:active {
+      transform: scale(0.9);
+    }
+    
+    /* CSS Particle Sparks */
+    .particle-spark {
+      position: fixed;
+      pointer-events: none;
+      font-size: 1.2rem;
+      z-index: 9999;
+      animation: spark-fly 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+    }
+    @keyframes spark-fly {
+      0% { transform: translate(0, 0) scale(0.5); opacity: 1; }
+      100% { transform: translate(var(--dx), var(--dy)) scale(1.5) rotate(var(--dr)); opacity: 0; }
+    }
   </style>
 </head>
 <body>
@@ -8093,6 +8236,107 @@ async function apiFetch(path, opts = {}) {
   return data;
 }
 
+// REACTIONS JS
+function toggleReactionDock(event, targetType, targetId) {
+  event.stopPropagation();
+  closeAllDocks();
+  
+  const btn = event.currentTarget;
+  const container = btn.parentElement;
+  
+  const dock = document.createElement('div');
+  dock.className = 'reaction-dock';
+  
+  const emojis = ['🙏', '❤️', '😡', '👎', '😢', '🔥'];
+  emojis.forEach(emoji => {
+    const span = document.createElement('span');
+    span.className = 'dock-emoji';
+    span.textContent = emoji;
+    span.onclick = (e) => {
+      e.stopPropagation();
+      submitReaction(targetType, targetId, emoji, btn);
+      dock.remove();
+    };
+    dock.appendChild(span);
+  });
+  
+  const closeDockHandler = () => {
+    dock.remove();
+    document.removeEventListener('click', closeDockHandler);
+  };
+  setTimeout(() => document.addEventListener('click', closeDockHandler), 50);
+  
+  container.appendChild(dock);
+}
+
+function closeAllDocks() {
+  document.querySelectorAll('.reaction-dock').forEach(d => d.remove());
+}
+
+async function submitReaction(targetType, targetId, emoji, btn) {
+  try {
+    if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback) {
+      window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+    }
+    
+    const rect = btn.getBoundingClientRect();
+    createParticleBurst(rect.left + rect.width/2, rect.top, emoji);
+    
+    const payload = {
+      user_id: state.userId,
+      type: emoji
+    };
+    if (targetType === 'post') {
+      payload.post_id = targetId;
+    } else {
+      payload.comment_id = targetId;
+    }
+    
+    const res = await apiFetch('/api/mini-app/react', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    
+    if (res.success) {
+      if (targetType === 'post') {
+        if (state.currentPage === 'detail' && state.currentPostId === targetId) {
+          openPost(targetId);
+        } else {
+          loadFeed(false);
+        }
+      } else {
+        loadComments(state.currentPostId);
+      }
+    }
+  } catch(e) {
+    toast(e.message || 'Error reacting');
+  }
+}
+
+function createParticleBurst(x, y, emoji) {
+  for (let i = 0; i < 8; i++) {
+    const spark = document.createElement('div');
+    spark.className = 'particle-spark';
+    spark.textContent = emoji;
+    
+    const angle = (Math.random() * 120 + 30) * Math.PI / 180;
+    const distance = Math.random() * 80 + 40;
+    const dx = Math.cos(angle) * distance;
+    const dy = -Math.sin(angle) * distance - 20;
+    const dr = Math.random() * 360 - 180;
+    
+    spark.style.setProperty('--dx', `${dx}px`);
+    spark.style.setProperty('--dy', `${dy}px`);
+    spark.style.setProperty('--dr', `${dr}deg`);
+    
+    spark.style.left = `${x}px`;
+    spark.style.top = `${y}px`;
+    
+    document.body.appendChild(spark);
+    setTimeout(() => spark.remove(), 800);
+  }
+}
+
 // NAVIGATION
 function switchPage(name) {
   state.currentPage = name;
@@ -8213,6 +8457,31 @@ async function loadFeed(append = false) {
       const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
       const unread = p.unread_comments > 0 ? `<span class="unread-badge">${p.unread_comments} new</span>` : '';
       
+      // Render post reactions
+      let reactionsHtml = '';
+      if (p.reactions && p.reactions.counts) {
+        Object.entries(p.reactions.counts).forEach(([emoji, count]) => {
+          if (count > 0) {
+            const activeClass = p.reactions.user_reaction === emoji ? 'active' : '';
+            reactionsHtml += `
+              <div class="reaction-pill ${activeClass}" onclick="event.stopPropagation(); submitReaction('post', ${p.id}, '${emoji}', this)">
+                <span class="reaction-emoji">${esc(emoji)}</span>
+                <span class="reaction-count">${count}</span>
+              </div>
+            `;
+          }
+        });
+      }
+      
+      const reactionsContainer = `
+        <div class="reactions-container" style="margin-bottom:12px;">
+          ${reactionsHtml}
+          <button class="react-trigger-btn" onclick="event.stopPropagation(); toggleReactionDock(event, 'post', ${p.id})">
+            🙂 React
+          </button>
+        </div>
+      `;
+      
       container.insertAdjacentHTML('beforeend', `
         <div class="card" style="cursor:pointer;" onclick="openPost(${p.id})">
           <div class="post-header">
@@ -8224,6 +8493,7 @@ async function loadFeed(append = false) {
           </div>
           <div class="cat-badges">${cats}</div>
           <div class="post-content truncated">${esc(p.content)}</div>
+          ${reactionsContainer}
           <div class="post-footer">
             <span style="font-size:0.8rem; color:var(--text-dim);">💬 ${p.comments} replies ${unread}</span>
             <span style="font-size:0.8rem; color:var(--primary);">Read →</span>
@@ -8249,10 +8519,35 @@ async function openPost(id) {
   box.innerHTML = '<div class="skeleton"></div>'; commBox.innerHTML = '';
   
   try {
-    const data = await apiFetch(`/api/mini-app/post/${id}`);
+    const data = await apiFetch(`/api/mini-app/post/${id}?viewer_id=${state.userId}`);
     const p = data.data;
     state.currentPostAuthorId = p.author_id || (p.author && p.author.id);
     const cats = (p.categories||[]).map(c => `<span class="cat-badge">${esc(c)}</span>`).join('');
+    
+    // Render single post reactions
+    let reactionsHtml = '';
+    if (p.reactions && p.reactions.counts) {
+      Object.entries(p.reactions.counts).forEach(([emoji, count]) => {
+        if (count > 0) {
+          const activeClass = p.reactions.user_reaction === emoji ? 'active' : '';
+          reactionsHtml += `
+            <div class="reaction-pill ${activeClass}" onclick="submitReaction('post', ${p.id}, '${emoji}', this)">
+              <span class="reaction-emoji">${esc(emoji)}</span>
+              <span class="reaction-count">${count}</span>
+            </div>
+          `;
+        }
+      });
+    }
+    
+    const reactionsContainer = `
+      <div class="reactions-container" style="margin-top:12px;">
+        ${reactionsHtml}
+        <button class="react-trigger-btn" onclick="toggleReactionDock(event, 'post', ${p.id})">
+          🙂 React
+        </button>
+      </div>
+    `;
     
     box.innerHTML = `
       <div class="card">
@@ -8265,6 +8560,7 @@ async function openPost(id) {
         </div>
         <div class="cat-badges">${cats}</div>
         <div class="post-content">${esc(p.content)}</div>
+        ${reactionsContainer}
       </div>
     `;
     await loadComments(id);
@@ -8275,7 +8571,7 @@ async function loadComments(id) {
   const box = document.getElementById('detailCommentsBox');
   box.innerHTML = '<div class="skeleton"></div>';
   try {
-    const data = await apiFetch(`/api/mini-app/post/${id}/comments`);
+    const data = await apiFetch(`/api/mini-app/post/${id}/comments?viewer_id=${state.userId}`);
     const comments = data.data || [];
     
     if(!comments.length) { box.innerHTML = '<div style="text-align:center; color:var(--text-dim);">No replies yet.</div>'; return; }
@@ -8305,6 +8601,31 @@ async function loadComments(id) {
         `;
       }
       
+      // Render comment reactions
+      let reactionsHtml = '';
+      if (c.reactions && c.reactions.counts) {
+        Object.entries(c.reactions.counts).forEach(([emoji, count]) => {
+          if (count > 0) {
+            const activeClass = c.reactions.user_reaction === emoji ? 'active' : '';
+            reactionsHtml += `
+              <div class="reaction-pill ${activeClass}" style="padding: 2px 6px; font-size: 0.7rem;" onclick="submitReaction('comment', ${c.id}, '${emoji}', this)">
+                <span class="reaction-emoji">${esc(emoji)}</span>
+                <span class="reaction-count">${count}</span>
+              </div>
+            `;
+          }
+        });
+      }
+      
+      const reactionsContainer = `
+        <div class="reactions-container" style="margin-top:8px;">
+          ${reactionsHtml}
+          <button class="react-trigger-btn" style="padding: 3px 8px; font-size: 0.7rem; border-radius: 12px;" onclick="toggleReactionDock(event, 'comment', ${c.id})">
+            🙂 React
+          </button>
+        </div>
+      `;
+      
       const children = c.children.map(ch => renderC(ch, depth+1)).join('');
       return `
         <div class="comment-item ${isReply}">
@@ -8315,6 +8636,7 @@ async function loadComments(id) {
               <span style="font-size:0.7rem; color:var(--text-dim);">${esc(c.time_ago)}</span>
             </div>
             <div style="font-size:0.85rem; line-height:1.4;" id="comment-content-${c.id}">${esc(c.content)}</div>
+            ${reactionsContainer}
             <div class="comment-actions">${actions}</div>
             
             <div class="inline-reply-box" id="reply-box-${c.id}">
@@ -8751,6 +9073,39 @@ def mini_app_get_posts():
             LIMIT %s OFFSET %s
         ''', (user_id, per_page, offset))
         
+        # Batch load reactions for posts
+        post_ids = [p['post_id'] for p in posts]
+        reactions_map = {}
+        user_reactions_map = {}
+        
+        if post_ids:
+            counts_res = db_fetch_all("""
+                SELECT post_id, type, COUNT(*) as cnt
+                FROM reactions
+                WHERE post_id IN %s AND post_id IS NOT NULL
+                GROUP BY post_id, type
+            """, (tuple(post_ids),))
+            
+            for row in (counts_res or []):
+                pid = row['post_id']
+                rtype = row['type']
+                rcnt = row['cnt']
+                if pid not in reactions_map:
+                    reactions_map[pid] = {}
+                reactions_map[pid][rtype] = rcnt
+                
+            if user_id:
+                user_res = db_fetch_all("""
+                    SELECT post_id, type
+                    FROM reactions
+                    WHERE post_id IN %s AND user_id = %s AND post_id IS NOT NULL
+                """, (tuple(post_ids), str(user_id)))
+                
+                for row in (user_res or []):
+                    pid = row['post_id']
+                    rtype = row['type']
+                    user_reactions_map[pid] = rtype
+
         formatted_posts = []
         for post in posts:
             if isinstance(post['timestamp'], str):
@@ -8795,7 +9150,11 @@ def mini_app_get_posts():
                     'aura': aura_sticker,
                     'is_me': str(post['author_id']) == str(user_id)
                 },
-                'has_media': post['media_type'] != 'text'
+                'has_media': post['media_type'] != 'text',
+                'reactions': {
+                    'counts': reactions_map.get(post['post_id'], {}),
+                    'user_reaction': user_reactions_map.get(post['post_id'], None)
+                }
             })
 
         total_posts = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE approved = TRUE")
@@ -8856,6 +9215,26 @@ def mini_app_get_single_post(post_id):
         # Parse categories
         category_list = post['categories'].split(',') if post['categories'] else ['Other']
         
+        # Get viewer_id
+        viewer_id = request.args.get('viewer_id')
+        
+        # Fetch post reactions counts
+        counts_res = db_fetch_all("""
+            SELECT type, COUNT(*) as cnt
+            FROM reactions
+            WHERE post_id = %s AND post_id IS NOT NULL
+            GROUP BY type
+        """, (post_id,))
+        counts = {row['type']: row['cnt'] for row in (counts_res or [])}
+        
+        user_reaction = None
+        if viewer_id:
+            user_res = db_fetch_one("""
+                SELECT type FROM reactions
+                WHERE post_id = %s AND user_id = %s AND post_id IS NOT NULL
+            """, (post_id, str(viewer_id)))
+            user_reaction = user_res['type'] if user_res else None
+
         formatted_post = {
             'id': post['post_id'],
             'content': post['content'],
@@ -8869,6 +9248,10 @@ def mini_app_get_single_post(post_id):
                 'sex': post['author_sex'] or '👤',
                 'avatar': post['author_avatar'] or "",
                 'aura': "🔵" if post['author_is_admin'] else format_aura(rating)
+            },
+            'reactions': {
+                'counts': counts,
+                'user_reaction': user_reaction
             }
         }
         return jsonify({'success': True, 'data': formatted_post})
@@ -8897,6 +9280,42 @@ def mini_app_get_post_comments(post_id):
             WHERE c.post_id = %s
             ORDER BY c.timestamp ASC
         ''', (post_id,))
+
+        # Get viewer_id
+        viewer_id = request.args.get('viewer_id')
+        
+        # Batch load reactions for comments
+        comment_ids = [c['comment_id'] for c in comments]
+        comment_reactions_map = {}
+        comment_user_reactions_map = {}
+        
+        if comment_ids:
+            counts_res = db_fetch_all("""
+                SELECT comment_id, type, COUNT(*) as cnt
+                FROM reactions
+                WHERE comment_id IN %s AND comment_id IS NOT NULL
+                GROUP BY comment_id, type
+            """, (tuple(comment_ids),))
+            
+            for row in (counts_res or []):
+                cid = row['comment_id']
+                rtype = row['type']
+                rcnt = row['cnt']
+                if cid not in comment_reactions_map:
+                    comment_reactions_map[cid] = {}
+                comment_reactions_map[cid][rtype] = rcnt
+                
+            if viewer_id:
+                user_res = db_fetch_all("""
+                    SELECT comment_id, type
+                    FROM reactions
+                    WHERE comment_id IN %s AND user_id = %s AND comment_id IS NOT NULL
+                """, (tuple(comment_ids), str(viewer_id)))
+                
+                for row in (user_res or []):
+                    cid = row['comment_id']
+                    rtype = row['type']
+                    comment_user_reactions_map[cid] = rtype
 
         formatted_comments = []
         now = datetime.now()
@@ -8930,6 +9349,10 @@ def mini_app_get_post_comments(post_id):
                     'sex': c['author_sex'] or '👤',
                     'avatar': c['author_avatar'] or "",
                     'aura': "🔵" if c['author_is_admin'] else format_aura(rating)
+                },
+                'reactions': {
+                    'counts': comment_reactions_map.get(c['comment_id'], {}),
+                    'user_reaction': comment_user_reactions_map.get(c['comment_id'], None)
                 }
             })
 
@@ -8967,6 +9390,93 @@ def mini_app_submit_comment(post_id):
         return jsonify({'success': True, 'message': 'Reply posted successfully!'})
     except Exception as e:
         logger.error(f"Failed to post native comment: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/react', methods=['POST'])
+def mini_app_toggle_reaction():
+    try:
+        data = request.json or {}
+        user_id = str(data.get('user_id', ''))
+        post_id = data.get('post_id')
+        comment_id = data.get('comment_id')
+        reaction_type = data.get('type') # e.g. "🙏"
+        
+        if not user_id or not reaction_type:
+            return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+            
+        if post_id is None and comment_id is None:
+            return jsonify({'success': False, 'error': 'Must provide post_id or comment_id'}), 400
+            
+        # Toggle logic
+        if post_id is not None:
+            existing = db_fetch_one(
+                "SELECT type FROM reactions WHERE post_id = %s AND user_id = %s",
+                (post_id, user_id)
+            )
+            if existing:
+                if existing['type'] == reaction_type:
+                    db_execute("DELETE FROM reactions WHERE post_id = %s AND user_id = %s", (post_id, user_id))
+                    action = 'removed'
+                else:
+                    db_execute("UPDATE reactions SET type = %s WHERE post_id = %s AND user_id = %s", (reaction_type, post_id, user_id))
+                    action = 'updated'
+            else:
+                db_execute("INSERT INTO reactions (post_id, user_id, type) VALUES (%s, %s, %s)", (post_id, user_id, reaction_type))
+                action = 'added'
+                
+            # Get updated counts
+            counts_res = db_fetch_all(
+                "SELECT type, COUNT(*) as cnt FROM reactions WHERE post_id = %s GROUP BY type",
+                (post_id,)
+            )
+            counts = {row['type']: row['cnt'] for row in (counts_res or [])}
+            
+            # Fetch current reaction
+            cur_res = db_fetch_one("SELECT type FROM reactions WHERE post_id = %s AND user_id = %s", (post_id, user_id))
+            user_reaction = cur_res['type'] if cur_res else None
+            
+        else:
+            existing = db_fetch_one(
+                "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
+                (comment_id, user_id)
+            )
+            if existing:
+                if existing['type'] == reaction_type:
+                    db_execute("DELETE FROM reactions WHERE comment_id = %s AND user_id = %s", (comment_id, user_id))
+                    action = 'removed'
+                else:
+                    db_execute("UPDATE reactions SET type = %s WHERE comment_id = %s AND user_id = %s", (reaction_type, comment_id, user_id))
+                    action = 'updated'
+            else:
+                db_execute("INSERT INTO reactions (comment_id, user_id, type) VALUES (%s, %s, %s)", (comment_id, user_id, reaction_type))
+                action = 'added'
+                
+            # Get updated counts
+            counts_res = db_fetch_all(
+                "SELECT type, COUNT(*) as cnt FROM reactions WHERE comment_id = %s GROUP BY type",
+                (comment_id,)
+            )
+            counts = {row['type']: row['cnt'] for row in (counts_res or [])}
+            
+            # Fetch current reaction
+            cur_res = db_fetch_one("SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s", (comment_id, user_id))
+            user_reaction = cur_res['type'] if cur_res else None
+            
+        # Clear rating caches since aura changes
+        calculate_user_rating.cache_clear()
+        format_aura.cache_clear()
+        
+        return jsonify({
+            'success': True,
+            'action': action,
+            'reactions': {
+                'counts': counts,
+                'user_reaction': user_reaction
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error toggle reaction: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @flask_app.route('/api/mini-app/leaderboard', methods=['GET'])
