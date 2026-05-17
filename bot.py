@@ -3965,13 +3965,13 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
         user_reaction_type = user_reaction['type'] if user_reaction else None
         
         likes_row = db_fetch_one(
-            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'like'",
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type NOT IN ('dislike', '👎', '😡')",
             (comment_id,)
         )
         likes = likes_row['cnt'] if likes_row else 0
         
         dislikes_row = db_fetch_one(
-            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'dislike'",
+            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type IN ('dislike', '👎', '😡')",
             (comment_id,)
         )
         dislikes = dislikes_row['cnt'] if dislikes_row else 0
@@ -4204,13 +4204,15 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     if comment_ids:
         # Batch counts
         counts = db_fetch_all("""
-            SELECT comment_id, type, COUNT(*) as cnt 
-            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, type
+            SELECT comment_id, 
+                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END as rgroup,
+                   COUNT(*) as cnt 
+            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END
         """, (tuple(comment_ids),))
         for row in counts:
             cid = row['comment_id']
             if cid not in reaction_data: reaction_data[cid] = {'likes': 0, 'dislikes': 0, 'user_reaction': None}
-            if row['type'] == 'like': reaction_data[cid]['likes'] = row['cnt']
+            if row['rgroup'] == 'like': reaction_data[cid]['likes'] = row['cnt']
             else: reaction_data[cid]['dislikes'] = row['cnt']
 
         # Batch user reactions
@@ -4389,11 +4391,16 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     
     if reply_ids:
         # Batch counts
-        counts = db_fetch_all("SELECT comment_id, type, COUNT(*) as cnt FROM reactions WHERE comment_id IN %s GROUP BY comment_id, type", (tuple(reply_ids),))
+        counts = db_fetch_all("""
+            SELECT comment_id, 
+                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END as rgroup,
+                   COUNT(*) as cnt 
+            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END
+        """, (tuple(reply_ids),))
         for row in counts:
             cid = row['comment_id']
             if cid not in reaction_data: reaction_data[cid] = {'likes': 0, 'dislikes': 0, 'user_reaction': None}
-            if row['type'] == 'like': reaction_data[cid]['likes'] = row['cnt']
+            if row['rgroup'] == 'like': reaction_data[cid]['likes'] = row['cnt']
             else: reaction_data[cid]['dislikes'] = row['cnt']
             
         # Batch user reactions
@@ -5670,14 +5677,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
                 if existing_reaction:
-                    if existing_reaction['type'] == reaction_type:
-                        # User is clicking the same reaction - remove it (toggle off)
+                    is_existing_like = existing_reaction['type'] not in ('dislike', '👎', '😡')
+                    is_new_like = reaction_type == 'like'
+                    if is_existing_like == is_new_like:
+                        # User is clicking the same reaction group - remove it (toggle off)
                         db_execute(
                             "DELETE FROM reactions WHERE comment_id = %s AND user_id = %s",
                             (comment_id, user_id)
                         )
                     else:
-                        # User is changing reaction - update it
+                        # User is changing reaction group - update it
                         db_execute(
                             "UPDATE reactions SET type = %s WHERE comment_id = %s AND user_id = %s",
                             (reaction_type, comment_id, user_id)
@@ -5693,21 +5702,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 calculate_user_rating.cache_clear()
                 format_aura.cache_clear()
 
-                
-                # Clear rating cache for consistency
-                calculate_user_rating.cache_clear()
-                format_aura.cache_clear()
-
-
                 # Get updated counts
                 likes_row = db_fetch_one(
-                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'like'",
+                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type NOT IN ('dislike', '👎', '😡')",
                     (comment_id,)
                 )
                 likes = likes_row['cnt'] if likes_row else 0
                 
                 dislikes_row = db_fetch_one(
-                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type = 'dislike'",
+                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type IN ('dislike', '👎', '😡')",
                     (comment_id,)
                 )
                 dislikes = dislikes_row['cnt'] if dislikes_row else 0
@@ -8641,14 +8644,28 @@ async function submitReaction(targetType, targetId, emoji, btn) {
     });
     
     if (res.success) {
-      if (targetType === 'post') {
-        if (state.currentPage === 'detail' && state.currentPostId === targetId) {
-          openPost(targetId);
-        } else {
-          loadFeed(false);
+      const container = btn.closest('.reactions-container');
+      if (container) {
+        let reactionsHtml = '';
+        if (res.reactions && res.reactions.counts) {
+          Object.entries(res.reactions.counts).forEach(([emj, count]) => {
+            if (count > 0) {
+              const activeClass = res.reactions.user_reaction === emj ? 'active' : '';
+              reactionsHtml += `
+                <div class="reaction-pill ${activeClass}" onclick="event.stopPropagation(); submitReaction('${targetType}', ${targetId}, '${emj}', this)">
+                  <span class="reaction-emoji">${esc(emj)}</span>
+                  <span class="reaction-count">${count}</span>
+                </div>
+              `;
+            }
+          });
         }
-      } else {
-        loadComments(state.currentPostId);
+        
+        const triggerBtn = container.querySelector('.react-trigger-btn');
+        container.innerHTML = reactionsHtml;
+        if (triggerBtn) {
+          container.appendChild(triggerBtn);
+        }
       }
     }
   } catch(e) {
