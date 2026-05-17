@@ -6048,8 +6048,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Invalid ID", show_alert=True)
                 return
                 
-            check = db_fetch_one("SELECT status FROM chat_requests WHERE sender_id = %s AND receiver_id = %s", (user_id, target_id))
-            if not check or check['status'] != 'accepted':
+            check = db_fetch_one("""
+                SELECT 1 FROM chat_requests 
+                WHERE (sender_id = %s AND receiver_id = %s AND status = 'accepted')
+                   OR (sender_id = %s AND receiver_id = %s AND status = 'accepted')
+            """, (user_id, target_id, target_id, user_id))
+            pm_check = db_fetch_one("""
+                SELECT 1 FROM private_messages 
+                WHERE (sender_id = %s AND receiver_id = %s)
+                   OR (sender_id = %s AND receiver_id = %s)
+            """, (user_id, target_id, target_id, user_id))
+            
+            if not check and not pm_check:
                 await query.answer("❌ No active chat permission.", show_alert=True)
                 return
 
@@ -7577,12 +7587,6 @@ def mini_app_page():
       overflow-x: hidden;
       padding-bottom: calc(var(--nav-h) + 80px); /* Extra padding for footer */
     }
-    canvas#particleCanvas {
-      position: fixed;
-      top: 0; left: 0; width: 100%; height: 100%;
-      z-index: -1;
-      pointer-events: none;
-    }
 
     /* ===== SCROLLBAR ===== */
     ::-webkit-scrollbar { width: 4px; }
@@ -8349,8 +8353,6 @@ def mini_app_page():
   </style>
 </head>
 <body>
-
-<canvas id="particleCanvas"></canvas>
 
 <div id="authScreen">
   <div class="spinner"></div>
@@ -9351,42 +9353,8 @@ async function saveSettings() {
 }
 
 // INIT
-function initParticles() {
-  const canvas = document.getElementById('particleCanvas');
-  const ctx = canvas.getContext('2d');
-  let w = canvas.width = window.innerWidth;
-  let h = canvas.height = window.innerHeight;
-  const particles = [];
-  const rgb = getComputedStyle(document.documentElement).getPropertyValue('--primary-rgb').trim() || '255, 217, 102';
-  
-  for(let i=0; i<30; i++) {
-    particles.push({ 
-      x: Math.random()*w, 
-      y: Math.random()*h, 
-      r: Math.random()*2+0.5, 
-      vx: (Math.random()-0.5)*0.3, 
-      vy: (Math.random()-0.5)*0.3,
-      a: Math.random() * 0.25 + 0.1 
-    });
-  }
-  
-  function draw() {
-    ctx.clearRect(0, 0, w, h);
-    particles.forEach(p => {
-      p.x += p.vx; p.y += p.vy;
-      if(p.x < 0) p.x = w; if(p.x > w) p.x = 0;
-      if(p.y < 0) p.y = h; if(p.y > h) p.y = 0;
-      ctx.fillStyle = `rgba(${rgb}, ${p.a})`;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
-    });
-    requestAnimationFrame(draw);
-  }
-  draw();
-  window.addEventListener('resize', () => { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; });
-}
 
 async function init() {
-  initParticles();
   renderCategories();
   
   document.getElementById('ventInput').addEventListener('input', function() {
@@ -10219,11 +10187,17 @@ def mini_app_send_message():
             url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
             payload = {
                 "chat_id": int(receiver_id),
-                "text": f"💬 *New Private Message!*\n\n*{sender_icon} {sender_name}* says:\n_{content}_",
+                "text": f"📩 *New Private Message*\n\n👤 From: *{sender_icon} {sender_name}*\n\n💬 _{content}_\n\n💭 _Use /inbox or the Christian Vent App to view all messages_",
                 "parse_mode": "Markdown",
                 "reply_markup": {
                     "inline_keyboard": [
-                        [{"text": "💬 Open Private Chats", "url": f"https://t.me/{BOT_USERNAME}"}]
+                        [
+                            {"text": "💬 Reply", "callback_data": f"reply_msg_{sender_id}"},
+                            {"text": "⛔ Block", "callback_data": f"block_user_{sender_id}"}
+                        ],
+                        [
+                            {"text": "👤 View Profile", "url": f"https://t.me/{BOT_USERNAME}?start=profileid_{sender_id}"}
+                        ]
                     ]
                 }
             }
