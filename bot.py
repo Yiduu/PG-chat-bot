@@ -10345,6 +10345,7 @@ def mini_app_leaderboard():
         formatted_users = []
         for idx, user in enumerate(top_users, start=1):
             formatted_users.append({
+                'id': str(user['user_id']),
                 'rank': idx,
                 'name': user['anonymous_name'],
                 'sex': user['sex'],
