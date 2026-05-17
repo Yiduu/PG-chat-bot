@@ -4136,7 +4136,15 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         if loading_msg:
             try: await loading_msg.delete()
             except: pass
-        await context.bot.send_message(chat_id, "_No comments yet._", parse_mode=ParseMode.MARKDOWN_V2)
+        first_comment_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✍️ Be the first to comment", callback_data=f"writecomment_{post_id}")]
+        ])
+        await context.bot.send_message(
+            chat_id,
+            "_No comments yet\\. Start the conversation\\!_",
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=first_comment_kb
+        )
         return
 
     # Delete loading message if it exists
@@ -4216,6 +4224,16 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         if page > 1: buttons.append(InlineKeyboardButton("⬅️ Older", callback_data=f"viewcomments_{post_id}_{page-1}"))
         if page < total_pages: buttons.append(InlineKeyboardButton("Newer ➡️", callback_data=f"viewcomments_{post_id}_{page+1}"))
         await context.bot.send_message(chat_id, f"📄 Page {page}/{total_pages}", reply_markup=InlineKeyboardMarkup([buttons]))
+
+    # "Add a comment" button — always shown once at the very bottom
+    add_comment_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✍️ Add a comment", callback_data=f"writecomment_{post_id}")]
+    ])
+    await context.bot.send_message(
+        chat_id,
+        "💬 Want to join the conversation?",
+        reply_markup=add_comment_kb
+    )
 async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None):
     """Send a single reply message with proper formatting using pre-fetched user data if available"""
     # Use joined data if available, else fetch
