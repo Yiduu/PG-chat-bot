@@ -1581,7 +1581,7 @@ async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, 
         
         # Update the channel message button
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"💬 Add/view Comments ({total_comments})", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
+            [InlineKeyboardButton(f"💬 Add / view Comments ({total_comments})", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
         ])
         
         # Try to edit the message in the channel
@@ -2941,7 +2941,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         
         # Create the comments button
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 Add/View Comments (0)", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
+            [InlineKeyboardButton("💬 Add / View Comments (0)", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
         ])
         
         # Check if this is a thread continuation
@@ -9655,7 +9655,7 @@ def update_channel_post_comment_count_sync(post_id):
             "message_id": post['channel_message_id'],
             "reply_markup": {
                 "inline_keyboard": [
-                    [{"text": f"💬 Add/view Comments ({total_comments})", "url": f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}"}]
+                    [{"text": f"💬 Add / view Comments ({total_comments})", "url": f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}"}]
                 ]
             }
         }
