@@ -2005,6 +2005,18 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
         original_author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (comment['author_id'],))
         if not original_author or not original_author['notifications_enabled']:
             return
+
+        # Don't notify yourself
+        if str(original_author['user_id']) == str(replier_id):
+            return
+
+        # Check if original author has blocked the replier
+        is_blocked = db_fetch_one(
+            "SELECT 1 FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
+            (original_author['user_id'], replier_id)
+        )
+        if is_blocked:
+            return
         
         post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
         if not post:
@@ -2020,7 +2032,6 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
             safe_replier_name = escape_markdown(replier_name, version=2)
         
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
-        
         safe_post_preview = escape_markdown(post_preview, version=2)
         safe_comment_preview = escape_markdown(comment['content'][:100], version=2)
 
@@ -2030,7 +2041,6 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
             f"📝 Post\\: {safe_post_preview}\n\n"
             f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
         )
-
         
         await context.bot.send_message(
             chat_id=original_author['user_id'],
@@ -6075,6 +6085,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(parts) == 3:
                 post_id = int(parts[1])
                 comment_id = int(parts[2])
+                # Validate the comment belongs to this post
+                valid = db_fetch_one(
+                    "SELECT 1 FROM comments WHERE comment_id = %s AND post_id = %s",
+                    (comment_id, post_id)
+                )
+                if not valid:
+                    await query.answer("❌ Invalid comment reference. Please try again.", show_alert=True)
+                    return
                 db_execute(
                     "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
                     (post_id, comment_id, user_id)
@@ -6091,6 +6109,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(parts) == 4:
                 post_id = int(parts[1])
                 comment_id = int(parts[3])
+                # Validate the comment belongs to this post
+                valid = db_fetch_one(
+                    "SELECT 1 FROM comments WHERE comment_id = %s AND post_id = %s",
+                    (comment_id, post_id)
+                )
+                if not valid:
+                    await query.answer("❌ Invalid comment reference. Please try again.", show_alert=True)
+                    return
                 db_execute(
                     "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
                     (post_id, comment_id, user_id)
@@ -7119,81 +7145,90 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    elif user and user['waiting_for_comment']:
-        if text in main_menu_buttons: return
-        post_id = user['comment_post_id']
+        elif user and user['waiting_for_comment']:
+            if text in main_menu_buttons: return
+            post_id = user['comment_post_id']
+        
+            parent_comment_id = 0
+            if user['comment_idx']:
+                try:
+                    parent_comment_id = int(user['comment_idx'])
+                except Exception:
+                    parent_comment_id = 0
     
-        parent_comment_id = 0
-        if user['comment_idx']:
-            try:
-                parent_comment_id = int(user['comment_idx'])
-            except Exception:
-                parent_comment_id = 0
-    
-        comment_type = 'text'
-        file_id = None
-        content = ""
-    
-        if update.message.text:
-            content = update.message.text
+            # === FIX: Validate that parent_comment_id belongs to the same post ===
+            if parent_comment_id != 0:
+                parent_exists = db_fetch_one(
+                    "SELECT 1 FROM comments WHERE comment_id = %s AND post_id = %s",
+                    (parent_comment_id, post_id)
+                )
+                if not parent_exists:
+                    logger.warning(f"User {user_id} attempted reply with invalid parent {parent_comment_id} for post {post_id}. Falling back to top-level.")
+                    parent_comment_id = 0
+        
             comment_type = 'text'
-        elif update.message.voice:
-            voice = update.message.voice
-            file_id = voice.file_id
-            comment_type = 'voice'
-            content = update.message.caption or ""
-        elif update.message.animation:  # GIF
-            animation = update.message.animation
-            file_id = animation.file_id
-            comment_type = 'gif'
-            content = update.message.caption or ""
-        elif update.message.sticker:
-            sticker = update.message.sticker
-            file_id = sticker.file_id
-            comment_type = 'sticker'
-            content = ""  # Stickers don't have text content
-        elif update.message.photo:
-            photo = update.message.photo[-1]
-            file_id = photo.file_id
-            comment_type = 'photo'
-            content = update.message.caption or ""
-        else:
-            await update.message.reply_text("❌ Unsupported comment type. Please send text, voice, GIF, sticker, or photo.")
+            file_id = None
+            content = ""
+        
+            if update.message.text:
+                content = update.message.text
+                comment_type = 'text'
+            elif update.message.voice:
+                voice = update.message.voice
+                file_id = voice.file_id
+                comment_type = 'voice'
+                content = update.message.caption or ""
+            elif update.message.animation:  # GIF
+                animation = update.message.animation
+                file_id = animation.file_id
+                comment_type = 'gif'
+                content = update.message.caption or ""
+            elif update.message.sticker:
+                sticker = update.message.sticker
+                file_id = sticker.file_id
+                comment_type = 'sticker'
+                content = ""  # Stickers don't have text content
+            elif update.message.photo:
+                photo = update.message.photo[-1]
+                file_id = photo.file_id
+                comment_type = 'photo'
+                content = update.message.caption or ""
+            else:
+                await update.message.reply_text("❌ Unsupported comment type. Please send text, voice, GIF, sticker, or photo.")
+                return
+        
+            # Insert new comment
+            db_execute(
+                """INSERT INTO comments
+                (post_id, parent_comment_id, author_id, content, type, file_id)
+                VALUES (%s, %s, %s, %s, %s, %s)""",
+                (post_id, parent_comment_id, user_id, content, comment_type, file_id)
+            )
+            
+            # Clear Aura Cache
+            calculate_user_rating.cache_clear()
+            format_aura.cache_clear()
+    
+        
+            # Reset state
+            db_execute(
+                "UPDATE users SET waiting_for_comment = FALSE, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = %s",
+                (user_id,)
+            )
+        
+            await update.message.reply_text("✅ Your comment has been posted!", reply_markup=get_main_menu(user_id))
+    
+            
+            # Update comment count in background
+            asyncio.create_task(update_channel_post_comment_count(context, post_id))
+            
+            # Notify vent author if this is a top‑level comment
+            if parent_comment_id == 0:
+                await notify_vent_author_of_comment(context, post_id, user_id)
+            else:
+                # Notify parent comment author (only if parent was valid)
+                await notify_user_of_reply(context, post_id, parent_comment_id, user_id)
             return
-    
-        # Insert new comment
-        db_execute(
-            """INSERT INTO comments
-            (post_id, parent_comment_id, author_id, content, type, file_id)
-            VALUES (%s, %s, %s, %s, %s, %s)""",
-            (post_id, parent_comment_id, user_id, content, comment_type, file_id)
-        )
-        
-        # Clear Aura Cache
-        calculate_user_rating.cache_clear()
-        format_aura.cache_clear()
-
-    
-        # Reset state
-        db_execute(
-            "UPDATE users SET waiting_for_comment = FALSE, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = %s",
-            (user_id,)
-        )
-    
-        await update.message.reply_text("✅ Your comment has been posted!", reply_markup=get_main_menu(user_id))
-
-        
-        # Update comment count in background
-        asyncio.create_task(update_channel_post_comment_count(context, post_id))
-        
-        # Notify vent author if this is a top‑level comment
-        if parent_comment_id == 0:
-            await notify_vent_author_of_comment(context, post_id, user_id)
-        
-        # Notify parent comment author if this is a reply
-        if parent_comment_id != 0:
-            await notify_user_of_reply(context, post_id, parent_comment_id, user_id)
-        return
 
     elif user and user['waiting_for_private_message']:
         if text in main_menu_buttons: return
