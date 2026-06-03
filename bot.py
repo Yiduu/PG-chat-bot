@@ -6761,7 +6761,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
             await query.message.reply_text("Report cancelled. You can continue using the bot.")
 
-            except Exception as e:
+        except Exception as e:
                 logger.error(f"Error in button_handler: {e}")
                 try:
                     await query.message.reply_text("❌ An error occurred. Please try again.")
