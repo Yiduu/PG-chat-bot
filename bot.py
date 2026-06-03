@@ -6732,7 +6732,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('confirm_report_yes_'):
             try:
                 parts = query.data.split('_')
-                target_type = parts[3]   # 'post' or 'comment'
+                target_type = parts[3]
                 target_id = int(parts[4])
                 context.user_data['reporting'] = {'type': target_type, 'id': target_id}
                 if 'pending_report' in context.user_data:
@@ -6748,6 +6748,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Error in confirm_report_yes handler: {e}")
                 await query.answer("❌ Error", show_alert=True)
+
+        elif query.data == 'confirm_report_no':
+            if 'pending_report' in context.user_data:
+                del context.user_data['pending_report']
+            if 'reporting' in context.user_data:
+                del context.user_data['reporting']
+            await query.answer("❌ Report cancelled.", show_alert=False)
+            try:
+                await query.message.delete()
+            except:
+                pass
+            await query.message.reply_text("Report cancelled. You can continue using the bot.")
+
+    except Exception as e:
+        logger.error(f"Error in button_handler: {e}")
+        try:
+            await query.message.reply_text("❌ An error occurred. Please try again.")
+        except:
+            pass
         
         elif query.data == 'confirm_report_no':
             if 'pending_report' in context.user_data:
