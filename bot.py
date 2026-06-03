@@ -6705,208 +6705,207 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error in report_post handler: {e}")
                 await query.answer("❌ Error processing request", show_alert=True)
         
-                elif query.data.startswith('report_comment_'):
+        elif query.data.startswith('report_comment_'):
+            try:
+                comment_id = int(query.data.split('_')[2])
+                comment = db_fetch_one("SELECT comment_id FROM comments WHERE comment_id = %s", (comment_id,))
+                if not comment:
+                    await query.answer("❌ Comment not found.", show_alert=True)
+                    return
+                context.user_data['pending_report'] = {'type': 'comment', 'id': comment_id}
+                keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("⚠️ Yes, Report", callback_data=f"confirm_report_yes_comment_{comment_id}"),
+                        InlineKeyboardButton("❌ No, Cancel", callback_data=f"confirm_report_no")
+                    ]
+                ])
+                await query.answer()
+                await query.message.reply_text(
+                    "🚨 *Report Content*\n\nAre you sure you want to report this comment?\n\n"
+                    "False reports may be penalized.",
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                logger.error(f"Error in report_comment handler: {e}")
+                await query.answer("❌ Error processing request", show_alert=True)
+
+        elif query.data.startswith('confirm_report_yes_'):
+            try:
+                parts = query.data.split('_')
+                target_type = parts[3]
+                target_id = int(parts[4])
+                context.user_data['reporting'] = {'type': target_type, 'id': target_id}
+                if 'pending_report' in context.user_data:
+                    del context.user_data['pending_report']
+                await query.answer()
+                await query.message.reply_text(
+                    f"🚨 *Report {target_type.capitalize()}*\n\n"
+                    "Please type a short reason for reporting this content (max 200 characters).\n\n"
+                    "Tap ❌ Cancel to go back.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=cancel_menu
+                )
+            except Exception as e:
+                logger.error(f"Error in confirm_report_yes handler: {e}")
+                await query.answer("❌ Error", show_alert=True)
+
+        elif query.data == 'confirm_report_no':
+            if 'pending_report' in context.user_data:
+                del context.user_data['pending_report']
+            if 'reporting' in context.user_data:
+                del context.user_data['reporting']
+            await query.answer("❌ Report cancelled.", show_alert=False)
+            try:
+                await query.message.delete()
+            except:
+                pass
+            await query.message.reply_text("Report cancelled. You can continue using the bot.")
+
+        elif query.data == 'admin_reports':
+            await query.answer("📋 Loading reports...", show_alert=False)
+            await show_admin_reports(update, context, page=1)
+
+        elif query.data.startswith('admin_reports_'):
+            try:
+                page = int(query.data.split('_')[2])
+                await show_admin_reports(update, context, page=page)
+            except (IndexError, ValueError):
+                await show_admin_reports(update, context, page=1)
+
+        elif query.data.startswith('report_view_'):
+            try:
+                report_id = int(query.data.split('_')[2])
+                report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+                if not report:
+                    await query.answer("❌ Report not found.", show_alert=True)
+                    return
+                preview, author_id = get_report_content_preview(report['target_type'], report['target_id'])
+                type_label = "Post" if report['target_type'] == 'post' else "Comment"
+                preview_text = html.escape(preview or '[Content deleted]')
+                safe_reason = html.escape(report['reason'])
+                reporter = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (report['reporter_id'],))
+                reporter_name = html.escape(reporter['anonymous_name'] if reporter else 'Anonymous')
+                view_text = (
+                    f"🔍 <b>Report #{report_id}</b>\n"
+                    f"Type: {type_label}\n"
+                    f"Reporter: {reporter_name}\n"
+                    f"Reason: {safe_reason}\n\n"
+                    f"<b>Content Preview:</b>\n{preview_text}"
+                )
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Dismiss", callback_data=f"report_dismiss_{report_id}"),
+                        InlineKeyboardButton("❌ Delete Content", callback_data=f"report_delete_{report_id}"),
+                    ],
+                    [InlineKeyboardButton("⚠️ Warn User", callback_data=f"report_warn_{report_id}")],
+                    [InlineKeyboardButton("🔙 Back to Reports", callback_data='admin_reports')]
+                ]
+                try:
+                    await query.edit_message_text(view_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+                except Exception:
+                    await query.message.reply_text(view_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Error in report_view handler: {e}")
+                await query.answer("❌ Error loading report", show_alert=True)
+
+        elif query.data.startswith('report_dismiss_'):
+            try:
+                report_id = int(query.data.split('_')[2])
+                resolve_report(report_id, user_id, 'dismissed', None)
+                await query.answer("✅ Report dismissed.", show_alert=False)
+                await show_admin_reports(update, context, page=1)
+            except Exception as e:
+                logger.error(f"Error in report_dismiss handler: {e}")
+                await query.answer("❌ Error dismissing report", show_alert=True)
+
+        elif query.data.startswith('report_delete_'):
+            try:
+                report_id = int(query.data.split('_')[2])
+                report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+                if not report:
+                    await query.answer("❌ Report not found.", show_alert=True)
+                    return
+                preview, author_id = get_report_content_preview(report['target_type'], report['target_id'])
+                # Delete the reported content
+                if report['target_type'] == 'post':
+                    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (report['target_id'],))
+                    if post:
+                        if post['channel_message_id']:
+                            try:
+                                await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=post['channel_message_id'])
+                            except Exception:
+                                pass
+                        comments_list = db_fetch_all("SELECT comment_id FROM comments WHERE post_id = %s", (report['target_id'],))
+                        for c in comments_list:
+                            db_execute("DELETE FROM reactions WHERE comment_id = %s", (c['comment_id'],))
+                        db_execute("DELETE FROM comments WHERE post_id = %s", (report['target_id'],))
+                        db_execute("DELETE FROM post_categories WHERE post_id = %s", (report['target_id'],))
+                        db_execute("DELETE FROM posts WHERE post_id = %s", (report['target_id'],))
+                elif report['target_type'] == 'comment':
+                    comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (report['target_id'],))
+                    if comment:
+                        post_id_for_count = comment['post_id']
+                        db_execute("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (report['target_id'],))
+                        db_execute("DELETE FROM reactions WHERE comment_id = %s", (report['target_id'],))
+                        db_execute("DELETE FROM comments WHERE comment_id = %s", (report['target_id'],))
+                        await adopt_orphaned_replies(context, post_id_for_count)
+                resolve_report(report_id, user_id, 'action_taken', 'deleted')
+                # Notify the content author (without revealing the reporter)
+                if author_id:
                     try:
-                        comment_id = int(query.data.split('_')[2])
-                        comment = db_fetch_one("SELECT comment_id FROM comments WHERE comment_id = %s", (comment_id,))
-                        if not comment:
-                            await query.answer("❌ Comment not found.", show_alert=True)
-                            return
-                        context.user_data['pending_report'] = {'type': 'comment', 'id': comment_id}
-                        keyboard = InlineKeyboardMarkup([
-                            [
-                                InlineKeyboardButton("⚠️ Yes, Report", callback_data=f"confirm_report_yes_comment_{comment_id}"),
-                                InlineKeyboardButton("❌ No, Cancel", callback_data=f"confirm_report_no")
-                            ]
-                        ])
-                        await query.answer()
-                        await query.message.reply_text(
-                            "🚨 *Report Content*\n\nAre you sure you want to report this comment?\n\n"
-                            "False reports may be penalized.",
-                            reply_markup=keyboard,
+                        await context.bot.send_message(
+                            chat_id=author_id,
+                            text="⚠️ Your content was reviewed and removed by an admin due to a community report. Please ensure your posts follow our community guidelines."
+                        )
+                    except Exception:
+                        pass
+                await query.answer("✅ Content deleted.", show_alert=False)
+                await show_admin_reports(update, context, page=1)
+            except Exception as e:
+                logger.error(f"Error in report_delete handler: {e}")
+                await query.answer("❌ Error deleting content", show_alert=True)
+
+        elif query.data.startswith('report_warn_'):
+            try:
+                report_id = int(query.data.split('_')[2])
+                report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+                if not report:
+                    await query.answer("❌ Report not found.", show_alert=True)
+                    return
+                _, author_id = get_report_content_preview(report['target_type'], report['target_id'])
+                resolve_report(report_id, user_id, 'action_taken', 'warned')
+                if author_id:
+                    # Increment warning count
+                    db_execute(
+                        "UPDATE users SET warning_count = COALESCE(warning_count, 0) + 1 WHERE user_id = %s",
+                        (author_id,)
+                    )
+                    try:
+                        await context.bot.send_message(
+                            chat_id=author_id,
+                            text=(
+                                "⚠️ *Warning from Admin*\n\n"
+                                "Your content has been reported and reviewed by an admin. "
+                                "Please ensure your posts and comments follow our community guidelines.\n\n"
+                                "Repeated violations may result in content removal or other actions."
+                            ),
                             parse_mode=ParseMode.MARKDOWN
                         )
-                    except Exception as e:
-                        logger.error(f"Error in report_comment handler: {e}")
-                        await query.answer("❌ Error processing request", show_alert=True)
-        
-                elif query.data.startswith('confirm_report_yes_'):
-                    try:
-                        parts = query.data.split('_')
-                        target_type = parts[3]
-                        target_id = int(parts[4])
-                        context.user_data['reporting'] = {'type': target_type, 'id': target_id}
-                        if 'pending_report' in context.user_data:
-                            del context.user_data['pending_report']
-                        await query.answer()
-                        await query.message.reply_text(
-                            f"🚨 *Report {target_type.capitalize()}*\n\n"
-                            "Please type a short reason for reporting this content (max 200 characters).\n\n"
-                            "Tap ❌ Cancel to go back.",
-                            parse_mode=ParseMode.MARKDOWN,
-                            reply_markup=cancel_menu
-                        )
-                    except Exception as e:
-                        logger.error(f"Error in confirm_report_yes handler: {e}")
-                        await query.answer("❌ Error", show_alert=True)
-        
-                elif query.data == 'confirm_report_no':
-                    if 'pending_report' in context.user_data:
-                        del context.user_data['pending_report']
-                    if 'reporting' in context.user_data:
-                        del context.user_data['reporting']
-                    await query.answer("❌ Report cancelled.", show_alert=False)
-                    try:
-                        await query.message.delete()
-                    except:
+                    except Exception:
                         pass
-                    await query.message.reply_text("Report cancelled. You can continue using the bot.")
-        
-                elif query.data == 'admin_reports':
-                    await query.answer("📋 Loading reports...", show_alert=False)
-                    await show_admin_reports(update, context, page=1)
-        
-                elif query.data.startswith('admin_reports_'):
-                    try:
-                        page = int(query.data.split('_')[2])
-                        await show_admin_reports(update, context, page=page)
-                    except (IndexError, ValueError):
-                        await show_admin_reports(update, context, page=1)
-        
-                elif query.data.startswith('report_view_'):
-                    try:
-                        report_id = int(query.data.split('_')[2])
-                        report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
-                        if not report:
-                            await query.answer("❌ Report not found.", show_alert=True)
-                            return
-                        preview, author_id = get_report_content_preview(report['target_type'], report['target_id'])
-                        type_label = "Post" if report['target_type'] == 'post' else "Comment"
-                        preview_text = html.escape(preview or '[Content deleted]')
-                        safe_reason = html.escape(report['reason'])
-                        reporter = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (report['reporter_id'],))
-                        reporter_name = html.escape(reporter['anonymous_name'] if reporter else 'Anonymous')
-                        view_text = (
-                            f"🔍 <b>Report #{report_id}</b>\n"
-                            f"Type: {type_label}\n"
-                            f"Reporter: {reporter_name}\n"
-                            f"Reason: {safe_reason}\n\n"
-                            f"<b>Content Preview:</b>\n{preview_text}"
-                        )
-                        keyboard = [
-                            [
-                                InlineKeyboardButton("✅ Dismiss", callback_data=f"report_dismiss_{report_id}"),
-                                InlineKeyboardButton("❌ Delete Content", callback_data=f"report_delete_{report_id}"),
-                            ],
-                            [InlineKeyboardButton("⚠️ Warn User", callback_data=f"report_warn_{report_id}")],
-                            [InlineKeyboardButton("🔙 Back to Reports", callback_data='admin_reports')]
-                        ]
-                        try:
-                            await query.edit_message_text(view_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-                        except Exception:
-                            await query.message.reply_text(view_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-                    except Exception as e:
-                        logger.error(f"Error in report_view handler: {e}")
-                        await query.answer("❌ Error loading report", show_alert=True)
-        
-                elif query.data.startswith('report_dismiss_'):
-                    try:
-                        report_id = int(query.data.split('_')[2])
-                        resolve_report(report_id, user_id, 'dismissed', None)
-                        await query.answer("✅ Report dismissed.", show_alert=False)
-                        await show_admin_reports(update, context, page=1)
-                    except Exception as e:
-                        logger.error(f"Error in report_dismiss handler: {e}")
-                        await query.answer("❌ Error dismissing report", show_alert=True)
-        
-                elif query.data.startswith('report_delete_'):
-                    try:
-                        report_id = int(query.data.split('_')[2])
-                        report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
-                        if not report:
-                            await query.answer("❌ Report not found.", show_alert=True)
-                            return
-                        preview, author_id = get_report_content_preview(report['target_type'], report['target_id'])
-                        # Delete the reported content
-                        if report['target_type'] == 'post':
-                            post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (report['target_id'],))
-                            if post:
-                                if post['channel_message_id']:
-                                    try:
-                                        await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=post['channel_message_id'])
-                                    except Exception:
-                                        pass
-                                comments_list = db_fetch_all("SELECT comment_id FROM comments WHERE post_id = %s", (report['target_id'],))
-                                for c in comments_list:
-                                    db_execute("DELETE FROM reactions WHERE comment_id = %s", (c['comment_id'],))
-                                db_execute("DELETE FROM comments WHERE post_id = %s", (report['target_id'],))
-                                db_execute("DELETE FROM post_categories WHERE post_id = %s", (report['target_id'],))
-                                db_execute("DELETE FROM posts WHERE post_id = %s", (report['target_id'],))
-                        elif report['target_type'] == 'comment':
-                            comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (report['target_id'],))
-                            if comment:
-                                post_id_for_count = comment['post_id']
-                                db_execute("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (report['target_id'],))
-                                db_execute("DELETE FROM reactions WHERE comment_id = %s", (report['target_id'],))
-                                db_execute("DELETE FROM comments WHERE comment_id = %s", (report['target_id'],))
-                                await adopt_orphaned_replies(context, post_id_for_count)
-                        resolve_report(report_id, user_id, 'action_taken', 'deleted')
-                        # Notify the content author (without revealing the reporter)
-                        if author_id:
-                            try:
-                                await context.bot.send_message(
-                                    chat_id=author_id,
-                                    text="⚠️ Your content was reviewed and removed by an admin due to a community report. Please ensure your posts follow our community guidelines."
-                                )
-                            except Exception:
-                                pass
-                        await query.answer("✅ Content deleted.", show_alert=False)
-                        await show_admin_reports(update, context, page=1)
-                    except Exception as e:
-                        logger.error(f"Error in report_delete handler: {e}")
-                        await query.answer("❌ Error deleting content", show_alert=True)
-        
-                elif query.data.startswith('report_warn_'):
-                    try:
-                        report_id = int(query.data.split('_')[2])
-                        report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
-                        if not report:
-                            await query.answer("❌ Report not found.", show_alert=True)
-                            return
-                        _, author_id = get_report_content_preview(report['target_type'], report['target_id'])
-                        resolve_report(report_id, user_id, 'action_taken', 'warned')
-                        if author_id:
-                            # Increment warning count
-                            db_execute(
-                                "UPDATE users SET warning_count = COALESCE(warning_count, 0) + 1 WHERE user_id = %s",
-                                (author_id,)
-                            )
-                            try:
-                                await context.bot.send_message(
-                                    chat_id=author_id,
-                                    text=(
-                                        "⚠️ *Warning from Admin*\n\n"
-                                        "Your content has been reported and reviewed by an admin. "
-                                        "Please ensure your posts and comments follow our community guidelines.\n\n"
-                                        "Repeated violations may result in content removal or other actions."
-                                    ),
-                                    parse_mode=ParseMode.MARKDOWN
-                                )
-                            except Exception:
-                                pass
-                        await query.answer("✅ Warning sent to user.", show_alert=False)
-                        await show_admin_reports(update, context, page=1)
-                    except Exception as e:
-                        logger.error(f"Error in report_warn handler: {e}")
-                        await query.answer("❌ Error sending warning", show_alert=True)
-        
+                await query.answer("✅ Warning sent to user.", show_alert=False)
+                await show_admin_reports(update, context, page=1)
             except Exception as e:
-                logger.error(f"Error in button_handler: {e}")
-                try:
-                    await query.message.reply_text("❌ An error occurred. Please try again.")
-                except:
-                    pass
+                logger.error(f"Error in report_warn handler: {e}")
+                await query.answer("❌ Error sending warning", show_alert=True)
 
+    except Exception as e:
+        logger.error(f"Error in button_handler: {e}")
+        try:
+            await query.message.reply_text("❌ An error occurred. Please try again.")
+        except:
+            pass
 async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
