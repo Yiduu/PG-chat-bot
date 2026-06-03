@@ -668,7 +668,7 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
     if context:
         context_keys = ['editing_comment', 'editing_post', 'thread_from_post_id', 
                        'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type',
-                       'rejecting_post', 'awaiting_rejection_reason', 'reporting']
+                       'rejecting_post', 'awaiting_rejection_reason', 'reporting', 'pending_report']
         for key in context_keys:
             if key in context.user_data:
                 del context.user_data[key]
@@ -6687,17 +6687,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not post:
                     await query.answer("❌ Post not found.", show_alert=True)
                     return
-                context.user_data['reporting'] = {'type': 'post', 'id': post_id}
+                context.user_data['pending_report'] = {'type': 'post', 'id': post_id}
+                keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("⚠️ Yes, Report", callback_data=f"confirm_report_yes_post_{post_id}"),
+                        InlineKeyboardButton("❌ No, Cancel", callback_data=f"confirm_report_no")
+                    ]
+                ])
                 await query.answer()
                 await query.message.reply_text(
-                    "🚨 *Report Post*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap ❌ Cancel to go back.",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=cancel_menu
+                    "🚨 *Report Content*\n\nAre you sure you want to report this post?\n\n"
+                    "False reports may be penalized.",
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.MARKDOWN
                 )
             except Exception as e:
                 logger.error(f"Error in report_post handler: {e}")
                 await query.answer("❌ Error processing request", show_alert=True)
-
+        
         elif query.data.startswith('report_comment_'):
             try:
                 comment_id = int(query.data.split('_')[2])
@@ -6705,16 +6712,54 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not comment:
                     await query.answer("❌ Comment not found.", show_alert=True)
                     return
-                context.user_data['reporting'] = {'type': 'comment', 'id': comment_id}
+                context.user_data['pending_report'] = {'type': 'comment', 'id': comment_id}
+                keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("⚠️ Yes, Report", callback_data=f"confirm_report_yes_comment_{comment_id}"),
+                        InlineKeyboardButton("❌ No, Cancel", callback_data=f"confirm_report_no")
+                    ]
+                ])
                 await query.answer()
                 await query.message.reply_text(
-                    "🚨 *Report Comment*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap ❌ Cancel to go back.",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=cancel_menu
+                    "🚨 *Report Content*\n\nAre you sure you want to report this comment?\n\n"
+                    "False reports may be penalized.",
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.MARKDOWN
                 )
             except Exception as e:
                 logger.error(f"Error in report_comment handler: {e}")
                 await query.answer("❌ Error processing request", show_alert=True)
+        elif query.data.startswith('confirm_report_yes_'):
+            try:
+                parts = query.data.split('_')
+                target_type = parts[3]   # 'post' or 'comment'
+                target_id = int(parts[4])
+                context.user_data['reporting'] = {'type': target_type, 'id': target_id}
+                if 'pending_report' in context.user_data:
+                    del context.user_data['pending_report']
+                await query.answer()
+                await query.message.reply_text(
+                    f"🚨 *Report {target_type.capitalize()}*\n\n"
+                    "Please type a short reason for reporting this content (max 200 characters).\n\n"
+                    "Tap ❌ Cancel to go back.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=cancel_menu
+                )
+            except Exception as e:
+                logger.error(f"Error in confirm_report_yes handler: {e}")
+                await query.answer("❌ Error", show_alert=True)
+        
+        elif query.data == 'confirm_report_no':
+            if 'pending_report' in context.user_data:
+                del context.user_data['pending_report']
+            if 'reporting' in context.user_data:
+                del context.user_data['reporting']
+            await query.answer("❌ Report cancelled.", show_alert=False)
+            try:
+                await query.message.delete()
+            except:
+                pass
+            await query.message.reply_text("Report cancelled. You can continue using the bot.")
 
         elif query.data == 'admin_reports':
             await query.answer("📋 Loading reports...", show_alert=False)
