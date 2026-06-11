@@ -8146,7 +8146,14 @@ function go(name,btn){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
-  if(btn){btn.classList.add('active');const i=btn.parentElement.children;for(let x=0;x<i.length;x++)if(i[x]===btn){ink.style.left=(x*20)+'%';break}}
+  if(btn){
+      btn.classList.add('active');
+      const navItems = Array.from(btn.parentElement.querySelectorAll('.nav-item'));
+      const index = navItems.indexOf(btn);
+      if(index !== -1){
+        ink.style.left = (index * 20) + '%';
+      }
+    }
   if(name==='feed'&&feedPage===1)loadFeed();
   if(name==='leaderboard')loadLB();
   if(name==='profile')loadProfile();
