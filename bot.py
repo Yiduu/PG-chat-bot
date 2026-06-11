@@ -7584,6 +7584,19 @@ def mini_app_page():
   --radius-sm:10px;
   --radius-xs:6px;
 }
+/* Light theme overrides */
+body.light {
+  --bg:#f5f3f0;
+  --bg2:#e8e4dd;
+  --bg3:#ddd8cf;
+  --glass:rgba(0,0,0,0.02);
+  --glass2:rgba(0,0,0,0.04);
+  --border:rgba(0,0,0,0.1);
+  --border2:rgba(201,168,76,0.3);
+  --text:#1a1a1a;
+  --text2:#4a4a4a;
+  --text3:#6b6b6b;
+}
 html,body{height:100%;overflow:hidden}
 body{
   font-family:'Inter',sans-serif;
@@ -7592,9 +7605,9 @@ body{
   font-size:15px;
   -webkit-font-smoothing:antialiased;
   overscroll-behavior:none;
+  transition:background 0.2s, color 0.2s;
 }
 
-/* ── SCROLLABLE SHELL ── */
 #shell{
   position:fixed;inset:0;
   display:flex;flex-direction:column;
@@ -7607,11 +7620,9 @@ body{
 }
 #pages::-webkit-scrollbar{display:none}
 
-/* ── PAGES ── */
 .page{display:none;padding:0 0 8px}
 .page.active{display:block}
 
-/* ── NAV ── */
 #nav{
   flex-shrink:0;
   height:var(--nav-h);
@@ -7624,6 +7635,7 @@ body{
   position:relative;
   z-index:100;
 }
+body.light #nav{background:rgba(245,243,240,0.92);}
 .nav-item{
   flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:4px;background:none;border:none;cursor:pointer;
@@ -7642,15 +7654,17 @@ body{
   transition:left 0.3s cubic-bezier(.4,0,.2,1);
 }
 
-/* ── PAGE HEADER ── */
 .page-head{
   padding:20px 20px 0;
   display:flex;align-items:center;justify-content:space-between;
 }
 .page-head h1{font-size:26px;font-weight:700;letter-spacing:-0.5px;color:var(--text)}
 .page-head-sub{font-size:13px;color:var(--text3);margin-top:2px}
+.logo-img{
+  width:48px;height:48px;border-radius:12px;object-fit:cover;
+  box-shadow:0 2px 8px rgba(0,0,0,0.1);
+}
 
-/* ── CARDS ── */
 .card{
   background:var(--glass);
   border:0.5px solid var(--border);
@@ -7663,7 +7677,6 @@ body{
   border-color:var(--border2);
 }
 
-/* ── PILL / BADGE ── */
 .pill{
   display:inline-flex;align-items:center;gap:5px;
   padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;
@@ -7672,7 +7685,6 @@ body{
 }
 .pill-sm{padding:2px 8px;font-size:10px}
 
-/* ── AVATAR CIRCLE ── */
 .ava{
   border-radius:50%;background:linear-gradient(135deg,var(--bg3),var(--bg2));
   border:1.5px solid var(--border2);
@@ -7680,7 +7692,6 @@ body{
   flex-shrink:0;font-size:1.1em;
 }
 
-/* ── INPUT ── */
 .input-area{
   width:100%;background:var(--bg2);border:0.5px solid var(--border);
   border-radius:var(--radius-sm);padding:14px 16px;
@@ -7691,7 +7702,6 @@ body{
 .input-area:focus{border-color:rgba(201,168,76,0.4)}
 .input-area::placeholder{color:var(--text3)}
 
-/* ── PRIMARY BUTTON ── */
 .btn-gold{
   width:100%;padding:15px;border-radius:var(--radius-sm);border:none;
   background:var(--gold);color:#0c0b09;
@@ -7710,7 +7720,6 @@ body{
   -webkit-tap-highlight-color:transparent;
 }
 
-/* ── CATEGORY GRID ── */
 .cat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:12px 0}
 .cat-chip{
   padding:10px 12px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;
@@ -7724,7 +7733,6 @@ body{
   display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
 .cat-chip.on .cat-check::after{content:'✓'}
 
-/* ── FEED POST CARD ── */
 .post-card{
   margin:10px 16px 0;
   background:var(--glass);border:0.5px solid var(--border);
@@ -7734,7 +7742,8 @@ body{
 }
 .post-card:active{background:var(--glass2)}
 .post-meta{display:flex;align-items:center;gap:10px;margin-bottom:12px}
-.post-name{font-size:13px;font-weight:600;color:var(--text)}
+.post-name{font-size:13px;font-weight:600;color:var(--text);cursor:pointer}
+.post-name:hover{color:var(--gold)}
 .post-time{font-size:11px;color:var(--text3);margin-left:auto}
 .post-body{font-size:14px;line-height:1.6;color:var(--text2);
   display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:12px}
@@ -7745,11 +7754,9 @@ body{
   font-weight:500;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;
   -webkit-tap-highlight-color:transparent;padding:0}
 .stat-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8}
-.stat-btn.liked{color:var(--gold)}
 .read-more{font-size:12px;font-weight:600;color:var(--gold);
   display:flex;align-items:center;gap:3px}
 
-/* ── LEADERBOARD ── */
 .lb-hero{
   margin:20px 16px 0;
   background:linear-gradient(135deg,rgba(201,168,76,0.1),rgba(201,168,76,0.04));
@@ -7781,11 +7788,11 @@ body{
 .lb-rank{width:24px;text-align:center;font-size:13px;font-weight:700;color:var(--text3)}
 .lb-info{flex:1;min-width:0}
 .lb-info-name{font-size:14px;font-weight:600;color:var(--text);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.lb-info-name:hover{color:var(--gold)}
 .lb-info-aura{font-size:11px;color:var(--text3);margin-top:1px}
 .lb-pts{font-size:14px;font-weight:700;color:var(--gold)}
 
-/* ── PROFILE ── */
 .profile-hero{
   margin:20px 16px 0;
   background:linear-gradient(160deg,var(--bg3),var(--bg2));
@@ -7806,7 +7813,6 @@ body{
 .profile-stat-num{font-size:20px;font-weight:700;color:var(--gold)}
 .profile-stat-lbl{font-size:11px;color:var(--text3);margin-top:2px}
 
-/* ── SETTINGS ── */
 .setting-row{
   display:flex;align-items:center;padding:16px 0;
   border-bottom:0.5px solid var(--border);gap:14px;
@@ -7821,7 +7827,6 @@ body{
 .setting-label{flex:1}
 .setting-label-title{font-size:14px;font-weight:600;color:var(--text)}
 .setting-label-sub{font-size:12px;color:var(--text3);margin-top:2px}
-/* toggle */
 .toggle{position:relative;width:44px;height:25px;cursor:pointer;flex-shrink:0}
 .toggle input{opacity:0;width:0;height:0;position:absolute}
 .toggle-track{
@@ -7837,7 +7842,6 @@ body{
 }
 .toggle input:checked ~ .toggle-thumb{left:22px;background:var(--gold)}
 
-/* ── COMPOSE ── */
 .compose-strip{
   display:flex;align-items:center;gap:10px;
   padding:14px 16px;margin:12px 16px 0;
@@ -7848,7 +7852,6 @@ body{
 .compose-strip:active{background:var(--glass2)}
 .compose-placeholder{color:var(--text3);font-size:14px;flex:1}
 
-/* ── SEARCH ── */
 .search-wrap{
   display:flex;align-items:center;gap:10px;
   padding:12px 16px;background:var(--glass);
@@ -7860,10 +7863,8 @@ body{
   font-family:'Inter',sans-serif;font-size:14px}
 .search-wrap input::placeholder{color:var(--text3)}
 
-/* ── CHAR COUNT ── */
 .char-count{font-size:11px;color:var(--text3);text-align:right;margin:6px 0 12px}
 
-/* ── SKELETON ── */
 .skel{
   background:linear-gradient(90deg,var(--bg2) 25%,var(--bg3) 50%,var(--bg2) 75%);
   background-size:200% 100%;animation:shimmer 1.4s infinite;
@@ -7871,7 +7872,6 @@ body{
 }
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
-/* ── TOAST ── */
 #toast{
   position:fixed;bottom:calc(var(--nav-h) + 16px);left:50%;transform:translateX(-50%) translateY(10px);
   background:var(--gold);color:#0c0b09;padding:10px 20px;border-radius:20px;
@@ -7880,7 +7880,6 @@ body{
 }
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
-/* ── DETAIL / FULL POST ── */
 #page-detail{position:relative}
 .back-btn{
   display:flex;align-items:center;gap:6px;
@@ -7894,7 +7893,8 @@ body{
 .comment-item.reply{margin-left:32px}
 .comment-body{flex:1;background:var(--bg2);border:0.5px solid var(--border);
   border-radius:var(--radius-sm);padding:12px}
-.comment-name{font-size:12px;font-weight:600;color:var(--gold);margin-bottom:4px}
+.comment-name{font-size:12px;font-weight:600;color:var(--gold);margin-bottom:4px;cursor:pointer}
+.comment-name:hover{text-decoration:underline}
 .comment-text{font-size:13px;line-height:1.55;color:var(--text2)}
 .comment-actions{display:flex;gap:12px;margin-top:8px}
 .ca-btn{background:none;border:none;cursor:pointer;
@@ -7903,10 +7903,14 @@ body{
 .ca-btn:hover{color:var(--gold)}
 .comment-input-row{
   display:flex;align-items:flex-end;gap:8px;
-  padding:12px 16px;position:sticky;bottom:0;
-  background:rgba(12,11,9,0.95);border-top:0.5px solid var(--border);
+  padding:12px 16px;
+  position:sticky;bottom:0;
+  background:rgba(12,11,9,0.95);
+  border-top:0.5px solid var(--border);
   backdrop-filter:blur(12px);
+  z-index:20;
 }
+body.light .comment-input-row{background:rgba(245,243,240,0.95);}
 .comment-input-row textarea{
   flex:1;background:var(--bg2);border:0.5px solid var(--border);
   border-radius:var(--radius-xs);padding:10px 12px;
@@ -7921,7 +7925,6 @@ body{
 }
 .comment-input-row button svg{width:16px;height:16px;stroke:#0c0b09;fill:none;stroke-width:2.2}
 
-/* ── CHATS ── */
 .chat-item{
   display:flex;align-items:center;gap:12px;
   padding:14px 16px;border-bottom:0.5px solid var(--border);
@@ -7945,7 +7948,6 @@ body{
   flex-shrink:0;
 }
 
-/* ── CHAT ROOM ── */
 #chat-room{
   position:fixed;inset:0;z-index:200;
   background:var(--bg);
@@ -8002,7 +8004,6 @@ body{
 }
 .cr-send svg{width:17px;height:17px;stroke:#0c0b09;fill:none;stroke-width:2.2}
 
-/* ── AUTH SCREEN ── */
 #auth{
   position:fixed;inset:0;background:var(--bg);
   display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -8016,17 +8017,14 @@ body{
 @keyframes spin{to{transform:rotate(360deg)}}
 .auth-label{font-size:15px;font-weight:600;color:var(--gold)}
 
-/* ── SECTION LABEL ── */
 .section-label{
   font-size:11px;font-weight:700;letter-spacing:1.2px;
   text-transform:uppercase;color:var(--text3);
   padding:18px 16px 8px;
 }
 
-/* ── DIVIDER ── */
 .divider{height:0.5px;background:var(--border);margin:0}
 
-/* EDIT PROFILE */
 .input-label{font-size:12px;font-weight:600;color:var(--text3);margin-bottom:6px;display:block;letter-spacing:0.3px;text-transform:uppercase}
 .emoji-picker{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:8px 0 0}
 .emoji-opt{
@@ -8037,7 +8035,6 @@ body{
 }
 .emoji-opt.sel{border-color:var(--gold);background:rgba(201,168,76,0.1)}
 
-/* ── REACTION DOCK ── */
 .rx-dock{
   position:absolute;bottom:calc(100% + 8px);left:0;
   background:var(--bg2);border:0.5px solid var(--border2);
@@ -8056,12 +8053,45 @@ body{
   cursor:pointer;transition:all 0.15s;
 }
 .rx-pill.on{background:rgba(201,168,76,0.12);border-color:var(--border2);color:var(--gold)}
+.reaction-trigger{
+  background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;
+  padding:4px 12px;font-size:12px;color:var(--text3);cursor:pointer;
+}
+.reaction-trigger:hover{color:var(--gold);border-color:var(--gold);}
 
-/* ── SUBTLE AURA GRADIENT ── */
 .page-head-wrap{
   background:linear-gradient(180deg,rgba(201,168,76,0.05) 0%,transparent 100%);
   padding-bottom:4px;
 }
+
+/* Profile Modal */
+.modal-mask{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,0.7);backdrop-filter:blur(5px);
+  z-index:1000;display:flex;align-items:center;justify-content:center;
+  visibility:hidden;opacity:0;transition:all 0.2s;
+}
+.modal-mask.active{visibility:visible;opacity:1;}
+.modal-container{
+  background:var(--bg);border:1px solid var(--border);border-radius:28px;
+  max-width:320px;width:90%;padding:24px;text-align:center;
+  position:relative;box-shadow:0 20px 40px rgba(0,0,0,0.4);
+}
+.modal-close{
+  position:absolute;top:12px;right:16px;font-size:22px;cursor:pointer;color:var(--text3);
+}
+.modal-close:hover{color:var(--gold);}
+.modal-avatar{width:80px;height:80px;border-radius:50%;margin:0 auto 12px;background:var(--bg2);display:flex;align-items:center;justify-content:center;font-size:32px;border:2px solid var(--gold);}
+.modal-name{font-size:20px;font-weight:700;color:var(--gold);}
+.modal-stats{display:flex;justify-content:space-around;margin:16px 0;}
+.modal-stat{text-align:center;}
+.modal-stat-num{font-size:18px;font-weight:700;color:var(--text);}
+.modal-stat-lbl{font-size:11px;color:var(--text3);}
+.modal-btn{width:100%;padding:12px;margin-top:8px;border:none;border-radius:40px;font-weight:600;cursor:pointer;}
+.modal-btn-primary{background:var(--gold);color:#0c0b09;}
+.modal-btn-primary:active{transform:scale(0.97);}
+.modal-btn-secondary{background:var(--bg2);border:1px solid var(--border);color:var(--text);}
+.modal-btn-secondary:active{background:var(--glass);}
 </style>
 </head>
 <body>
@@ -8074,7 +8104,7 @@ body{
 <div id="shell">
   <div id="pages">
 
-    <!-- ══ VENT PAGE ══ -->
+    <!-- VENT PAGE -->
     <div class="page active" id="page-vent">
       <div class="page-head-wrap">
         <div class="page-head" style="padding-top:24px">
@@ -8082,15 +8112,11 @@ body{
             <h1>Share</h1>
             <div class="page-head-sub">Speak your heart, anonymously</div>
           </div>
-          <img src="/static/images/vent logo.png" style="width:40px;height:40px;border-radius:12px;object-fit:cover" onerror="this.style.display='none'">
+          <img src="/static/images/vent logo.png" class="logo-img" onerror="this.style.display='none'">
         </div>
       </div>
-
       <div class="section-label">Categories</div>
-      <div style="padding:0 16px">
-        <div id="cat-grid" class="cat-grid"></div>
-      </div>
-
+      <div style="padding:0 16px"><div id="cat-grid" class="cat-grid"></div></div>
       <div style="padding:0 16px;margin-top:14px">
         <textarea id="vent-txt" class="input-area" rows="5" placeholder="What's on your heart today…" maxlength="5000"></textarea>
         <div class="char-count"><span id="vent-cnt">0</span> / 5000</div>
@@ -8098,217 +8124,89 @@ body{
       </div>
     </div>
 
-    <!-- ══ FEED PAGE ══ -->
+    <!-- FEED PAGE -->
     <div class="page" id="page-feed">
-      <div class="page-head-wrap">
-        <div class="page-head" style="padding-top:24px">
-          <div>
-            <h1>Community</h1>
-            <div class="page-head-sub">Read, reflect, respond</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="search-wrap">
-        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
-        <input id="search-inp" type="text" placeholder="Search vents…">
-      </div>
-
+      <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Community</h1><div class="page-head-sub">Read, reflect, respond</div></div></div></div>
+      <div class="search-wrap"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><input id="search-inp" type="text" placeholder="Search vents…"></div>
       <div id="feed-list"></div>
-      <div id="feed-more" style="padding:16px;text-align:center;display:none">
-        <button class="btn-ghost" id="load-more-btn">Load more</button>
-      </div>
+      <div id="feed-more" style="padding:16px;text-align:center;display:none"><button class="btn-ghost" id="load-more-btn">Load more</button></div>
     </div>
 
-    <!-- ══ POST DETAIL ══ -->
+    <!-- POST DETAIL -->
     <div class="page" id="page-detail">
-      <button class="back-btn" onclick="gotoFeed()">
-        <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
-        Back
-      </button>
+      <button class="back-btn" onclick="gotoFeed()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Back</button>
       <div id="detail-post"></div>
       <div class="section-label">Responses</div>
       <div id="detail-comments" style="padding:0 16px 80px"></div>
-      <div class="comment-input-row" id="comment-bar">
+      <div class="comment-input-row">
         <textarea id="comment-txt" placeholder="Add a response…" rows="1"></textarea>
-        <button id="send-comment">
-          <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        </button>
+        <button id="send-comment"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
       </div>
     </div>
 
-    <!-- ══ LEADERBOARD ══ -->
-    <div class="page" id="page-leaderboard">
-      <div class="page-head-wrap">
-        <div class="page-head" style="padding-top:24px">
-          <div>
-            <h1>Top Voices</h1>
-            <div class="page-head-sub">Weekly community leaders</div>
-          </div>
-        </div>
-      </div>
-      <div id="lb-content"></div>
-    </div>
+    <!-- LEADERBOARD -->
+    <div class="page" id="page-leaderboard"><div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Top Voices</h1><div class="page-head-sub">Weekly community leaders</div></div></div></div><div id="lb-content"></div></div>
 
-    <!-- ══ PROFILE ══ -->
-    <div class="page" id="page-profile">
-      <div id="profile-content"></div>
-    </div>
+    <!-- PROFILE -->
+    <div class="page" id="page-profile"><div id="profile-content"></div></div>
 
-    <!-- ══ EDIT PROFILE ══ -->
+    <!-- EDIT PROFILE -->
     <div class="page" id="page-edit">
-      <button class="back-btn" onclick="go('profile')">
-        <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
-        Profile
-      </button>
+      <button class="back-btn" onclick="go('profile')"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Profile</button>
       <div style="padding:0 16px">
-        <label class="input-label">Display name</label>
-        <input id="ep-name" class="input-area" type="text" placeholder="Your anonymous name" style="height:44px;margin-bottom:16px">
-        <label class="input-label">Bio</label>
-        <textarea id="ep-bio" class="input-area" rows="3" placeholder="A short intro…" style="margin-bottom:16px"></textarea>
-        <label class="input-label">Avatar</label>
-        <div id="ep-emoji" class="emoji-picker" style="margin-bottom:20px"></div>
+        <label class="input-label">Display name</label><input id="ep-name" class="input-area" type="text" placeholder="Your anonymous name" style="height:44px;margin-bottom:16px">
+        <label class="input-label">Bio</label><textarea id="ep-bio" class="input-area" rows="3" placeholder="A short intro…" style="margin-bottom:16px"></textarea>
+        <label class="input-label">Avatar</label><div id="ep-emoji" class="emoji-picker" style="margin-bottom:20px"></div>
         <button class="btn-gold" id="save-profile-btn">Save changes</button>
       </div>
     </div>
 
-    <!-- ══ SETTINGS ══ -->
+    <!-- SETTINGS -->
     <div class="page" id="page-settings">
-      <div class="page-head-wrap">
-        <div class="page-head" style="padding-top:24px">
-          <div>
-            <h1>Settings</h1>
-            <div class="page-head-sub">Manage your preferences</div>
-          </div>
-        </div>
-      </div>
-
+      <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Settings</h1><div class="page-head-sub">Manage your preferences</div></div></div></div>
       <div class="card" style="margin-top:14px">
-        <div class="setting-row">
-          <div class="setting-icon">
-            <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-          </div>
-          <div class="setting-label">
-            <div class="setting-label-title">Notifications</div>
-            <div class="setting-label-sub">Replies and interactions</div>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="set-notif">
-            <div class="toggle-track"></div>
-            <div class="toggle-thumb"></div>
-          </label>
-        </div>
-        <div class="setting-row">
-          <div class="setting-icon">
-            <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          </div>
-          <div class="setting-label">
-            <div class="setting-label-title">Public profile</div>
-            <div class="setting-label-sub">Show stats to others</div>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="set-priv">
-            <div class="toggle-track"></div>
-            <div class="toggle-thumb"></div>
-          </label>
-        </div>
-        <div class="setting-row" style="border:none">
-          <div class="setting-icon">
-            <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          </div>
-          <div class="setting-label">
-            <div class="setting-label-title">Hide aura & points</div>
-            <div class="setting-label-sub">Others can't see your rank</div>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="set-hide">
-            <div class="toggle-track"></div>
-            <div class="toggle-thumb"></div>
-          </label>
-        </div>
+        <div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div class="setting-label"><div class="setting-label-title">Notifications</div><div class="setting-label-sub">Replies and interactions</div></div><label class="toggle"><input type="checkbox" id="set-notif"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="setting-label"><div class="setting-label-title">Public profile</div><div class="setting-label-sub">Show stats to others</div></div><label class="toggle"><input type="checkbox" id="set-priv"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><div class="setting-label"><div class="setting-label-title">Light / Dark mode</div><div class="setting-label-sub">Switch theme</div></div><label class="toggle"><input type="checkbox" id="set-theme"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
       </div>
-
-      <div style="padding:16px">
-        <button class="btn-gold" id="save-settings-btn">Save settings</button>
-      </div>
-
+      <div style="padding:16px"><button class="btn-gold" id="save-settings-btn">Save settings</button></div>
       <div class="section-label">Account</div>
-      <div class="card" style="margin-top:0">
-        <div class="setting-row" style="border:none;cursor:pointer" onclick="go('edit')">
-          <div class="setting-icon">
-            <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </div>
-          <div class="setting-label">
-            <div class="setting-label-title">Edit profile</div>
-            <div class="setting-label-sub">Name, bio, avatar</div>
-          </div>
-          <svg style="width:16px;height:16px;stroke:var(--text3);fill:none;stroke-width:2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
-        </div>
-      </div>
-
-      <div style="padding:16px 16px 0;text-align:center">
-        <div style="font-size:11px;color:var(--text3)">Christian Vent · Built by <a href="https://t.me/YIDIDIYATAMIRUU" style="color:var(--gold);text-decoration:none">@YIDIDIYATAMIRUU</a></div>
-      </div>
+      <div class="card" style="margin-top:0"><div class="setting-row" style="border:none;cursor:pointer" onclick="go('edit')"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div><div class="setting-label"><div class="setting-label-title">Edit profile</div><div class="setting-label-sub">Name, bio, avatar</div></div><svg style="width:16px;height:16px;stroke:var(--text3);fill:none;stroke-width:2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div></div>
+      <div style="padding:16px 16px 0;text-align:center"><div style="font-size:11px;color:var(--text3)">Christian Vent · Built by <a href="https://t.me/YIDIDIYATAMIRUU" style="color:var(--gold);text-decoration:none">@YIDIDIYATAMIRUU</a></div></div>
     </div>
 
-    <!-- ══ CHATS PAGE ══ -->
+    <!-- CHATS PAGE -->
     <div class="page" id="page-chats">
-      <div class="page-head-wrap">
-        <div class="page-head" style="padding-top:24px">
-          <div>
-            <h1>Messages</h1>
-            <div class="page-head-sub" id="chat-unread-label">All caught up</div>
-          </div>
-        </div>
-      </div>
+      <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Messages</h1><div class="page-head-sub" id="chat-unread-label">All caught up</div></div></div></div>
       <div class="divider" style="margin-top:14px"></div>
       <div id="chats-list"></div>
     </div>
 
   </div><!-- /pages -->
 
-  <!-- ══ BOTTOM NAV ══ -->
   <nav id="nav">
     <div class="nav-ink" id="nav-ink"></div>
-    <button class="nav-item active" data-page="vent" onclick="go('vent',this)">
-      <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-      Vent
-    </button>
-    <button class="nav-item" data-page="feed" onclick="go('feed',this)">
-      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-      Feed
-    </button>
-    <button class="nav-item" data-page="chats" onclick="go('chats',this)">
-      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      Chats
-    </button>
-    <button class="nav-item" data-page="leaderboard" onclick="go('leaderboard',this)">
-      <svg viewBox="0 0 24 24"><polyline points="18 20 18 10"/><polyline points="12 20 12 4"/><polyline points="6 20 6 14"/></svg>
-      Rankings
-    </button>
-    <button class="nav-item" data-page="settings" onclick="go('settings',this)">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-      Me
-    </button>
+    <button class="nav-item active" data-page="vent" onclick="go('vent',this)"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Vent</button>
+    <button class="nav-item" data-page="feed" onclick="go('feed',this)"><svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Feed</button>
+    <button class="nav-item" data-page="chats" onclick="go('chats',this)"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chats</button>
+    <button class="nav-item" data-page="leaderboard" onclick="go('leaderboard',this)"><svg viewBox="0 0 24 24"><polyline points="18 20 18 10"/><polyline points="12 20 12 4"/><polyline points="6 20 6 14"/></svg>Rankings</button>
+    <button class="nav-item" data-page="settings" onclick="go('settings',this)"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Me</button>
   </nav>
 </div>
 </div>
 
 <!-- CHAT ROOM -->
 <div id="chat-room">
-  <div class="cr-head">
-    <button onclick="closeCR()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
-    <div class="ava" id="cr-ava" style="width:36px;height:36px">👤</div>
-    <div>
-      <div class="cr-name" id="cr-name">Chat</div>
-    </div>
-  </div>
+  <div class="cr-head"><button onclick="closeCR()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button><div class="ava" id="cr-ava" style="width:36px;height:36px">👤</div><div><div class="cr-name" id="cr-name">Chat</div></div></div>
   <div class="cr-msgs" id="cr-msgs"></div>
-  <div class="cr-input">
-    <textarea id="cr-txt" placeholder="Message…" rows="1"></textarea>
-    <button class="cr-send" onclick="crSend()">
-      <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-    </button>
+  <div class="cr-input"><textarea id="cr-txt" placeholder="Message…" rows="1"></textarea><button class="cr-send" onclick="crSend()"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button></div>
+</div>
+
+<!-- PROFILE MODAL -->
+<div id="profileModal" class="modal-mask" onclick="closeProfileModal(event)">
+  <div class="modal-container" onclick="event.stopPropagation()">
+    <span class="modal-close" onclick="closeProfileModal()">&times;</span>
+    <div id="modalContent">Loading...</div>
   </div>
 </div>
 
@@ -8332,20 +8230,13 @@ const CATS = [
 ];
 const EMOJIS = ['🕊️','✝️','🙏','📖','❤️','🌟','🛡️','⚔️','⛪','🎹','👶','🧑','👴','🌿','🔥'];
 
-/* ── UTILS ── */
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3000)}
 async function api(path,opts={}){
   const r=await fetch(API+path,{headers:{'Content-Type':'application/json'},...opts});
   const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||'Error');return d;
 }
-function timeAgo(ts){
-  const d=new Date(ts),n=new Date(),s=Math.floor((n-d)/1000);
-  if(s<60)return 'Just now';if(s<3600)return Math.floor(s/60)+'m';
-  if(s<86400)return Math.floor(s/3600)+'h';return Math.floor(s/86400)+'d';
-}
 
-/* ── NAV ── */
 const ink=document.getElementById('nav-ink');
 function go(name,btn){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -8361,21 +8252,15 @@ function go(name,btn){
 }
 function gotoFeed(){go('feed',document.querySelector('[data-page="feed"]'))}
 
-/* ── CATEGORIES ── */
 function renderCats(){
   const g=document.getElementById('cat-grid');
-  g.innerHTML=CATS.map(([c,l])=>`
-    <div class="cat-chip" data-c="${c}" onclick="toggleCat(this,'${c}')">
-      <div class="cat-check"></div>
-      <span>${esc(l)}</span>
-    </div>`).join('');
+  g.innerHTML=CATS.map(([c,l])=>`<div class="cat-chip" data-c="${c}" onclick="toggleCat(this,'${c}')"><div class="cat-check"></div><span>${esc(l)}</span></div>`).join('');
 }
 function toggleCat(el,c){
   if(selCats.has(c)){selCats.delete(c);el.classList.remove('on')}
   else{selCats.add(c);el.classList.add('on')}
 }
 
-/* ── SUBMIT VENT ── */
 document.addEventListener('DOMContentLoaded',()=>{
   const txt=document.getElementById('vent-txt');
   if(txt)txt.addEventListener('input',()=>{document.getElementById('vent-cnt').textContent=txt.value.length});
@@ -8389,6 +8274,17 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
   buildEmojiPicker();
   renderCats();
+  // Theme handling
+  const themeToggle = document.getElementById('set-theme');
+  if(localStorage.getItem('theme')==='light') document.body.classList.add('light');
+  if(themeToggle){
+    themeToggle.checked = document.body.classList.contains('light');
+    themeToggle.addEventListener('change',()=>{
+      if(themeToggle.checked) document.body.classList.add('light');
+      else document.body.classList.remove('light');
+      localStorage.setItem('theme', themeToggle.checked ? 'light' : 'dark');
+    });
+  }
 });
 
 async function submitVent(){
@@ -8408,7 +8304,6 @@ async function submitVent(){
   finally{btn.disabled=false;btn.textContent='Post Anonymously'}
 }
 
-/* ── FEED ── */
 async function loadFeed(append=false){
   if(feedLoading)return;feedLoading=true;
   const list=document.getElementById('feed-list');
@@ -8431,76 +8326,63 @@ async function loadFeed(append=false){
 function renderPost(p){
   const cats=(p.categories||[]).map(c=>`<span class="pill pill-sm">${esc(c)}</span>`).join('');
   const unread=p.unread_comments>0?`<span class="pill pill-sm" style="background:rgba(201,168,76,0.2);border-color:var(--gold)">${p.unread_comments} new</span>`:'';
-  return `<div class="post-card" onclick="openPost(${p.id})">
+  let reactionsHtml='';
+  if(p.reactions&&p.reactions.counts){
+    for(let [emoji,count] of Object.entries(p.reactions.counts)){
+      if(count>0){
+        const activeClass=p.reactions.user_reaction===emoji?'on':'';
+        reactionsHtml+=`<span class="rx-pill ${activeClass}" data-type="post" data-id="${p.id}" data-emoji="${emoji}">${esc(emoji)} ${count}</span>`;
+      }
+    }
+  }
+  return `<div class="post-card">
     <div class="post-meta">
       <div class="ava" style="width:34px;height:34px">${esc(p.author?.avatar||p.author?.sex||'👤')}</div>
-      <div>
-        <div class="post-name">${esc(p.author?.name||'Anonymous')} <span style="font-size:12px">${esc(p.author?.aura||'')}</span></div>
-      </div>
+      <div><div class="post-name" onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')">${esc(p.author?.name||'Anonymous')} <span style="font-size:12px">${esc(p.author?.aura||'')}</span></div></div>
       <div class="post-time">${esc(p.time_ago||'')}</div>
     </div>
     ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${cats}</div>`:''}
-    <div class="post-body">${esc(p.content)}</div>
-    <div class="post-footer">
-      <div class="post-footer-left">
-        <button class="stat-btn" onclick="event.stopPropagation();reactPost(${p.id},this)">
-          <svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/></svg>
-          ${rxCount(p.reactions)}
-        </button>
-        <span class="stat-btn">
-          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          ${p.comments||0}
-        </span>
-        ${unread}
-      </div>
-      <span class="read-more">Read <svg style="width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2.5" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span>
+    <div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
+    <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0">
+      ${reactionsHtml}
+      <button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="event.stopPropagation(); showReactionDock(this,'post',${p.id})">➕ React</button>
+    </div>
+    <div class="post-footer" onclick="openPost(${p.id})">
+      <div class="post-footer-left"><span class="stat-btn"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>${p.comments||0}</span>${unread}</div>
+      <span class="read-more">Read →</span>
     </div>
   </div>`;
 }
 
-function rxCount(rx){
-  if(!rx||!rx.counts)return 0;
-  return Object.values(rx.counts).reduce((a,b)=>a+b,0);
-}
-
-async function reactPost(postId,btn){
-  event.stopPropagation();
-  const dock=document.createElement('div');dock.className='rx-dock';
-  const emojis=['🙏','❤️','🔥','😢','😡','👎'];
-  emojis.forEach(e=>{
-    const sp=document.createElement('span');sp.className='rx-emoji';sp.textContent=e;
-    sp.onclick=async()=>{
-      dock.remove();
-      try{await api('/api/mini-app/react',{method:'POST',body:JSON.stringify({user_id:UID,post_id:postId,type:e})})}catch(err){}
-      btn.classList.add('liked');
-    };
-    dock.appendChild(sp);
-  });
-  btn.style.position='relative';btn.appendChild(dock);
-  setTimeout(()=>document.addEventListener('click',function h(){dock.remove();document.removeEventListener('click',h)},100));
-}
-
-/* ── POST DETAIL ── */
 async function openPost(id){
   currentPostId=id;go('detail',null);
-  document.querySelector('[data-page="feed"]').classList.remove('active');
   document.getElementById('detail-post').innerHTML=skelPosts(1);
   document.getElementById('detail-comments').innerHTML='';
   try{
     const d=await api(`/api/mini-app/post/${id}?viewer_id=${UID}`);
     const p=d.data;
     const cats=(p.categories||[]).map(c=>`<span class="pill pill-sm">${esc(c)}</span>`).join('');
+    let reactionsHtml='';
+    if(p.reactions&&p.reactions.counts){
+      for(let [emoji,count] of Object.entries(p.reactions.counts)){
+        if(count>0){
+          const activeClass=p.reactions.user_reaction===emoji?'on':'';
+          reactionsHtml+=`<span class="rx-pill ${activeClass}" data-type="post" data-id="${p.id}" data-emoji="${emoji}">${esc(emoji)} ${count}</span>`;
+        }
+      }
+    }
     document.getElementById('detail-post').innerHTML=`
       <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
         <div class="post-meta">
           <div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div>
-          <div>
-            <div class="post-name" style="font-size:14px">${esc(p.author?.name||'Anonymous')} <span style="font-size:12px;color:var(--text3)">${esc(p.author?.aura||'')}</span></div>
-            <div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div>
-          </div>
+          <div><div class="post-name" style="font-size:14px;cursor:pointer" onclick="showUserProfile('${p.author?.id}')">${esc(p.author?.name||'Anonymous')} <span style="font-size:12px;color:var(--text3)">${esc(p.author?.aura||'')}</span></div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div>
         </div>
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
         <div style="font-size:15px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
+        <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
+          ${reactionsHtml}
+          <button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="showReactionDock(this,'post',${p.id})">➕ React</button>
+        </div>
       </div>`;
     const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}`);
     renderComments(cd.data||[],p.author_id);
@@ -8516,24 +8398,74 @@ function renderComments(comments,postAuthorId){
     const isAuthor=String(c.author_id)===String(postAuthorId);
     const name=isAuthor?'✝️ Vent author':(c.author?.name||'Anonymous');
     const mine=String(c.author_id)===String(UID);
+    let reactionsHtml='';
+    if(c.reactions&&c.reactions.counts){
+      for(let [emoji,count] of Object.entries(c.reactions.counts)){
+        if(count>0){
+          const activeClass=c.reactions.user_reaction===emoji?'on':'';
+          reactionsHtml+=`<span class="rx-pill ${activeClass}" data-type="comment" data-id="${c.id}" data-emoji="${emoji}">${esc(emoji)} ${count}</span>`;
+        }
+      }
+    }
     return `<div class="comment-item${dep>0?' reply':''}">
       <div class="ava" style="width:28px;height:28px;font-size:13px">${esc(c.author?.sex||'👤')}</div>
       <div class="comment-body">
-        <div class="comment-name">${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div>
+        <div class="comment-name" onclick="showUserProfile('${c.author_id}')">${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div>
         <div class="comment-text">${esc(c.content)}</div>
-        <div class="comment-actions">
-          <button class="ca-btn" onclick="replyTo(${c.id})">↩ Reply</button>
-          ${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}
+        <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0">
+          ${reactionsHtml}
+          <button class="reaction-trigger" data-type="comment" data-id="${c.id}" onclick="showReactionDock(this,'comment',${c.id})">➕ React</button>
         </div>
+        <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">↩ Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div>
       </div>
     </div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
   };
   box.innerHTML=roots.map(c=>rr(c,0)).join('');
 }
 
+async function submitReaction(targetType,targetId,emoji,uiElement){
+  try{
+    const payload={user_id:UID,type:emoji};
+    if(targetType==='post') payload.post_id=parseInt(targetId);
+    else payload.comment_id=parseInt(targetId);
+    const resp=await api('/api/mini-app/react',{method:'POST',body:JSON.stringify(payload)});
+    if(resp.success){
+      const container=uiElement.closest('.reactions-container');
+      if(container){
+        let html='';
+        for(let [em,cnt] of Object.entries(resp.reactions.counts)){
+          if(cnt>0){
+            const activeClass=resp.reactions.user_reaction===em?'on':'';
+            html+=`<span class="rx-pill ${activeClass}" data-type="${targetType}" data-id="${targetId}" data-emoji="${em}">${esc(em)} ${cnt}</span>`;
+          }
+        }
+        const triggerBtn=container.querySelector('.reaction-trigger');
+        container.innerHTML=html;
+        if(triggerBtn) container.appendChild(triggerBtn);
+      }
+    }
+  }catch(e){toast(e.message);}
+}
+function showReactionDock(anchor,targetType,targetId){
+  const existing=document.querySelector('.rx-dock');
+  if(existing) existing.remove();
+  const dock=document.createElement('div');dock.className='rx-dock';
+  const emojis=['🙏','❤️','🔥','😢','😡','👎'];
+  emojis.forEach(e=>{
+    const sp=document.createElement('span');sp.className='rx-emoji';sp.textContent=e;
+    sp.onclick=async (ev)=>{
+      ev.stopPropagation();dock.remove();
+      await submitReaction(targetType,targetId,e,anchor);
+    };
+    dock.appendChild(sp);
+  });
+  anchor.parentNode.style.position='relative';
+  anchor.parentNode.appendChild(dock);
+  setTimeout(()=>{const remover=()=>{if(dock.parentNode)dock.remove(); document.removeEventListener('click',remover);}; document.addEventListener('click',remover);},50);
+}
+
 let replyToId=0;
 function replyTo(id){replyToId=id;const t=document.getElementById('comment-txt');t.placeholder='Replying…';t.focus()}
-
 async function postComment(){
   const txt=document.getElementById('comment-txt').value.trim();
   if(!txt||!currentPostId)return;
@@ -8545,7 +8477,6 @@ async function postComment(){
     renderComments(cd.data||[],null);
   }catch(e){toast(e.message)}finally{btn.disabled=false}
 }
-
 async function delComment(id){
   if(!confirm('Delete this response?'))return;
   try{await api(`/api/mini-app/comment/${id}`,{method:'DELETE',body:JSON.stringify({user_id:UID})});
@@ -8553,7 +8484,6 @@ async function delComment(id){
     renderComments(cd.data||[],null);}catch(e){toast(e.message)}
 }
 
-/* ── LEADERBOARD ── */
 async function loadLB(){
   const box=document.getElementById('lb-content');box.innerHTML=skelLB();
   try{
@@ -8562,30 +8492,16 @@ async function loadLB(){
     if(!users.length){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">No data yet</div>';return}
     const [g,s,b,...rest]=users;
     let html='';
-    if(g){html+=`<div class="lb-hero">
-      <span class="lb-crown">${esc(g.weekly_badge||'👑')}</span>
-      <div class="lb-top-name">${esc(g.name)}</div>
-      <div class="lb-top-pts">${esc(g.aura)} ${g.points} pts</div>
-      <div class="lb-medals">
-        ${s?`<div class="lb-medal-card"><div class="lb-medal-rank">🥈</div><div class="lb-medal-name">${esc(s.name)}</div><div class="lb-medal-pts">${s.points} pts</div></div>`:''}
-        ${b?`<div class="lb-medal-card"><div class="lb-medal-rank">🥉</div><div class="lb-medal-name">${esc(b.name)}</div><div class="lb-medal-pts">${b.points} pts</div></div>`:''}
-      </div>
-    </div>`}
+    if(g){html+=`<div class="lb-hero"><span class="lb-crown">${esc(g.weekly_badge||'👑')}</span><div class="lb-top-name">${esc(g.name)}</div><div class="lb-top-pts">${esc(g.aura)} ${g.points} pts</div><div class="lb-medals">${s?`<div class="lb-medal-card"><div class="lb-medal-rank">🥈</div><div class="lb-medal-name">${esc(s.name)}</div><div class="lb-medal-pts">${s.points} pts</div></div>`:''}${b?`<div class="lb-medal-card"><div class="lb-medal-rank">🥉</div><div class="lb-medal-name">${esc(b.name)}</div><div class="lb-medal-pts">${b.points} pts</div></div>`:''}</div></div>`}
     if(rest.length){
       html+='<div class="section-label">More contributors</div><div class="lb-list card">';
-      rest.forEach((u,i)=>{html+=`<div class="lb-row">
-        <div class="lb-rank">${i+4}</div>
-        <div class="ava" style="width:36px;height:36px">${esc(u.avatar||u.sex||'👤')}</div>
-        <div class="lb-info"><div class="lb-info-name">${esc(u.weekly_badge||'')} ${esc(u.name)}</div><div class="lb-info-aura">${esc(u.aura)}</div></div>
-        <div class="lb-pts">${u.points}</div>
-      </div>`});
+      rest.forEach((u,i)=>{html+=`<div class="lb-row"><div class="lb-rank">${i+4}</div><div class="ava" style="width:36px;height:36px">${esc(u.avatar||u.sex||'👤')}</div><div class="lb-info"><div class="lb-info-name" onclick="showUserProfile('${u.id}')">${esc(u.weekly_badge||'')} ${esc(u.name)}</div><div class="lb-info-aura">${esc(u.aura)}</div></div><div class="lb-pts">${u.points}</div></div>`});
       html+='</div>';
     }
     box.innerHTML=html;
   }catch(e){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>'}
 }
 
-/* ── PROFILE ── */
 async function loadProfile(){
   if(!UID)return;
   const box=document.getElementById('profile-content');box.innerHTML=skelProfile();
@@ -8595,20 +8511,12 @@ async function loadProfile(){
     const postsR=await api(`/api/mini-app/get-posts?user_id=${UID}&page=1`);
     const myPosts=(postsR.data||[]).filter(x=>x.author?.is_me);
     box.innerHTML=`
-      <div class="profile-hero">
-        <div style="position:absolute;top:16px;right:16px">
-          <button class="btn-ghost" onclick="setupEdit()" style="font-size:12px;padding:6px 12px">Edit</button>
-        </div>
-        <div class="profile-ava-wrap">${esc(p.avatar||p.sex||'👤')}</div>
-        <div class="profile-name">${esc(p.weekly_badge||'')} ${esc(p.name)}</div>
-        <div style="margin-top:6px"><span class="pill">${esc(p.aura)} ${p.rating} pts</span></div>
-        <div class="profile-stats">
-          <div class="profile-stat"><div class="profile-stat-num">${p.stats?.posts||0}</div><div class="profile-stat-lbl">Vents</div></div>
-          <div class="profile-stat"><div class="profile-stat-num">${p.stats?.followers||0}</div><div class="profile-stat-lbl">Followers</div></div>
-          <div class="profile-stat"><div class="profile-stat-num">${p.stats?.comments||0}</div><div class="profile-stat-lbl">Replies</div></div>
-        </div>
-      </div>
-      ${myPosts.length?`<div class="section-label">My recent vents</div>`+'<div style="padding:0 16px">'+myPosts.slice(0,3).map(p=>`<div class="post-card" onclick="openPost(${p.id})" style="margin:0 0 10px"><div class="post-body" style="-webkit-line-clamp:2">${esc(p.content)}</div><div style="font-size:11px;color:var(--text3);margin-top:6px">${esc(p.time_ago)}</div></div>`).join('')+'</div>':''}
+      <div class="profile-hero"><div style="position:absolute;top:16px;right:16px"><button class="btn-ghost" onclick="setupEdit()" style="font-size:12px;padding:6px 12px">Edit</button></div>
+      <div class="profile-ava-wrap">${esc(p.avatar||p.sex||'👤')}</div>
+      <div class="profile-name">${esc(p.weekly_badge||'')} ${esc(p.name)}</div>
+      <div style="margin-top:6px"><span class="pill">${esc(p.aura)} ${p.rating} pts</span></div>
+      <div class="profile-stats"><div class="profile-stat"><div class="profile-stat-num">${p.stats?.posts||0}</div><div class="profile-stat-lbl">Vents</div></div><div class="profile-stat"><div class="profile-stat-num">${p.stats?.followers||0}</div><div class="profile-stat-lbl">Followers</div></div><div class="profile-stat"><div class="profile-stat-num">${p.stats?.comments||0}</div><div class="profile-stat-lbl">Replies</div></div></div></div>
+      ${myPosts.length?`<div class="section-label">My recent vents</div><div style="padding:0 16px">${myPosts.slice(0,3).map(p=>`<div class="post-card" onclick="openPost(${p.id})" style="margin:0 0 10px"><div class="post-body" style="-webkit-line-clamp:2">${esc(p.content)}</div><div style="font-size:11px;color:var(--text3);margin-top:6px">${esc(p.time_ago)}</div></div>`).join('')}</div>`:''}
     `;
   }catch(e){box.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">Could not load profile</div>'}
 }
@@ -8621,16 +8529,11 @@ function setupEdit(){
   buildEmojiPicker();
   go('edit',null);
 }
-
 function buildEmojiPicker(){
   const g=document.getElementById('ep-emoji');if(!g)return;
   g.innerHTML=EMOJIS.map(e=>`<div class="emoji-opt${selEmoji===e?' sel':''}" onclick="pickEmoji(this,'${e}')">${e}</div>`).join('');
 }
-
-function pickEmoji(el,e){
-  selEmoji=e;document.querySelectorAll('.emoji-opt').forEach(x=>x.classList.remove('sel'));el.classList.add('sel');
-}
-
+function pickEmoji(el,e){ selEmoji=e; document.querySelectorAll('.emoji-opt').forEach(x=>x.classList.remove('sel')); el.classList.add('sel'); }
 async function saveProfile(){
   const name=document.getElementById('ep-name').value.trim();
   if(!name)return toast('Name required');
@@ -8641,7 +8544,6 @@ async function saveProfile(){
   }catch(e){toast(e.message)}finally{btn.disabled=false}
 }
 
-/* ── SETTINGS ── */
 async function loadSettings(){
   try{const d=await api(`/api/mini-app/settings/${UID}`);
     document.getElementById('set-notif').checked=d.data.notifications;
@@ -8651,36 +8553,20 @@ async function loadSettings(){
 async function saveSettings(){
   const btn=document.getElementById('save-settings-btn');btn.disabled=true;
   try{
-    await api(`/api/mini-app/settings/${UID}`,{method:'POST',body:JSON.stringify({
-      notifications:document.getElementById('set-notif').checked,
-      privacy_public:document.getElementById('set-priv').checked
-    })});toast('Saved');
+    await api(`/api/mini-app/settings/${UID}`,{method:'POST',body:JSON.stringify({notifications:document.getElementById('set-notif').checked,privacy_public:document.getElementById('set-priv').checked})});
+    toast('Saved');
   }catch(e){toast(e.message)}finally{btn.disabled=false}
 }
 
-/* ── CHATS ── */
 async function loadChats(){
   const list=document.getElementById('chats-list');list.innerHTML=skelChats();
   try{
     const d=await api(`/api/mini-app/chats?user_id=${UID}`);
     const chats=d.data||[];
     const unread=chats.reduce((a,c)=>a+(c.unread_count||0),0);
-    document.getElementById('chat-unread-label').textContent=unread?`${unread} unread message${unread>1?'s':''}` :'All caught up';
+    document.getElementById('chat-unread-label').textContent=unread?`${unread} unread message${unread>1?'s':''}`:'All caught up';
     if(!chats.length){list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3);font-size:14px">No messages yet</div>';return}
-    list.innerHTML=chats.map(c=>`
-      <div class="chat-item" onclick="openCR('${c.partner_id}','${esc(c.partner_name||'Anonymous')}','${esc(c.partner_avatar||c.partner_sex||'👤')}')">
-        <div class="ava" style="width:44px;height:44px;font-size:18px">${esc(c.partner_avatar||c.partner_sex||'👤')}</div>
-        <div class="chat-item-right">
-          <div class="chat-item-top">
-            <span class="chat-item-name">${esc(c.partner_name||'Anonymous')}</span>
-            <span class="chat-item-time">${esc(c.time_ago||'')}</span>
-          </div>
-          <div style="display:flex;align-items:center">
-            <div class="chat-item-preview">${c.is_mine?'You: ':''}${esc(c.last_message||'')}</div>
-            ${c.unread_count>0?`<span class="unread-badge" style="margin-left:8px">${c.unread_count}</span>`:''}
-          </div>
-        </div>
-      </div>`).join('');
+    list.innerHTML=chats.map(c=>`<div class="chat-item" onclick="openCR('${c.partner_id}','${esc(c.partner_name||'Anonymous')}','${esc(c.partner_avatar||c.partner_sex||'👤')}')"><div class="ava" style="width:44px;height:44px;font-size:18px">${esc(c.partner_avatar||c.partner_sex||'👤')}</div><div class="chat-item-right"><div class="chat-item-top"><span class="chat-item-name">${esc(c.partner_name||'Anonymous')}</span><span class="chat-item-time">${esc(c.time_ago||'')}</span></div><div style="display:flex;align-items:center"><div class="chat-item-preview">${c.is_mine?'You: ':''}${esc(c.last_message||'')}</div>${c.unread_count>0?`<span class="unread-badge" style="margin-left:8px">${c.unread_count}</span>`:''}</div></div></div>`).join('');
   }catch(e){list.innerHTML='<div style="padding:20px;color:var(--text3)">Failed to load</div>'}
 }
 
@@ -8688,7 +8574,6 @@ function openCR(pid,name,ava){
   crPartnerId=pid;
   document.getElementById('cr-name').textContent=name;
   document.getElementById('cr-ava').textContent=ava;
-  document.getElementById('cr-room')?.classList.remove('open');
   document.getElementById('chat-room').classList.add('open');
   document.getElementById('cr-txt').value='';
   fetchCRMsgs(true);
@@ -8704,11 +8589,7 @@ async function fetchCRMsgs(scroll=false){
     const d=await api(`/api/mini-app/chats/${crPartnerId}?user_id=${UID}`);
     const box=document.getElementById('cr-msgs');
     const wasBottom=box.scrollHeight-box.scrollTop<=box.clientHeight+80;
-    box.innerHTML=(d.data||[]).map(m=>`
-      <div class="msg-row ${m.is_mine?'me':'them'}">
-        <div class="msg-bubble">${esc(m.content)}</div>
-        <div class="msg-time">${esc(m.timestamp||'')}</div>
-      </div>`).join('');
+    box.innerHTML=(d.data||[]).map(m=>`<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble">${esc(m.content)}</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`).join('');
     if(scroll||wasBottom)box.scrollTop=box.scrollHeight;
   }catch(e){}
 }
@@ -8720,18 +8601,40 @@ async function crSend(){
     fetchCRMsgs(true);}catch(e){toast(e.message)}
 }
 
-/* ── SKELETONS ── */
-function skelPosts(n){return Array(n).fill(`<div class="post-card" style="cursor:default">
-  <div style="display:flex;gap:10px;margin-bottom:12px"><div class="skel" style="width:34px;height:34px;border-radius:50%"></div><div style="flex:1"><div class="skel" style="height:12px;width:60%;margin-bottom:6px"></div><div class="skel" style="height:10px;width:30%"></div></div></div>
-  <div class="skel" style="height:13px;margin-bottom:6px"></div>
-  <div class="skel" style="height:13px;width:80%;margin-bottom:6px"></div>
-  <div class="skel" style="height:13px;width:60%"></div>
-</div>`).join('')}
+async function showUserProfile(userId){
+  if(!userId) return;
+  if(String(userId)===String(UID)){ go('profile'); return; }
+  const modal=document.getElementById('profileModal');
+  const contentDiv=document.getElementById('modalContent');
+  modal.classList.add('active');
+  contentDiv.innerHTML='<div class="skel" style="height:150px;"></div>';
+  try{
+    const data=await api(`/api/mini-app/profile/${userId}?viewer_id=${UID}`);
+    const u=data.data;
+    contentDiv.innerHTML=`
+      <div class="modal-avatar">${esc(u.avatar||u.sex||'👤')}</div>
+      <div class="modal-name">${esc(u.name)}</div>
+      <div class="modal-stats"><div class="modal-stat"><div class="modal-stat-num">${u.stats?.posts||0}</div><div class="modal-stat-lbl">Vents</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.comments||0}</div><div class="modal-stat-lbl">Replies</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.followers||0}</div><div class="modal-stat-lbl">Followers</div></div></div>
+      <button class="modal-btn modal-btn-primary" id="chatWithUserBtn">✉️ Send Message</button>
+    `;
+    document.getElementById('chatWithUserBtn').onclick=()=>{
+      closeProfileModal();
+      // Check existing chat acceptance?
+      openCR(userId, u.name, u.avatar||u.sex);
+    };
+  }catch(e){ contentDiv.innerHTML='<div style="color:var(--text3)">Failed to load profile</div>'; }
+}
+function closeProfileModal(e){
+  const modal=document.getElementById('profileModal');
+  if(e && e.target !== modal) return;
+  modal.classList.remove('active');
+}
+
+function skelPosts(n){return Array(n).fill(`<div class="post-card" style="cursor:default"><div style="display:flex;gap:10px;margin-bottom:12px"><div class="skel" style="width:34px;height:34px;border-radius:50%"></div><div style="flex:1"><div class="skel" style="height:12px;width:60%;margin-bottom:6px"></div><div class="skel" style="height:10px;width:30%"></div></div></div><div class="skel" style="height:13px;margin-bottom:6px"></div><div class="skel" style="height:13px;width:80%;margin-bottom:6px"></div><div class="skel" style="height:13px;width:60%"></div></div>`).join('')}
 function skelLB(){return `<div style="margin:20px 16px 0"><div class="skel" style="height:180px;border-radius:20px;margin-bottom:12px"></div><div class="skel" style="height:14px;margin-bottom:8px"></div><div class="skel" style="height:14px;width:70%"></div></div>`}
 function skelProfile(){return `<div style="margin:20px 16px 0"><div class="skel" style="height:200px;border-radius:20px"></div></div>`}
 function skelChats(){return Array(4).fill(`<div style="display:flex;gap:12px;padding:14px 16px;border-bottom:0.5px solid var(--border)"><div class="skel" style="width:44px;height:44px;border-radius:50%;flex-shrink:0"></div><div style="flex:1"><div class="skel" style="height:13px;width:50%;margin-bottom:6px"></div><div class="skel" style="height:11px;width:80%"></div></div></div>`).join('')}
 
-/* ── AUTH ── */
 async function init(){
   const tg=window.Telegram?.WebApp;
   if(tg){try{tg.expand();tg.ready()}catch(e){}}
@@ -8743,10 +8646,8 @@ async function init(){
   }
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='flex';
-  if(UID){loadFeed()}
-  else{
-    document.getElementById('feed-list').innerHTML='<div style="text-align:center;padding:60px 20px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">🔒</div><div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div><div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';
-  }
+  if(UID){loadFeed();}
+  else{document.getElementById('feed-list').innerHTML='<div style="text-align:center;padding:60px 20px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">🔒</div><div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div><div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';}
 }
 init();
 </script>
