@@ -7544,16 +7544,14 @@ def main():
 
 @flask_app.route('/mini_app')
 def mini_app_page():
-    """Complete Mini App - returns the old UI style with new features integrated."""
-
-    # All these are already loaded globally in bot.py via load_dotenv()
-    _bot      = BOT_USERNAME
-    _primary  = PRIMARY_COLOR        # e.g. "#c9a84c"
-    _secondary= SECONDARY_COLOR      # e.g. "#e8c97a"
-    _card_bg  = CARD_BG_COLOR        # e.g. "#161410"
-    _border   = BORDER_COLOR         # e.g. "#1e1c18"
-    _text     = TEXT_COLOR           # e.g. "#e8e0d0"
-    _rgb      = PRIMARY_RGB          # e.g. "201, 168, 76"
+    """Complete Mini App - returns the premium UI."""
+    _bot = BOT_USERNAME
+    _primary = PRIMARY_COLOR
+    _secondary = SECONDARY_COLOR
+    _card_bg = CARD_BG_COLOR
+    _border = BORDER_COLOR
+    _text = TEXT_COLOR
+    _rgb = PRIMARY_RGB
 
     html = ("""<!DOCTYPE html>
 <html lang="en">
@@ -7588,7 +7586,7 @@ def mini_app_page():
       color: var(--text);
       min-height: 100vh;
       overflow-x: hidden;
-      padding-bottom: calc(var(--nav-h) + 120px); /* Extra padding for footer and nav */
+      padding-bottom: calc(var(--nav-h) + 120px);
     }
 
     /* ===== SCROLLBAR ===== */
