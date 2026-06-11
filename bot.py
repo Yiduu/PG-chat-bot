@@ -7584,7 +7584,6 @@ def mini_app_page():
   --radius-sm:10px;
   --radius-xs:6px;
 }
-/* Light theme overrides */
 body.light {
   --bg:#f5f3f0;
   --bg2:#e8e4dd;
@@ -7607,7 +7606,6 @@ body{
   overscroll-behavior:none;
   transition:background 0.2s, color 0.2s;
 }
-
 #shell{
   position:fixed;inset:0;
   display:flex;flex-direction:column;
@@ -7619,10 +7617,8 @@ body{
   -webkit-overflow-scrolling:touch;
 }
 #pages::-webkit-scrollbar{display:none}
-
 .page{display:none;padding:0 0 8px}
 .page.active{display:block}
-
 #nav{
   flex-shrink:0;
   height:var(--nav-h);
@@ -7653,18 +7649,13 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   background:var(--gold);border-radius:2px 2px 0 0;
   transition:left 0.3s cubic-bezier(.4,0,.2,1);
 }
-
 .page-head{
   padding:20px 20px 0;
   display:flex;align-items:center;justify-content:space-between;
 }
 .page-head h1{font-size:26px;font-weight:700;letter-spacing:-0.5px;color:var(--text)}
 .page-head-sub{font-size:13px;color:var(--text3);margin-top:2px}
-.logo-img{
-  width:48px;height:48px;border-radius:12px;object-fit:cover;
-  box-shadow:0 2px 8px rgba(0,0,0,0.1);
-}
-
+.logo-img{width:48px;height:48px;border-radius:12px;object-fit:cover;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
 .card{
   background:var(--glass);
   border:0.5px solid var(--border);
@@ -7676,7 +7667,6 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   background:linear-gradient(135deg,rgba(201,168,76,0.08) 0%,rgba(201,168,76,0.03) 100%);
   border-color:var(--border2);
 }
-
 .pill{
   display:inline-flex;align-items:center;gap:5px;
   padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;
@@ -7684,14 +7674,12 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   color:var(--gold2);
 }
 .pill-sm{padding:2px 8px;font-size:10px}
-
 .ava{
   border-radius:50%;background:linear-gradient(135deg,var(--bg3),var(--bg2));
   border:1.5px solid var(--border2);
   display:flex;align-items:center;justify-content:center;
   flex-shrink:0;font-size:1.1em;
 }
-
 .input-area{
   width:100%;background:var(--bg2);border:0.5px solid var(--border);
   border-radius:var(--radius-sm);padding:14px 16px;
@@ -7701,7 +7689,6 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 }
 .input-area:focus{border-color:rgba(201,168,76,0.4)}
 .input-area::placeholder{color:var(--text3)}
-
 .btn-gold{
   width:100%;padding:15px;border-radius:var(--radius-sm);border:none;
   background:var(--gold);color:#0c0b09;
@@ -7712,14 +7699,12 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 }
 .btn-gold:active{transform:scale(0.98);opacity:0.9}
 .btn-gold:disabled{opacity:0.4;cursor:not-allowed}
-
 .btn-ghost{
   background:none;border:0.5px solid var(--border2);border-radius:var(--radius-xs);
   color:var(--gold);padding:8px 14px;font-size:13px;font-weight:600;
   font-family:'Inter',sans-serif;cursor:pointer;
   -webkit-tap-highlight-color:transparent;
 }
-
 .cat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:12px 0}
 .cat-chip{
   padding:10px 12px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;
@@ -7732,7 +7717,6 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .cat-check{width:16px;height:16px;border-radius:4px;border:1.5px solid currentColor;
   display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
 .cat-chip.on .cat-check::after{content:'✓'}
-
 .post-card{
   margin:10px 16px 0;
   background:var(--glass);border:0.5px solid var(--border);
@@ -7754,9 +7738,7 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   font-weight:500;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;
   -webkit-tap-highlight-color:transparent;padding:0}
 .stat-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8}
-.read-more{font-size:12px;font-weight:600;color:var(--gold);
-  display:flex;align-items:center;gap:3px}
-
+.read-more{font-size:12px;font-weight:600;color:var(--gold);display:flex;align-items:center;gap:3px}
 .lb-hero{
   margin:20px 16px 0;
   background:linear-gradient(135deg,rgba(201,168,76,0.1),rgba(201,168,76,0.04));
@@ -7792,7 +7774,6 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .lb-info-name:hover{color:var(--gold)}
 .lb-info-aura{font-size:11px;color:var(--text3);margin-top:1px}
 .lb-pts{font-size:14px;font-weight:700;color:var(--gold)}
-
 .profile-hero{
   margin:20px 16px 0;
   background:linear-gradient(160deg,var(--bg3),var(--bg2));
@@ -7812,7 +7793,6 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .profile-stat{text-align:center}
 .profile-stat-num{font-size:20px;font-weight:700;color:var(--gold)}
 .profile-stat-lbl{font-size:11px;color:var(--text3);margin-top:2px}
-
 .setting-row{
   display:flex;align-items:center;padding:16px 0;
   border-bottom:0.5px solid var(--border);gap:14px;
@@ -7841,17 +7821,6 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   background:var(--text3);transition:all 0.25s cubic-bezier(.4,0,.2,1);
 }
 .toggle input:checked ~ .toggle-thumb{left:22px;background:var(--gold)}
-
-.compose-strip{
-  display:flex;align-items:center;gap:10px;
-  padding:14px 16px;margin:12px 16px 0;
-  background:var(--glass);border:0.5px solid var(--border);
-  border-radius:var(--radius);cursor:pointer;
-  -webkit-tap-highlight-color:transparent;
-}
-.compose-strip:active{background:var(--glass2)}
-.compose-placeholder{color:var(--text3);font-size:14px;flex:1}
-
 .search-wrap{
   display:flex;align-items:center;gap:10px;
   padding:12px 16px;background:var(--glass);
@@ -7862,24 +7831,20 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .search-wrap input{flex:1;background:none;border:none;outline:none;color:var(--text);
   font-family:'Inter',sans-serif;font-size:14px}
 .search-wrap input::placeholder{color:var(--text3)}
-
 .char-count{font-size:11px;color:var(--text3);text-align:right;margin:6px 0 12px}
-
 .skel{
   background:linear-gradient(90deg,var(--bg2) 25%,var(--bg3) 50%,var(--bg2) 75%);
   background-size:200% 100%;animation:shimmer 1.4s infinite;
   border-radius:var(--radius-xs);
 }
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
-
 #toast{
-  position:fixed;bottom:calc(var(--nav-h) + 16px);left:50%;transform:translateX(-50%) translateY(10px);
+  position:fixed;bottom:calc(var(--nav-h) + 80px);left:50%;transform:translateX(-50%) translateY(10px);
   background:var(--gold);color:#0c0b09;padding:10px 20px;border-radius:20px;
   font-size:13px;font-weight:700;opacity:0;pointer-events:none;
   transition:all 0.25s;z-index:999;white-space:nowrap;
 }
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-
 #page-detail{position:relative}
 .back-btn{
   display:flex;align-items:center;gap:6px;
@@ -7901,30 +7866,30 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   font-size:12px;font-weight:500;color:var(--text3);font-family:'Inter',sans-serif;
   -webkit-tap-highlight-color:transparent;padding:0}
 .ca-btn:hover{color:var(--gold)}
-.comment-input-row{
+/* Fixed comment input bar above nav */
+.comment-input-bar{
+  position:fixed;bottom:var(--nav-h);left:0;right:0;
   display:flex;align-items:flex-end;gap:8px;
   padding:12px 16px;
-  position:sticky;bottom:0;
   background:rgba(12,11,9,0.95);
   border-top:0.5px solid var(--border);
   backdrop-filter:blur(12px);
-  z-index:20;
+  z-index:90;
 }
-body.light .comment-input-row{background:rgba(245,243,240,0.95);}
-.comment-input-row textarea{
+body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
+.comment-input-bar textarea{
   flex:1;background:var(--bg2);border:0.5px solid var(--border);
   border-radius:var(--radius-xs);padding:10px 12px;
   color:var(--text);font-family:'Inter',sans-serif;font-size:13px;
   outline:none;resize:none;max-height:100px;min-height:38px;
 }
-.comment-input-row textarea:focus{border-color:rgba(201,168,76,0.4)}
-.comment-input-row button{
+.comment-input-bar textarea:focus{border-color:rgba(201,168,76,0.4)}
+.comment-input-bar button{
   width:36px;height:36px;border-radius:50%;
   background:var(--gold);border:none;cursor:pointer;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
 }
-.comment-input-row button svg{width:16px;height:16px;stroke:#0c0b09;fill:none;stroke-width:2.2}
-
+.comment-input-bar button svg{width:16px;height:16px;stroke:#0c0b09;fill:none;stroke-width:2.2}
 .chat-item{
   display:flex;align-items:center;gap:12px;
   padding:14px 16px;border-bottom:0.5px solid var(--border);
@@ -7938,16 +7903,12 @@ body.light .comment-input-row{background:rgba(245,243,240,0.95);}
 .chat-item-time{font-size:11px;color:var(--text3)}
 .chat-item-preview{font-size:12px;color:var(--text3);margin-top:2px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.unread-dot{
-  width:8px;height:8px;border-radius:50%;background:var(--gold);flex-shrink:0;margin-left:8px;
-}
 .unread-badge{
   background:var(--gold);color:#0c0b09;font-size:10px;font-weight:800;
   min-width:18px;height:18px;border-radius:9px;
   display:flex;align-items:center;justify-content:center;padding:0 4px;
   flex-shrink:0;
 }
-
 #chat-room{
   position:fixed;inset:0;z-index:200;
   background:var(--bg);
@@ -8003,7 +7964,6 @@ body.light .comment-input-row{background:rgba(245,243,240,0.95);}
   -webkit-tap-highlight-color:transparent;
 }
 .cr-send svg{width:17px;height:17px;stroke:#0c0b09;fill:none;stroke-width:2.2}
-
 #auth{
   position:fixed;inset:0;background:var(--bg);
   display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -8016,15 +7976,12 @@ body.light .comment-input-row{background:rgba(245,243,240,0.95);}
 }
 @keyframes spin{to{transform:rotate(360deg)}}
 .auth-label{font-size:15px;font-weight:600;color:var(--gold)}
-
 .section-label{
   font-size:11px;font-weight:700;letter-spacing:1.2px;
   text-transform:uppercase;color:var(--text3);
   padding:18px 16px 8px;
 }
-
 .divider{height:0.5px;background:var(--border);margin:0}
-
 .input-label{font-size:12px;font-weight:600;color:var(--text3);margin-bottom:6px;display:block;letter-spacing:0.3px;text-transform:uppercase}
 .emoji-picker{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:8px 0 0}
 .emoji-opt{
@@ -8034,7 +7991,6 @@ body.light .comment-input-row{background:rgba(245,243,240,0.95);}
   -webkit-tap-highlight-color:transparent;
 }
 .emoji-opt.sel{border-color:var(--gold);background:rgba(201,168,76,0.1)}
-
 .rx-dock{
   position:absolute;bottom:calc(100% + 8px);left:0;
   background:var(--bg2);border:0.5px solid var(--border2);
@@ -8058,13 +8014,10 @@ body.light .comment-input-row{background:rgba(245,243,240,0.95);}
   padding:4px 12px;font-size:12px;color:var(--text3);cursor:pointer;
 }
 .reaction-trigger:hover{color:var(--gold);border-color:var(--gold);}
-
 .page-head-wrap{
   background:linear-gradient(180deg,rgba(201,168,76,0.05) 0%,transparent 100%);
   padding-bottom:4px;
 }
-
-/* Profile Modal */
 .modal-mask{
   position:fixed;top:0;left:0;width:100%;height:100%;
   background:rgba(0,0,0,0.7);backdrop-filter:blur(5px);
@@ -8095,95 +8048,48 @@ body.light .comment-input-row{background:rgba(245,243,240,0.95);}
 </style>
 </head>
 <body>
-<div id="auth">
-  <div class="auth-ring"></div>
-  <span class="auth-label">Connecting…</span>
-</div>
+<div id="auth"><div class="auth-ring"></div><span class="auth-label">Connecting…</span></div>
 
-<div id="app" style="display:none;height:100vh;display:none;flex-direction:column">
+<div id="app" style="display:none;height:100vh;flex-direction:column">
 <div id="shell">
   <div id="pages">
-
-    <!-- VENT PAGE -->
     <div class="page active" id="page-vent">
-      <div class="page-head-wrap">
-        <div class="page-head" style="padding-top:24px">
-          <div>
-            <h1>Share</h1>
-            <div class="page-head-sub">Speak your heart, anonymously</div>
-          </div>
-          <img src="/static/images/vent logo.png" class="logo-img" onerror="this.style.display='none'">
-        </div>
-      </div>
-      <div class="section-label">Categories</div>
-      <div style="padding:0 16px"><div id="cat-grid" class="cat-grid"></div></div>
-      <div style="padding:0 16px;margin-top:14px">
-        <textarea id="vent-txt" class="input-area" rows="5" placeholder="What's on your heart today…" maxlength="5000"></textarea>
-        <div class="char-count"><span id="vent-cnt">0</span> / 5000</div>
-        <button class="btn-gold" id="submit-vent">Post Anonymously</button>
-      </div>
+      <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Share</h1><div class="page-head-sub">Speak your heart, anonymously</div></div><img src="/static/images/vent logo.png" class="logo-img" onerror="this.style.display='none'"></div></div>
+      <div class="section-label">Categories</div><div style="padding:0 16px"><div id="cat-grid" class="cat-grid"></div></div>
+      <div style="padding:0 16px;margin-top:14px"><textarea id="vent-txt" class="input-area" rows="5" placeholder="What's on your heart today…" maxlength="5000"></textarea><div class="char-count"><span id="vent-cnt">0</span> / 5000</div><button class="btn-gold" id="submit-vent">Post Anonymously</button></div>
     </div>
-
-    <!-- FEED PAGE -->
     <div class="page" id="page-feed">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Community</h1><div class="page-head-sub">Read, reflect, respond</div></div></div></div>
       <div class="search-wrap"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><input id="search-inp" type="text" placeholder="Search vents…"></div>
-      <div id="feed-list"></div>
-      <div id="feed-more" style="padding:16px;text-align:center;display:none"><button class="btn-ghost" id="load-more-btn">Load more</button></div>
+      <div id="feed-list"></div><div id="feed-more" style="padding:16px;text-align:center;display:none"><button class="btn-ghost" id="load-more-btn">Load more</button></div>
     </div>
-
-    <!-- POST DETAIL -->
     <div class="page" id="page-detail">
       <button class="back-btn" onclick="gotoFeed()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Back</button>
       <div id="detail-post"></div>
       <div class="section-label">Responses</div>
       <div id="detail-comments" style="padding:0 16px 80px"></div>
-      <div class="comment-input-row">
-        <textarea id="comment-txt" placeholder="Add a response…" rows="1"></textarea>
-        <button id="send-comment"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
-      </div>
     </div>
-
-    <!-- LEADERBOARD -->
     <div class="page" id="page-leaderboard"><div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Top Voices</h1><div class="page-head-sub">Weekly community leaders</div></div></div></div><div id="lb-content"></div></div>
-
-    <!-- PROFILE -->
     <div class="page" id="page-profile"><div id="profile-content"></div></div>
-
-    <!-- EDIT PROFILE -->
     <div class="page" id="page-edit">
       <button class="back-btn" onclick="go('profile')"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Profile</button>
-      <div style="padding:0 16px">
-        <label class="input-label">Display name</label><input id="ep-name" class="input-area" type="text" placeholder="Your anonymous name" style="height:44px;margin-bottom:16px">
-        <label class="input-label">Bio</label><textarea id="ep-bio" class="input-area" rows="3" placeholder="A short intro…" style="margin-bottom:16px"></textarea>
-        <label class="input-label">Avatar</label><div id="ep-emoji" class="emoji-picker" style="margin-bottom:20px"></div>
-        <button class="btn-gold" id="save-profile-btn">Save changes</button>
-      </div>
+      <div style="padding:0 16px"><label class="input-label">Display name</label><input id="ep-name" class="input-area" type="text" placeholder="Your anonymous name" style="height:44px;margin-bottom:16px"><label class="input-label">Bio</label><textarea id="ep-bio" class="input-area" rows="3" placeholder="A short intro…" style="margin-bottom:16px"></textarea><label class="input-label">Avatar</label><div id="ep-emoji" class="emoji-picker" style="margin-bottom:20px"></div><button class="btn-gold" id="save-profile-btn">Save changes</button></div>
     </div>
-
-    <!-- SETTINGS -->
     <div class="page" id="page-settings">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Settings</h1><div class="page-head-sub">Manage your preferences</div></div></div></div>
-      <div class="card" style="margin-top:14px">
-        <div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div class="setting-label"><div class="setting-label-title">Notifications</div><div class="setting-label-sub">Replies and interactions</div></div><label class="toggle"><input type="checkbox" id="set-notif"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-        <div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="setting-label"><div class="setting-label-title">Public profile</div><div class="setting-label-sub">Show stats to others</div></div><label class="toggle"><input type="checkbox" id="set-priv"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-        <div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><div class="setting-label"><div class="setting-label-title">Light / Dark mode</div><div class="setting-label-sub">Switch theme</div></div><label class="toggle"><input type="checkbox" id="set-theme"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-      </div>
+      <div class="card" style="margin-top:14px"><div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div class="setting-label"><div class="setting-label-title">Notifications</div><div class="setting-label-sub">Replies and interactions</div></div><label class="toggle"><input type="checkbox" id="set-notif"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+      <div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="setting-label"><div class="setting-label-title">Public profile</div><div class="setting-label-sub">Show stats to others</div></div><label class="toggle"><input type="checkbox" id="set-priv"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+      <div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><div class="setting-label"><div class="setting-label-title">Light / Dark mode</div><div class="setting-label-sub">Switch theme</div></div><label class="toggle"><input type="checkbox" id="set-theme"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div></div>
       <div style="padding:16px"><button class="btn-gold" id="save-settings-btn">Save settings</button></div>
       <div class="section-label">Account</div>
       <div class="card" style="margin-top:0"><div class="setting-row" style="border:none;cursor:pointer" onclick="go('edit')"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div><div class="setting-label"><div class="setting-label-title">Edit profile</div><div class="setting-label-sub">Name, bio, avatar</div></div><svg style="width:16px;height:16px;stroke:var(--text3);fill:none;stroke-width:2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div></div>
       <div style="padding:16px 16px 0;text-align:center"><div style="font-size:11px;color:var(--text3)">Christian Vent · Built by <a href="https://t.me/YIDIDIYATAMIRUU" style="color:var(--gold);text-decoration:none">@YIDIDIYATAMIRUU</a></div></div>
     </div>
-
-    <!-- CHATS PAGE -->
     <div class="page" id="page-chats">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Messages</h1><div class="page-head-sub" id="chat-unread-label">All caught up</div></div></div></div>
-      <div class="divider" style="margin-top:14px"></div>
-      <div id="chats-list"></div>
+      <div class="divider" style="margin-top:14px"></div><div id="chats-list"></div>
     </div>
-
-  </div><!-- /pages -->
-
+  </div>
   <nav id="nav">
     <div class="nav-ink" id="nav-ink"></div>
     <button class="nav-item active" data-page="vent" onclick="go('vent',this)"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Vent</button>
@@ -8195,21 +8101,19 @@ body.light .comment-input-row{background:rgba(245,243,240,0.95);}
 </div>
 </div>
 
-<!-- CHAT ROOM -->
+<!-- FIXED COMMENT INPUT BAR (outside #pages) -->
+<div class="comment-input-bar" id="commentBar">
+  <textarea id="comment-txt" placeholder="Add a response…" rows="1"></textarea>
+  <button id="send-comment"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+</div>
+
 <div id="chat-room">
   <div class="cr-head"><button onclick="closeCR()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button><div class="ava" id="cr-ava" style="width:36px;height:36px">👤</div><div><div class="cr-name" id="cr-name">Chat</div></div></div>
   <div class="cr-msgs" id="cr-msgs"></div>
   <div class="cr-input"><textarea id="cr-txt" placeholder="Message…" rows="1"></textarea><button class="cr-send" onclick="crSend()"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button></div>
 </div>
 
-<!-- PROFILE MODAL -->
-<div id="profileModal" class="modal-mask" onclick="closeProfileModal(event)">
-  <div class="modal-container" onclick="event.stopPropagation()">
-    <span class="modal-close" onclick="closeProfileModal()">&times;</span>
-    <div id="modalContent">Loading...</div>
-  </div>
-</div>
-
+<div id="profileModal" class="modal-mask" onclick="closeProfileModal(event)"><div class="modal-container" onclick="event.stopPropagation()"><span class="modal-close" onclick="closeProfileModal()">&times;</span><div id="modalContent">Loading...</div></div></div>
 <div id="toast"></div>
 
 <script>
@@ -8249,8 +8153,12 @@ function go(name,btn){
   if(name==='settings')loadSettings();
   if(name==='chats')loadChats();
   document.getElementById('pages').scrollTop=0;
+  // Show/hide fixed comment bar
+  const bar=document.getElementById('commentBar');
+  if(name==='detail') bar.style.display='flex';
+  else bar.style.display='none';
 }
-function gotoFeed(){go('feed',document.querySelector('[data-page="feed"]'))}
+function gotoFeed(){go('feed',document.querySelector('[data-page="feed"]'));}
 
 function renderCats(){
   const g=document.getElementById('cat-grid');
@@ -8274,17 +8182,18 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
   buildEmojiPicker();
   renderCats();
-  // Theme handling
-  const themeToggle = document.getElementById('set-theme');
+  const themeToggle=document.getElementById('set-theme');
   if(localStorage.getItem('theme')==='light') document.body.classList.add('light');
   if(themeToggle){
-    themeToggle.checked = document.body.classList.contains('light');
+    themeToggle.checked=document.body.classList.contains('light');
     themeToggle.addEventListener('change',()=>{
       if(themeToggle.checked) document.body.classList.add('light');
       else document.body.classList.remove('light');
-      localStorage.setItem('theme', themeToggle.checked ? 'light' : 'dark');
+      localStorage.setItem('theme', themeToggle.checked?'light':'dark');
     });
   }
+  // Initially hide comment bar
+  document.getElementById('commentBar').style.display='none';
 });
 
 async function submitVent(){
@@ -8336,21 +8245,11 @@ function renderPost(p){
     }
   }
   return `<div class="post-card">
-    <div class="post-meta">
-      <div class="ava" style="width:34px;height:34px">${esc(p.author?.avatar||p.author?.sex||'👤')}</div>
-      <div><div class="post-name" onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')">${esc(p.author?.name||'Anonymous')} <span style="font-size:12px">${esc(p.author?.aura||'')}</span></div></div>
-      <div class="post-time">${esc(p.time_ago||'')}</div>
-    </div>
+    <div class="post-meta"><div class="ava" style="width:34px;height:34px">${esc(p.author?.avatar||p.author?.sex||'👤')}</div><div><div class="post-name" onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')">${esc(p.author?.name||'Anonymous')} <span style="font-size:12px">${esc(p.author?.aura||'')}</span></div></div><div class="post-time">${esc(p.time_ago||'')}</div></div>
     ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${cats}</div>`:''}
     <div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
-    <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0">
-      ${reactionsHtml}
-      <button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="event.stopPropagation(); showReactionDock(this,'post',${p.id})">➕ React</button>
-    </div>
-    <div class="post-footer" onclick="openPost(${p.id})">
-      <div class="post-footer-left"><span class="stat-btn"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>${p.comments||0}</span>${unread}</div>
-      <span class="read-more">Read →</span>
-    </div>
+    <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0">${reactionsHtml}<button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="event.stopPropagation(); showReactionDock(this,'post',${p.id})">➕ React</button></div>
+    <div class="post-footer" onclick="openPost(${p.id})"><div class="post-footer-left"><span class="stat-btn"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>${p.comments||0}</span>${unread}</div><span class="read-more">Read →</span></div>
   </div>`;
 }
 
@@ -8373,16 +8272,10 @@ async function openPost(id){
     }
     document.getElementById('detail-post').innerHTML=`
       <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
-        <div class="post-meta">
-          <div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div>
-          <div><div class="post-name" style="font-size:14px;cursor:pointer" onclick="showUserProfile('${p.author?.id}')">${esc(p.author?.name||'Anonymous')} <span style="font-size:12px;color:var(--text3)">${esc(p.author?.aura||'')}</span></div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div>
-        </div>
+        <div class="post-meta"><div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div><div><div class="post-name" style="font-size:14px;cursor:pointer" onclick="showUserProfile('${p.author?.id}')">${esc(p.author?.name||'Anonymous')} <span style="font-size:12px;color:var(--text3)">${esc(p.author?.aura||'')}</span></div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
         <div style="font-size:15px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
-        <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
-          ${reactionsHtml}
-          <button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="showReactionDock(this,'post',${p.id})">➕ React</button>
-        </div>
+        <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">${reactionsHtml}<button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="showReactionDock(this,'post',${p.id})">➕ React</button></div>
       </div>`;
     const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}`);
     renderComments(cd.data||[],p.author_id);
@@ -8407,18 +8300,7 @@ function renderComments(comments,postAuthorId){
         }
       }
     }
-    return `<div class="comment-item${dep>0?' reply':''}">
-      <div class="ava" style="width:28px;height:28px;font-size:13px">${esc(c.author?.sex||'👤')}</div>
-      <div class="comment-body">
-        <div class="comment-name" onclick="showUserProfile('${c.author_id}')">${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div>
-        <div class="comment-text">${esc(c.content)}</div>
-        <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0">
-          ${reactionsHtml}
-          <button class="reaction-trigger" data-type="comment" data-id="${c.id}" onclick="showReactionDock(this,'comment',${c.id})">➕ React</button>
-        </div>
-        <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">↩ Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div>
-      </div>
-    </div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
+    return `<div class="comment-item${dep>0?' reply':''}"><div class="ava" style="width:28px;height:28px;font-size:13px">${esc(c.author?.sex||'👤')}</div><div class="comment-body"><div class="comment-name" onclick="showUserProfile('${c.author_id}')">${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div><div class="comment-text">${esc(c.content)}</div><div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0">${reactionsHtml}<button class="reaction-trigger" data-type="comment" data-id="${c.id}" onclick="showReactionDock(this,'comment',${c.id})">➕ React</button></div><div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">↩ Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
   };
   box.innerHTML=roots.map(c=>rr(c,0)).join('');
 }
@@ -8601,6 +8483,24 @@ async function crSend(){
     fetchCRMsgs(true);}catch(e){toast(e.message)}
 }
 
+// Chat request functions (requires backend endpoints)
+// Expected endpoints:
+// GET  /api/mini-app/chat-request/status?user_id=XXX&target_id=YYY → { status: 'none'|'pending'|'accepted' }
+// POST /api/mini-app/chat-request/send → { success: true }
+async function getChatRequestStatus(targetId){
+  try{
+    const res=await api(`/api/mini-app/chat-request/status?user_id=${UID}&target_id=${targetId}`);
+    return res.status;
+  }catch(e){return 'none';}
+}
+async function sendChatRequest(targetId){
+  try{
+    await api('/api/mini-app/chat-request/send',{method:'POST',body:JSON.stringify({sender_id:UID,receiver_id:targetId})});
+    toast('✅ Chat request sent! The user will be notified.');
+    return true;
+  }catch(e){toast(e.message); return false;}
+}
+
 async function showUserProfile(userId){
   if(!userId) return;
   if(String(userId)===String(UID)){ go('profile'); return; }
@@ -8611,17 +8511,36 @@ async function showUserProfile(userId){
   try{
     const data=await api(`/api/mini-app/profile/${userId}?viewer_id=${UID}`);
     const u=data.data;
+    const requestStatus=await getChatRequestStatus(userId);
+    let buttonHtml='';
+    if(requestStatus==='accepted'){
+      buttonHtml=`<button class="modal-btn modal-btn-primary" id="chatActionBtn">💬 Open Chat</button>`;
+    }else if(requestStatus==='pending'){
+      buttonHtml=`<button class="modal-btn modal-btn-secondary" disabled style="opacity:0.6">⏳ Request Pending</button>`;
+    }else{
+      buttonHtml=`<button class="modal-btn modal-btn-primary" id="chatActionBtn">✉️ Request to Chat</button>`;
+    }
     contentDiv.innerHTML=`
       <div class="modal-avatar">${esc(u.avatar||u.sex||'👤')}</div>
       <div class="modal-name">${esc(u.name)}</div>
       <div class="modal-stats"><div class="modal-stat"><div class="modal-stat-num">${u.stats?.posts||0}</div><div class="modal-stat-lbl">Vents</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.comments||0}</div><div class="modal-stat-lbl">Replies</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.followers||0}</div><div class="modal-stat-lbl">Followers</div></div></div>
-      <button class="modal-btn modal-btn-primary" id="chatWithUserBtn">✉️ Send Message</button>
+      ${buttonHtml}
     `;
-    document.getElementById('chatWithUserBtn').onclick=()=>{
-      closeProfileModal();
-      // Check existing chat acceptance?
-      openCR(userId, u.name, u.avatar||u.sex);
-    };
+    const btn=document.getElementById('chatActionBtn');
+    if(btn && requestStatus!=='pending'){
+      btn.onclick=async()=>{
+        if(requestStatus==='accepted'){
+          closeProfileModal();
+          openCR(userId, u.name, u.avatar||u.sex);
+        }else{
+          const sent=await sendChatRequest(userId);
+          if(sent){
+            closeProfileModal();
+            toast('Request sent! You can chat once they accept.');
+          }
+        }
+      };
+    }
   }catch(e){ contentDiv.innerHTML='<div style="color:var(--text3)">Failed to load profile</div>'; }
 }
 function closeProfileModal(e){
@@ -9463,7 +9382,90 @@ def mini_app_send_message():
     except Exception as e:
         logger.error(f"Error sending message: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+        
+@flask_app.route('/api/mini-app/chat-request/status', methods=['GET'])
+def mini_app_chat_request_status():
+    """Check the status of a chat request between two users."""
+    user_id = request.args.get('user_id')
+    target_id = request.args.get('target_id')
+    
+    if not user_id or not target_id:
+        return jsonify({'success': False, 'error': 'Missing user_id or target_id'}), 400
+    
+    row = db_fetch_one("""
+        SELECT status FROM chat_requests
+        WHERE (sender_id = %s AND receiver_id = %s)
+           OR (sender_id = %s AND receiver_id = %s)
+        ORDER BY timestamp DESC LIMIT 1
+    """, (user_id, target_id, target_id, user_id))
+    
+    if not row:
+        return jsonify({'success': True, 'status': 'none'})
+    
+    return jsonify({'success': True, 'status': row['status']})
 
+
+@flask_app.route('/api/mini-app/chat-request/send', methods=['POST'])
+def mini_app_send_chat_request():
+    """Send a chat request from one user to another."""
+    data = request.get_json()
+    sender_id = str(data.get('sender_id', ''))
+    receiver_id = str(data.get('receiver_id', ''))
+    
+    if not sender_id or not receiver_id:
+        return jsonify({'success': False, 'error': 'Missing sender_id or receiver_id'}), 400
+    
+    if sender_id == receiver_id:
+        return jsonify({'success': False, 'error': 'Cannot request chat with yourself'}), 400
+    
+    # Check if a request already exists
+    existing = db_fetch_one("""
+        SELECT status FROM chat_requests
+        WHERE (sender_id = %s AND receiver_id = %s)
+           OR (sender_id = %s AND receiver_id = %s)
+    """, (sender_id, receiver_id, receiver_id, sender_id))
+    
+    if existing:
+        if existing['status'] == 'accepted':
+            return jsonify({'success': True, 'status': 'accepted', 'message': 'Chat already accepted'})
+        elif existing['status'] == 'pending':
+            return jsonify({'success': False, 'error': 'Chat request already pending'}), 409
+    
+    # Insert new pending request
+    db_execute("""
+        INSERT INTO chat_requests (sender_id, receiver_id, status)
+        VALUES (%s, %s, 'pending')
+    """, (sender_id, receiver_id))
+    
+    # --- Send Telegram notification to the receiver (using requests, no async needed) ---
+    try:
+        import requests
+        sender = db_fetch_one("SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (sender_id,))
+        sender_name = sender['anonymous_name'] if sender else 'Anonymous'
+        sender_icon = sender['avatar_emoji'] if (sender and sender['avatar_emoji']) else '👤'
+        
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        payload = {
+            "chat_id": int(receiver_id),
+            "text": f"🔔 *New Chat Request*\n\n{sender_icon} *{sender_name}* wants to chat with you.",
+            "reply_markup": {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Accept", "callback_data": f"acceptchat_{sender_id}"},
+                        {"text": "❌ Decline", "callback_data": f"declinechat_{sender_id}"}
+                    ],
+                    [
+                        {"text": "👤 View Profile", "url": f"https://t.me/{BOT_USERNAME}?start=profileid_{sender_id}"}
+                    ]
+                ]
+            },
+            "parse_mode": "Markdown"
+        }
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        logger.error(f"Failed to send chat request notification: {e}")
+    
+    return jsonify({'success': True, 'status': 'pending', 'message': 'Chat request sent'})
 @flask_app.route('/api/mini-app/leaderboard', methods=['GET'])
 def mini_app_leaderboard():
     """API endpoint for leaderboard data"""
