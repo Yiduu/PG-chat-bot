@@ -890,963 +890,238 @@ def login_page():
     primary_rgb = PRIMARY_RGB
 
     html = '''<!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>Christian Vent</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --gold:#c9a84c;--gold2:#e8c97a;--gold3:rgba(201,168,76,0.12);
-  --bg:#0c0b09;--bg2:#131210;--bg3:#1b1914;
-  --border:rgba(255,255,255,0.07);--border2:rgba(201,168,76,0.22);
-  --text:#f0ede6;--text2:#a09880;--text3:#5c5549;
-  --nav:72px;--r:14px;--rs:10px;
-  --safe-b:env(safe-area-inset-bottom,0px);
-}
-body.light{
-  --bg:#f7f5f1;--bg2:#eceae4;--bg3:#e0ddd5;
-  --border:rgba(0,0,0,0.09);--border2:rgba(180,140,40,0.3);
-  --text:#1a1916;--text2:#5a5549;--text3:#9a9488;
-}
-html,body{height:100%;overflow:hidden;-webkit-tap-highlight-color:transparent}
-body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-size:15px;-webkit-font-smoothing:antialiased;overscroll-behavior:none}
- 
-/* Shell */
-#shell{position:fixed;inset:0;display:flex;flex-direction:column}
-#pages{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding-bottom:calc(var(--nav) + 20px + var(--safe-b))}
-#pages::-webkit-scrollbar{display:none}
-.page{display:none;animation:fadeUp .2s ease}
-.page.active{display:block}
-@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
- 
-/* Nav */
-#nav{
-  flex-shrink:0;height:var(--nav);
-  background:var(--bg);border-top:0.5px solid var(--border);
-  display:flex;align-items:stretch;
-  padding-bottom:var(--safe-b);
-  position:relative;z-index:100;
-}
-.ni{
-  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:3px;background:none;border:none;cursor:pointer;
-  color:var(--text3);font-size:10px;font-weight:600;letter-spacing:.5px;
-  font-family:'Inter',sans-serif;text-transform:uppercase;
-  transition:color .2s;padding:6px 2px;
-}
-.ni svg{width:22px;height:22px;transition:transform .2s,stroke .2s;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-.ni.on{color:var(--gold)}
-.ni.on svg{transform:translateY(-2px)}
-.nav-line{position:absolute;bottom:0;left:0;width:20%;height:2.5px;background:var(--gold);border-radius:2px 2px 0 0;transition:left .28s cubic-bezier(.4,0,.2,1)}
- 
-/* Page headers */
-.ph{padding:22px 18px 6px;display:flex;align-items:flex-end;justify-content:space-between}
-.ph h1{font-size:26px;font-weight:700;letter-spacing:-.5px}
-.ph-sub{font-size:12px;color:var(--text3);margin-top:2px}
-.logo{width:44px;height:44px;border-radius:12px;object-fit:cover}
- 
-/* Cards */
-.card{background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--r);padding:16px;margin:10px 16px 0}
-.card-gold{background:linear-gradient(135deg,rgba(201,168,76,.08),rgba(201,168,76,.02));border-color:var(--border2)}
- 
-/* Pill */
-.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(201,168,76,.1);border:0.5px solid rgba(201,168,76,.25);color:var(--gold2)}
-.pill.sm{padding:2px 7px;font-size:10px}
- 
-/* Avatar */
-.ava{border-radius:50%;background:var(--bg3);border:1.5px solid var(--border2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1.1em}
- 
-/* Inputs */
-.inp{width:100%;background:var(--bg3);border:0.5px solid var(--border);border-radius:var(--rs);padding:13px 15px;color:var(--text);font-family:'Inter',sans-serif;font-size:14px;outline:none;resize:none;transition:border-color .2s}
-.inp:focus{border-color:rgba(201,168,76,.5)}
-.inp::placeholder{color:var(--text3)}
- 
-/* Buttons */
-.btn{width:100%;padding:14px;border-radius:var(--rs);border:none;background:var(--gold);color:#0c0b09;font-family:'Inter',sans-serif;font-size:14px;font-weight:700;cursor:pointer;transition:opacity .2s,transform .15s}
-.btn:active{transform:scale(.98);opacity:.9}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.btn-sm{width:auto;padding:8px 16px;font-size:13px}
-.btn-ghost{background:none;border:0.5px solid var(--border2);border-radius:8px;color:var(--gold);padding:7px 14px;font-size:12px;font-weight:600;font-family:'Inter',sans-serif;cursor:pointer}
- 
-/* Search */
-.search{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--rs);margin:12px 16px 0}
-.search svg{width:16px;height:16px;stroke:var(--text3);fill:none;stroke-width:1.8;flex-shrink:0}
-.search input{flex:1;background:none;border:none;outline:none;color:var(--text);font-family:'Inter',sans-serif;font-size:14px}
-.search input::placeholder{color:var(--text3)}
- 
-/* Category chips */
-.cat-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:10px 0}
-.chip{padding:9px 11px;border-radius:var(--rs);font-size:12px;font-weight:500;background:var(--bg3);border:0.5px solid var(--border);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s}
-.chip.on{background:rgba(201,168,76,.1);border-color:rgba(201,168,76,.35);color:var(--gold2)}
-.chip-check{width:15px;height:15px;border-radius:4px;border:1.5px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:9px;flex-shrink:0}
-.chip.on .chip-check::after{content:'✓'}
- 
-/* Post cards */
-.post{margin:10px 16px 0;background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--r);padding:15px;cursor:pointer;transition:border-color .15s}
-.post:active,.post:hover{border-color:rgba(201,168,76,.25)}
-.post-meta{display:flex;align-items:center;gap:9px;margin-bottom:11px}
-.post-name{font-size:13px;font-weight:600;color:var(--text)}
-.post-time{font-size:11px;color:var(--text3);margin-left:auto}
-.post-body{font-size:13.5px;line-height:1.6;color:var(--text2);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:11px}
-.post-footer{display:flex;align-items:center;justify-content:space-between;padding-top:10px;border-top:0.5px solid var(--border)}
-.stat{display:flex;align-items:center;gap:5px;color:var(--text3);font-size:12px;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif}
-.stat svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8}
- 
-/* Reaction pills */
-.rx-wrap{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
-.rxp{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:500;background:var(--bg3);border:0.5px solid var(--border);color:var(--text2);cursor:pointer;transition:all .15s}
-.rxp.on{background:rgba(201,168,76,.12);border-color:var(--border2);color:var(--gold)}
-.rx-add{background:none;border:0.5px solid var(--border);border-radius:20px;padding:3px 10px;font-size:12px;color:var(--text3);cursor:pointer;transition:color .15s}
-.rx-add:hover{color:var(--gold);border-color:var(--border2)}
-.rx-dock{position:relative}
-.rx-popup{position:absolute;bottom:calc(100% + 8px);left:0;background:var(--bg2);border:0.5px solid var(--border2);border-radius:24px;padding:8px 14px;display:flex;gap:12px;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.5);animation:pop .18s cubic-bezier(.175,.885,.32,1.275)}
-@keyframes pop{from{transform:scale(.7) translateY(6px);opacity:0}to{transform:none;opacity:1}}
-.rx-popup span{font-size:22px;cursor:pointer;transition:transform .15s;display:inline-block}
-.rx-popup span:hover{transform:scale(1.35) translateY(-3px)}
- 
-/* Read more arrow */
-.rm{font-size:12px;font-weight:600;color:var(--gold);display:flex;align-items:center;gap:3px}
- 
-/* Leaderboard */
-.lb-hero{margin:16px 16px 0;background:linear-gradient(135deg,rgba(201,168,76,.1),rgba(201,168,76,.03));border:0.5px solid var(--border2);border-radius:20px;padding:22px 18px;text-align:center;position:relative;overflow:hidden}
-.lb-hero::after{content:'';position:absolute;inset:-40px;background:radial-gradient(circle at 50% -10%,rgba(201,168,76,.07),transparent 65%);pointer-events:none}
-.lb-crown{font-size:38px;display:block;margin-bottom:4px}
-.lb-1-name{font-size:19px;font-weight:700;letter-spacing:-.3px}
-.lb-1-pts{font-size:12px;color:var(--text3);margin-top:3px}
-.lb-medals{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px}
-.lb-medal{background:var(--bg3);border:0.5px solid var(--border);border-radius:var(--rs);padding:13px 10px;text-align:center}
-.lb-medal-icon{font-size:22px;margin-bottom:4px}
-.lb-medal-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lb-medal-pts{font-size:11px;color:var(--text3);margin-top:1px}
-.lb-list{margin:0 16px}
-.lb-row{display:flex;align-items:center;gap:11px;padding:13px 0;border-bottom:0.5px solid var(--border)}
-.lb-row:last-child{border-bottom:none}
-.lb-rank{width:22px;text-align:center;font-size:13px;font-weight:700;color:var(--text3);flex-shrink:0}
-.lb-name{font-size:14px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
-.lb-name:hover{color:var(--gold)}
-.lb-sub{font-size:11px;color:var(--text3);margin-top:1px}
-.lb-pts{font-size:15px;font-weight:700;color:var(--gold);flex-shrink:0}
-.lb-tabs{display:flex;gap:7px;margin:14px 16px 0}
-.lb-tab{flex:1;padding:9px;border-radius:20px;font-size:11px;font-weight:600;background:var(--bg2);border:0.5px solid var(--border);color:var(--text3);cursor:pointer;transition:all .2s;text-align:center}
-.lb-tab.on{background:rgba(201,168,76,.13);border-color:var(--border2);color:var(--gold)}
- 
-/* Profile */
-.prof-hero{margin:18px 16px 0;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:22px;text-align:center;position:relative}
-.prof-ava{width:76px;height:76px;border-radius:50%;margin:0 auto 12px;background:var(--bg3);border:2px solid var(--border2);display:flex;align-items:center;justify-content:center;font-size:30px}
-.prof-name{font-size:21px;font-weight:700;letter-spacing:-.3px}
-.prof-stats{display:grid;grid-template-columns:1fr 1fr 1fr;margin-top:18px;padding-top:16px;border-top:0.5px solid var(--border)}
-.ps-num{font-size:19px;font-weight:700;color:var(--gold)}
-.ps-lbl{font-size:11px;color:var(--text3);margin-top:1px}
- 
-/* Settings */
-.set-row{display:flex;align-items:center;padding:14px 0;border-bottom:0.5px solid var(--border);gap:13px}
-.set-row:last-child{border-bottom:none}
-.set-ico{width:36px;height:36px;border-radius:10px;background:rgba(201,168,76,.1);border:0.5px solid var(--border2);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.set-ico svg{width:17px;height:17px;stroke:var(--gold);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.set-lbl{flex:1}.set-lbl-t{font-size:14px;font-weight:600}.set-lbl-s{font-size:11px;color:var(--text3);margin-top:1px}
-.toggle{position:relative;width:42px;height:24px;cursor:pointer;flex-shrink:0}
-.toggle input{opacity:0;width:0;height:0;position:absolute}
-.ttrack{position:absolute;inset:0;border-radius:24px;background:var(--bg3);border:0.5px solid var(--border);transition:background .25s}
-.toggle input:checked+.ttrack{background:rgba(201,168,76,.3);border-color:var(--gold)}
-.tthumb{position:absolute;width:18px;height:18px;border-radius:50%;top:3px;left:3px;background:var(--text3);transition:all .25s cubic-bezier(.4,0,.2,1)}
-.toggle input:checked~.tthumb{left:21px;background:var(--gold)}
- 
-/* Comment bar */
-#cbar{position:fixed;bottom:var(--nav);left:0;right:0;display:none;align-items:flex-end;gap:8px;padding:10px 14px;background:rgba(12,11,9,.95);border-top:0.5px solid var(--border);z-index:90}
-body.light #cbar{background:rgba(247,245,241,.95)}
-#cbar textarea{flex:1;background:var(--bg3);border:0.5px solid var(--border);border-radius:var(--rs);padding:9px 12px;color:var(--text);font-family:'Inter',sans-serif;font-size:13px;outline:none;resize:none;max-height:90px;min-height:36px;transition:border-color .2s}
-#cbar textarea:focus{border-color:rgba(201,168,76,.4)}
-#cbar button{width:34px;height:34px;border-radius:50%;background:var(--gold);border:none;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-#cbar button svg{width:15px;height:15px;stroke:#0c0b09;fill:none;stroke-width:2.2}
- 
-/* Comment items */
-.ci{display:flex;gap:9px;margin-bottom:12px}
-.ci.reply{margin-left:28px}
-.ci-body{flex:1;background:var(--bg3);border:0.5px solid var(--border);border-radius:var(--rs);padding:11px}
-.ci-name{font-size:12px;font-weight:600;color:var(--gold);margin-bottom:3px;cursor:pointer}
-.ci-text{font-size:13px;line-height:1.55;color:var(--text2)}
-.ci-actions{display:flex;gap:10px;margin-top:7px}
-.ci-btn{background:none;border:none;cursor:pointer;font-size:12px;font-weight:500;color:var(--text3);font-family:'Inter',sans-serif}
-.ci-btn:hover{color:var(--gold)}
- 
-/* Chat list */
-.ch-item{display:flex;align-items:center;gap:11px;padding:13px 16px;border-bottom:0.5px solid var(--border);cursor:pointer;transition:background .15s}
-.ch-item:active{background:var(--bg2)}
-.ch-right{flex:1;min-width:0}
-.ch-top{display:flex;justify-content:space-between;align-items:center}
-.ch-name{font-size:14px;font-weight:600}
-.ch-time{font-size:11px;color:var(--text3)}
-.ch-prev{font-size:12px;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
-.ubadge{background:var(--gold);color:#0c0b09;font-size:10px;font-weight:800;min-width:17px;height:17px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px;flex-shrink:0}
- 
-/* Chat room */
-#cr{position:fixed;inset:0;z-index:300;background:var(--bg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .28s cubic-bezier(.4,0,.2,1)}
-#cr.open{transform:none}
-.cr-head{display:flex;align-items:center;gap:11px;padding:14px 16px;background:var(--bg);border-bottom:0.5px solid var(--border);flex-shrink:0;padding-top:calc(14px + env(safe-area-inset-top,0px))}
-.cr-head button{background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center}
-.cr-head button svg{width:22px;height:22px;stroke:var(--text);fill:none;stroke-width:2}
-.cr-name-wrap{flex:1}.cr-nm{font-size:16px;font-weight:700}.cr-status{font-size:11px;color:var(--text3)}
-.cr-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
-.cr-msgs::-webkit-scrollbar{display:none}
-.mr{display:flex;flex-direction:column;max-width:74%}
-.mr.me{align-self:flex-end;align-items:flex-end}
-.mr.them{align-self:flex-start}
-.mb{padding:10px 13px;border-radius:18px;font-size:13.5px;line-height:1.45;word-break:break-word}
-.mr.me .mb{background:var(--gold);color:#0c0b09;font-weight:500;border-bottom-right-radius:4px}
-.mr.them .mb{background:var(--bg3);border:0.5px solid var(--border);border-bottom-left-radius:4px}
-.mt{font-size:10px;color:var(--text3);margin-top:3px;padding:0 4px}
-.cr-inp{display:flex;align-items:flex-end;gap:8px;padding:12px 16px;border-top:0.5px solid var(--border);background:var(--bg);flex-shrink:0;padding-bottom:calc(12px + var(--safe-b))}
-.cr-inp textarea{flex:1;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:10px 15px;color:var(--text);font-family:'Inter',sans-serif;font-size:14px;outline:none;resize:none;min-height:40px;max-height:90px}
-.cr-inp textarea:focus{border-color:rgba(201,168,76,.4)}
-.cr-send{width:38px;height:38px;border-radius:50%;background:var(--gold);border:none;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-.cr-send svg{width:16px;height:16px;stroke:#0c0b09;fill:none;stroke-width:2.2}
- 
-/* Profile modal */
-#pmask{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:400;display:flex;align-items:center;justify-content:center;visibility:hidden;opacity:0;transition:all .2s}
-#pmask.on{visibility:visible;opacity:1}
-.pmodal{background:var(--bg);border:0.5px solid var(--border);border-radius:22px;max-width:310px;width:90%;padding:22px;text-align:center;position:relative}
-.pmodal-close{position:absolute;top:12px;right:15px;font-size:20px;cursor:pointer;color:var(--text3);background:none;border:none}
-.pm-ava{width:72px;height:72px;border-radius:50%;margin:0 auto 10px;background:var(--bg2);display:flex;align-items:center;justify-content:center;font-size:28px;border:2px solid var(--border2)}
-.pm-name{font-size:18px;font-weight:700;color:var(--gold)}
-.pm-stats{display:grid;grid-template-columns:1fr 1fr 1fr;margin:14px 0}
-.pms-n{font-size:17px;font-weight:700}.pms-l{font-size:11px;color:var(--text3)}
-.pm-btn{width:100%;padding:11px;border:none;border-radius:30px;font-weight:600;cursor:pointer;font-size:13px;font-family:'Inter',sans-serif;margin-top:7px}
-.pm-primary{background:var(--gold);color:#0c0b09}
-.pm-secondary{background:var(--bg2);border:0.5px solid var(--border);color:var(--text)}
- 
-/* Edit profile */
-.ep{padding:0 16px}
-.ep label{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:5px}
-.emoji-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:8px 0 18px}
-.eo{aspect-ratio:1;background:var(--bg3);border:1.5px solid transparent;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:21px;cursor:pointer;transition:all .15s}
-.eo.on{border-color:var(--gold);background:rgba(201,168,76,.1)}
- 
-/* Auth screen */
-#auth{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:14px}
-.spin{width:48px;height:48px;border-radius:50%;border:2.5px solid var(--border);border-top-color:var(--gold);animation:spin 1s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.auth-t{font-size:14px;font-weight:600;color:var(--gold)}
- 
-/* Toast */
-#toast{position:fixed;bottom:calc(var(--nav) + 70px);left:50%;transform:translateX(-50%) translateY(8px);background:var(--gold);color:#0c0b09;padding:9px 18px;border-radius:20px;font-size:12px;font-weight:700;opacity:0;pointer-events:none;transition:all .22s;z-index:500;white-space:nowrap}
-#toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
- 
-/* Skeleton */
-.sk{background:linear-gradient(90deg,var(--bg2) 25%,var(--bg3) 50%,var(--bg2) 75%);background-size:200% 100%;animation:sh 1.4s infinite;border-radius:7px}
-@keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
- 
-/* Back button */
-.back{display:flex;align-items:center;gap:6px;padding:18px 16px 8px;color:var(--gold);font-size:14px;font-weight:600;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif}
-.back svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2}
- 
-/* Char count */
-.cc{font-size:11px;color:var(--text3);text-align:right;margin:5px 0 12px}
- 
-/* Section label */
-.sl{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3);padding:16px 16px 7px}
- 
-/* Chevron */
-.chev{width:15px;height:15px;stroke:var(--text3);fill:none;stroke-width:2;flex-shrink:0}
-</style>
+    <title>Christian Vent - Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --primary: __PRIMARY__;
+            --primary-rgb: __PRIMARY_RGB__;
+            --secondary: __SECONDARY__;
+            --card-bg: __CARD_BG__;
+            --border: __BORDER__;
+            --text: __TEXT_COLOR__;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, var(--secondary) 0%, rgba(var(--primary-rgb), 0.1) 100%);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .login-container {
+            background: rgba(var(--card-bg), 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 2.5rem;
+            border-radius: 20px;
+            border: 1px solid rgba(var(--primary-rgb), 0.15);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+            max-width: 440px;
+            width: 100%;
+            text-align: center;
+            animation: fadeIn 0.6s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .brand {
+            margin-bottom: 24px;
+        }
+        .logo {
+            width: 72px;
+            height: auto;
+            border-radius: 18px;
+            margin-bottom: 16px;
+            box-shadow: 0 6px 16px rgba(var(--primary-rgb), 0.25);
+        }
+        .title {
+            color: var(--primary);
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin: 0 0 8px 0;
+        }
+        .subtitle {
+            opacity: 0.75;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            margin: 0;
+        }
+        .telegram-btn {
+            background: #0088cc;
+            background: linear-gradient(135deg, #0088cc, #0077b3);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 16px;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0, 136, 204, 0.25);
+        }
+        .telegram-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0, 136, 204, 0.4);
+            background: linear-gradient(135deg, #0099e6, #0088cc);
+        }
+        .bot-link {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+        .bot-link:hover {
+            opacity: 0.8;
+            text-decoration: underline;
+        }
+        .features {
+            text-align: left;
+            margin-top: 32px;
+            background: rgba(var(--primary-rgb), 0.04);
+            padding: 20px;
+            border-radius: 14px;
+            border: 1px solid rgba(var(--primary-rgb), 0.08);
+        }
+        .features h3 {
+            color: var(--primary);
+            margin: 0 0 12px 0;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 700;
+        }
+        .features ul {
+            padding-left: 20px;
+            margin: 0;
+            font-size: 0.9rem;
+            opacity: 0.85;
+            line-height: 1.7;
+        }
+        .features li {
+            margin-bottom: 8px;
+        }
+        .features li:last-child {
+            margin-bottom: 0;
+        }
+        .footer-text {
+            margin-top: 24px;
+            font-size: 0.8rem;
+            opacity: 0.5;
+            line-height: 1.5;
+        }
+        
+        /* Auth Screen Styles */
+        .auth-container {
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            background: linear-gradient(135deg, var(--secondary) 0%, rgba(var(--primary-rgb), 0.1) 100%); 
+            color: var(--text); 
+            flex-direction: column;
+            font-family: 'Inter', sans-serif;
+            animation: fadeIn 0.4s ease-out;
+        }
+        .auth-spinner {
+            width: 44px;
+            height: 44px;
+            border: 3px solid rgba(var(--primary-rgb), 0.15);
+            border-radius: 50%;
+            border-top-color: var(--primary);
+            animation: spin 1s ease-in-out infinite;
+            margin-bottom: 24px;
+        }
+        .auth-title {
+            color: var(--primary); 
+            font-size: 1.1rem; 
+            font-weight: 600; 
+            letter-spacing: 1.5px;
+            margin: 0 0 8px 0;
+            text-transform: uppercase;
+        }
+        .auth-subtitle {
+            opacity: 0.6;
+            font-size: 0.9rem;
+            margin: 0;
+            font-weight: 500;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
 </head>
 <body>
- 
-<div id="auth"><div class="spin"></div><span class="auth-t">Connecting…</span></div>
- 
-<div id="shell" style="display:none">
-  <div id="pages">
- 
-    <!-- VENT PAGE -->
-    <div class="page active" id="page-vent">
-      <div class="ph"><div><h1 style="font-size:24px">Share</h1><div class="ph-sub">Speak your heart, anonymously</div></div><img src="/static/images/vent logo.png" class="logo" onerror="this.style.display='none'" alt=""></div>
-      <div style="padding:0 16px"><div class="sl" style="padding-left:0">Categories</div><div id="cat-grid" class="cat-grid"></div></div>
-      <div style="padding:0 16px;margin-top:12px">
-        <textarea id="vent-txt" class="inp" rows="5" placeholder="What's on your heart today…" maxlength="5000"></textarea>
-        <div class="cc"><span id="vent-cnt">0</span> / 5000</div>
-        <button class="btn" id="submit-vent">Post Anonymously</button>
-      </div>
-    </div>
- 
-    <!-- FEED PAGE -->
-    <div class="page" id="page-feed">
-      <div class="ph"><div><h1>Feed</h1><div class="ph-sub">Read, reflect, respond</div></div></div>
-      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><input id="search-inp" type="text" placeholder="Search vents…"></div>
-      <div id="feed-list" style="min-height:200px"></div>
-      <div id="feed-more" style="padding:16px;text-align:center;display:none"><button class="btn-ghost" id="load-more-btn" style="width:100%">Load more</button></div>
-    </div>
- 
-    <!-- DETAIL PAGE -->
-    <div class="page" id="page-detail">
-      <button class="back" onclick="goFeed()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Back</button>
-      <div id="detail-post"></div>
-      <div class="sl">Responses</div>
-      <div id="detail-comments" style="padding:0 16px 90px"></div>
-    </div>
- 
-    <!-- LEADERBOARD PAGE -->
-    <div class="page" id="page-lb">
-      <div class="ph"><div><h1>Rankings</h1><div class="ph-sub">Top contributors</div></div></div>
-      <div class="lb-tabs">
-        <div class="lb-tab on" data-period="week" onclick="switchPeriod(this,'week')">This week</div>
-        <div class="lb-tab" data-period="month" onclick="switchPeriod(this,'month')">Monthly</div>
-        <div class="lb-tab" data-period="all" onclick="switchPeriod(this,'all')">All time</div>
-      </div>
-      <div id="lb-content"></div>
-    </div>
- 
-    <!-- CHATS PAGE -->
-    <div class="page" id="page-chats">
-      <div class="ph"><div><h1>Messages</h1><div class="ph-sub" id="unread-lbl">All caught up</div></div></div>
-      <div id="chats-list" style="min-height:100px"></div>
-    </div>
- 
-    <!-- PROFILE / ME PAGE -->
-    <div class="page" id="page-me">
-      <div id="prof-content"></div>
-    </div>
- 
-    <!-- EDIT PROFILE PAGE -->
-    <div class="page" id="page-edit">
-      <button class="back" onclick="go('me')"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Back</button>
-      <div class="ep">
-        <label>Display name</label>
-        <input id="ep-name" class="inp" type="text" placeholder="Your name" style="height:43px;margin-bottom:14px">
-        <label>Bio</label>
-        <textarea id="ep-bio" class="inp" rows="3" placeholder="A short intro…" style="margin-bottom:14px"></textarea>
-        <label>Avatar emoji</label>
-        <div id="emoji-grid" class="emoji-grid" style="margin-bottom:18px"></div>
-        <button class="btn" id="save-prof-btn">Save changes</button>
-      </div>
-    </div>
- 
-    <!-- SETTINGS PAGE -->
-    <div class="page" id="page-settings">
-      <div class="ph"><div><h1>Settings</h1></div></div>
-      <div class="card" style="margin-top:12px">
-        <div class="set-row">
-          <div class="set-ico"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
-          <div class="set-lbl"><div class="set-lbl-t">Notifications</div><div class="set-lbl-s">Replies and interactions</div></div>
-          <label class="toggle"><input type="checkbox" id="set-notif"><div class="ttrack"></div><div class="tthumb"></div></label>
+    <div class="login-container">
+        <div class="brand">
+            <img src="/static/images/vent logo.png" class="logo" alt="Christian Vent Logo">
+            <h1 class="title">Christian Vent</h1>
+            <p class="subtitle">Share your thoughts anonymously</p>
         </div>
-        <div class="set-row">
-          <div class="set-ico"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
-          <div class="set-lbl"><div class="set-lbl-t">Public profile</div><div class="set-lbl-s">Show stats to others</div></div>
-          <label class="toggle"><input type="checkbox" id="set-priv"><div class="ttrack"></div><div class="tthumb"></div></label>
+        
+        <p style="font-size: 0.9rem; opacity: 0.8; margin-bottom: 16px;">Please authenticate with the Telegram bot:</p>
+        <a href="https://t.me/__BOT_USERNAME__" class="telegram-btn" target="_blank">Open Telegram Bot</a>
+        <p style="font-size: 0.9rem; margin-top: 0;">Or use: <a href="https://t.me/__BOT_USERNAME__" class="bot-link" target="_blank">@__BOT_USERNAME__</a></p>
+        
+        <div class="features">
+            <h3>Features</h3>
+            <ul>
+                <li>Share anonymous vents and prayers</li>
+                <li>Join community discussions</li>
+                <li>View the leaderboard</li>
+                <li>Manage profile settings</li>
+            </ul>
         </div>
-        <div class="set-row">
-          <div class="set-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></div>
-          <div class="set-lbl"><div class="set-lbl-t">Light mode</div><div class="set-lbl-s">Switch appearance</div></div>
-          <label class="toggle"><input type="checkbox" id="set-theme" onchange="themeToggle(this)"><div class="ttrack"></div><div class="tthumb"></div></label>
-        </div>
-        <div class="set-row" style="border:none;cursor:pointer" onclick="go('edit')">
-          <div class="set-ico"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
-          <div class="set-lbl"><div class="set-lbl-t">Edit profile</div><div class="set-lbl-s">Name, bio, avatar</div></div>
-          <svg class="chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
-        </div>
-      </div>
-      <div style="padding:18px 16px 0;text-align:center;font-size:11px;color:var(--text3)">
-        Christian Vent · <a href="https://t.me/YIDIDIYATAMIRUU" style="color:var(--gold);text-decoration:none">@YIDIDIYATAMIRUU</a>
-      </div>
+        <p class="footer-text">
+            After opening the bot, use the /webapp command to get authenticated access to the mini app.
+        </p>
     </div>
- 
-  </div><!-- /pages -->
- 
-  <!-- NAV -->
-  <nav id="nav">
-    <div class="nav-line" id="nav-line"></div>
-    <button class="ni on" data-p="vent" onclick="go('vent',this)">
-      <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-      Vent
-    </button>
-    <button class="ni" data-p="feed" onclick="go('feed',this)">
-      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-      Feed
-    </button>
-    <button class="ni" data-p="chats" onclick="go('chats',this)">
-      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      Chats
-    </button>
-    <button class="ni" data-p="lb" onclick="go('lb',this)">
-      <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-      Top
-    </button>
-    <button class="ni" data-p="settings" onclick="go('settings',this)">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-      Me
-    </button>
-  </nav>
-</div><!-- /shell -->
- 
-<!-- FIXED COMMENT INPUT -->
-<div id="cbar">
-  <textarea id="ctxt" placeholder="Add a response…" rows="1"></textarea>
-  <button id="csend"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
-</div>
- 
-<!-- CHAT ROOM -->
-<div id="cr">
-  <div class="cr-head">
-    <button onclick="closeCR()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
-    <div class="ava" id="cr-ava" style="width:36px;height:36px">👤</div>
-    <div class="cr-name-wrap"><div class="cr-nm" id="cr-nm">Chat</div><div class="cr-status" id="cr-status"></div></div>
-  </div>
-  <div class="cr-msgs" id="cr-msgs"></div>
-  <div class="cr-inp">
-    <textarea id="cr-txt" placeholder="Message…" rows="1"></textarea>
-    <button class="cr-send" onclick="crSend()"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
-  </div>
-</div>
- 
-<!-- PROFILE MODAL -->
-<div id="pmask" onclick="closePM(event)">
-  <div class="pmodal" onclick="event.stopPropagation()">
-    <button class="pmodal-close" onclick="closePM()">✕</button>
-    <div id="pm-content"><div class="spin" style="margin:20px auto"></div></div>
-  </div>
-</div>
- 
-<div id="toast"></div>
- 
-<script>
-'use strict';
-const API = location.origin;
-let UID = null, profCache = null;
-let crPid = null, crPoll = null;
-let feedPage = 1, feedMore = true, feedLoading = false;
-let searchQ = '', curPost = null, replyTo = 0;
-let selEmoji = null;
-const selCats = new Set();
- 
-const CATS = [
-  ['PrayForMe','🙏 Pray For Me'],['Bible','📖 Bible'],['WorkLife','💼 Work & Life'],
-  ['SpiritualLife','🕊 Spiritual Life'],['ChristianChallenges','⚔️ Challenges'],
-  ['Relationship','❤️ Relationship'],['Marriage','💍 Marriage'],['Youth','🧑‍🤝‍🧑 Youth'],
-  ['Finance','💰 Finance'],['WorshipMusic','🎶 Worship'],['Family','🏠 Family'],
-  ['Testimony','🙌 Testimony'],['AddictionRecovery','💊 Recovery'],
-  ['BibleQuestion','📖 Q&A'],['Other','🔖 Other']
-];
-const EMOJIS = ['🕊️','✝️','🙏','📖','❤️','🌟','🛡️','⚔️','⛪','🎹','👶','🧑','👴','🌿','🔥'];
- 
-/* ── helpers ── */
-function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
-function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),2800)}
-async function api(path,opts={}){
-  const r=await fetch(API+path,{headers:{'Content-Type':'application/json'},...opts});
-  const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||'Error');return d;
-}
-function skel(n,h=90){return Array(n).fill(`<div class="post sk" style="height:${h}px;cursor:default"></div>`).join('')}
- 
-/* ── navigation ── */
-const navLine = document.getElementById('nav-line');
-function go(name, btn){
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  document.getElementById('page-'+name).classList.add('active');
-  document.querySelectorAll('.ni').forEach(b=>b.classList.remove('on'));
-  if(btn){
-    btn.classList.add('on');
-    const items = [...document.querySelectorAll('.ni')];
-    navLine.style.left = (items.indexOf(btn)*20)+'%';
-  }
-  const cbar = document.getElementById('cbar');
-  cbar.style.display = name==='detail' ? 'flex' : 'none';
-  document.getElementById('pages').scrollTop = 0;
-  if(name==='feed' && feedPage===1) loadFeed();
-  if(name==='lb') loadLB();
-  if(name==='me') loadProfile();
-  if(name==='settings') loadSettings();
-  if(name==='chats') loadChats();
-}
-function goFeed(){go('feed',document.querySelector('[data-p="feed"]'))}
- 
-/* ── theme ── */
-function themeToggle(el){
-  document.body.classList.toggle('light',el.checked);
-  localStorage.setItem('cv-theme',el.checked?'light':'dark');
-}
- 
-/* ── category chips ── */
-function buildCats(){
-  document.getElementById('cat-grid').innerHTML = CATS.map(([c,l])=>
-    `<div class="chip" data-c="${c}" onclick="toggleCat(this,'${c}')"><div class="chip-check"></div><span>${esc(l)}</span></div>`
-  ).join('');
-}
-function toggleCat(el,c){
-  if(selCats.has(c)){selCats.delete(c);el.classList.remove('on')}
-  else{selCats.add(c);el.classList.add('on')}
-}
- 
-/* ── submit vent ── */
-async function submitVent(){
-  const txt = document.getElementById('vent-txt').value.trim();
-  const cats = [...selCats];
-  if(!txt) return toast('Write something first');
-  if(!cats.length) return toast('Pick at least one category');
-  const btn = document.getElementById('submit-vent');
-  btn.disabled=true; btn.textContent='Posting…';
-  try{
-    await api('/api/mini-app/submit-vent',{method:'POST',body:JSON.stringify({user_id:UID,content:txt,categories:cats})});
-    toast('✅ Submitted — awaiting review');
-    document.getElementById('vent-txt').value='';
-    document.getElementById('vent-cnt').textContent='0';
-    selCats.clear();
-    document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
-  }catch(e){toast(e.message)}
-  finally{btn.disabled=false;btn.textContent='Post Anonymously'}
-}
- 
-/* ── feed ── */
-async function loadFeed(append=false){
-  if(feedLoading) return; feedLoading=true;
-  const list = document.getElementById('feed-list');
-  const more = document.getElementById('feed-more');
-  if(!append){list.innerHTML=skel(3);more.style.display='none'}
-  try{
-    let url = `/api/mini-app/get-posts?page=${feedPage}&user_id=${UID||''}`;
-    if(searchQ) url = `/api/mini-app/search?q=${encodeURIComponent(searchQ)}&page=${feedPage}&user_id=${UID||''}`;
-    const d = await api(url);
-    const posts = d.data||[];
-    feedMore = d.has_more;
-    if(!append) list.innerHTML='';
-    if(!posts.length && !append){
-      list.innerHTML='<div style="text-align:center;padding:50px 20px;color:var(--text3);font-size:14px">Nothing here yet</div>';
-      return;
-    }
-    posts.forEach(p => list.insertAdjacentHTML('beforeend', renderPost(p)));
-    more.style.display = feedMore ? 'block' : 'none';
-    if(feedMore) feedPage++;
-  }catch(e){
-    if(!append) list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>';
-  }finally{feedLoading=false}
-}
- 
-function renderPost(p){
-  const cats = (p.categories||[]).map(c=>`<span class="pill sm">${esc(c)}</span>`).join('');
-  const unread = p.unread_comments>0 ? `<span class="pill sm" style="background:rgba(201,168,76,.2);border-color:var(--gold)">${p.unread_comments} new</span>` : '';
-  const rxHtml = buildRxHtml(p.reactions, 'post', p.id);
-  return `<div class="post">
-    <div class="post-meta">
-      <div class="ava" style="width:32px;height:32px;font-size:14px">${esc(p.author?.avatar||p.author?.sex||'👤')}</div>
-      <div>
-        <div class="post-name" onclick="event.stopPropagation();showProfile('${p.author?.id}')">${esc(p.author?.name||'Anon')} <span style="font-size:11px;color:var(--text3)">${esc(p.author?.aura||'')}</span></div>
-      </div>
-      <div class="post-time">${esc(p.time_ago||'')}</div>
-    </div>
-    ${cats ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px">${cats}</div>` : ''}
-    <div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
-    <div class="rx-wrap">${rxHtml}<button class="rx-add rx-dock" onclick="event.stopPropagation();showRxDock(this,'post',${p.id})">＋ React</button></div>
-    <div class="post-footer" onclick="openPost(${p.id})">
-      <div style="display:flex;align-items:center;gap:10px">
-        <span class="stat"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>${p.comments||0}</span>
-        ${unread}
-      </div>
-      <span class="rm">Read <svg viewBox="0 0 24 24" style="width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2"><polyline points="9 18 15 12 9 6"/></svg></span>
-    </div>
-  </div>`;
-}
- 
-function buildRxHtml(reactions, type, id){
-  if(!reactions?.counts) return '';
-  return Object.entries(reactions.counts)
-    .filter(([,c])=>c>0)
-    .map(([e,c])=>`<span class="rxp${reactions.user_reaction===e?' on':''}" data-type="${type}" data-id="${id}" data-emoji="${e}" onclick="event.stopPropagation();doReact('${type}',${id},'${e}',this)">${esc(e)} ${c}</span>`)
-    .join('');
-}
- 
-function showRxDock(anchor, type, id){
-  document.querySelectorAll('.rx-popup').forEach(p=>p.remove());
-  const dock = document.createElement('div');
-  dock.className = 'rx-popup';
-  ['🙏','❤️','🔥','😢','😡','👎'].forEach(e=>{
-    const sp = document.createElement('span');
-    sp.textContent=e;
-    sp.onclick = async(ev)=>{ev.stopPropagation();dock.remove();await doReact(type,id,e,anchor)};
-    dock.appendChild(sp);
-  });
-  anchor.parentNode.style.position='relative';
-  anchor.parentNode.appendChild(dock);
-  setTimeout(()=>{const rm=()=>{dock.remove();document.removeEventListener('click',rm)};document.addEventListener('click',rm)},50);
-}
- 
-async function doReact(type, id, emoji, el){
-  try{
-    const payload={user_id:UID,type:emoji};
-    if(type==='post') payload.post_id=parseInt(id);
-    else payload.comment_id=parseInt(id);
-    const resp = await api('/api/mini-app/react',{method:'POST',body:JSON.stringify(payload)});
-    if(resp.success){
-      const container = el.closest ? el.closest('.rx-wrap') : null;
-      if(container){
-        const add = container.querySelector('.rx-add');
-        container.innerHTML = buildRxHtml(resp.reactions, type, id);
-        if(add){container.appendChild(add)}
-        // re-attach react button handler
-        const btn = container.querySelector('.rx-add');
-        if(btn) btn.onclick = (ev)=>{ev.stopPropagation();showRxDock(btn,type,id)};
-      }
-    }
-  }catch(e){toast(e.message)}
-}
- 
-/* ── open post detail ── */
-async function openPost(id){
-  curPost=id; replyTo=0;
-  go('detail',null);
-  document.getElementById('detail-post').innerHTML=skel(1,120);
-  document.getElementById('detail-comments').innerHTML='';
-  try{
-    const d = await api(`/api/mini-app/post/${id}?viewer_id=${UID||''}`);
-    const p = d.data;
-    const cats = (p.categories||[]).map(c=>`<span class="pill sm">${esc(c)}</span>`).join('');
-    const rxHtml = buildRxHtml(p.reactions,'post',p.id);
-    document.getElementById('detail-post').innerHTML=`
-      <div class="post" style="cursor:default;border-left:none;border-right:none;border-top:none;border-radius:0;margin:0;background:var(--bg3)">
-        <div class="post-meta">
-          <div class="ava" style="width:36px;height:36px;font-size:16px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div>
-          <div>
-            <div class="post-name" onclick="showProfile('${p.author?.id}')" style="cursor:pointer">${esc(p.author?.name||'Anon')}</div>
-            <div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div>
-          </div>
-        </div>
-        ${cats ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${cats}</div>` : ''}
-        <div style="font-size:14px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
-        <div class="rx-wrap" style="margin-top:10px">${rxHtml}<button class="rx-add rx-dock" onclick="showRxDock(this,'post',${p.id})">＋ React</button></div>
-      </div>`;
-    const cd = await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID||''}`);
-    renderComments(cd.data||[], p.author_id);
-  }catch(e){
-    document.getElementById('detail-post').innerHTML=`<div style="padding:20px;color:var(--text3)">${esc(e.message)}</div>`;
-  }
-}
- 
-function renderComments(comments, postAuthorId){
-  const box = document.getElementById('detail-comments');
-  if(!comments.length){
-    box.innerHTML='<div style="text-align:center;padding:30px;color:var(--text3);font-size:13px">No responses yet — be the first!</div>';
-    return;
-  }
-  const map={};
-  comments.forEach(c=>map[c.id]={...c,children:[]});
-  const roots=[];
-  comments.forEach(c=>c.parent_id&&map[c.parent_id]?map[c.parent_id].children.push(map[c.id]):roots.push(map[c.id]));
-  const render=(c,depth)=>{
-    const isAuthor = String(c.author_id)===String(postAuthorId);
-    const name = isAuthor ? '✝️ Vent author' : (c.author?.name||'Anonymous');
-    const mine = String(c.author_id)===String(UID);
-    const rxHtml = buildRxHtml(c.reactions,'comment',c.id);
-    return `<div class="ci${depth>0?' reply':''}">
-      <div class="ava" style="width:26px;height:26px;font-size:12px">${esc(c.author?.sex||'👤')}</div>
-      <div class="ci-body">
-        <div class="ci-name" onclick="showProfile('${c.author_id}')">${esc(name)} <span style="font-size:10px;font-weight:400;color:var(--text3)">${esc(c.time_ago||'')}</span></div>
-        <div class="ci-text">${esc(c.content)}</div>
-        <div class="rx-wrap" style="margin:6px 0">${rxHtml}<button class="rx-add rx-dock" onclick="showRxDock(this,'comment',${c.id})">＋</button></div>
-        <div class="ci-actions">
-          <button class="ci-btn" onclick="setReply(${c.id})">↩ Reply</button>
-          ${mine?`<button class="ci-btn" onclick="delComment(${c.id})">Delete</button>`:''}
-        </div>
-      </div>
-    </div>${c.children.map(ch=>render(ch,depth+1)).join('')}`;
-  };
-  box.innerHTML = roots.map(c=>render(c,0)).join('');
-}
- 
-function setReply(id){replyTo=id;const t=document.getElementById('ctxt');t.placeholder='Replying…';t.focus()}
- 
-async function postComment(){
-  const txt = document.getElementById('ctxt').value.trim();
-  if(!txt||!curPost) return;
-  const btn = document.getElementById('csend');
-  btn.disabled=true;
-  try{
-    await api(`/api/mini-app/post/${curPost}/comment`,{method:'POST',body:JSON.stringify({user_id:UID,content:txt,parent_comment_id:replyTo})});
-    document.getElementById('ctxt').value=''; replyTo=0;
-    document.getElementById('ctxt').placeholder='Add a response…';
-    toast('Posted!');
-    const cd = await api(`/api/mini-app/post/${curPost}/comments?viewer_id=${UID||''}`);
-    renderComments(cd.data||[],null);
-  }catch(e){toast(e.message)}
-  finally{btn.disabled=false}
-}
- 
-async function delComment(id){
-  if(!confirm('Delete this response?')) return;
-  try{
-    await api(`/api/mini-app/comment/${id}?user_id=${UID}`,{method:'DELETE',body:JSON.stringify({user_id:UID})});
-    toast('Deleted');
-    const cd = await api(`/api/mini-app/post/${curPost}/comments?viewer_id=${UID||''}`);
-    renderComments(cd.data||[],null);
-  }catch(e){toast(e.message)}
-}
- 
-/* ── leaderboard ── */
-let curPeriod='week';
-function switchPeriod(el,p){
-  document.querySelectorAll('.lb-tab').forEach(t=>t.classList.remove('on'));
-  el.classList.add('on'); curPeriod=p; loadLB(p);
-}
-async function loadLB(period){
-  period = period||curPeriod;
-  const box = document.getElementById('lb-content');
-  box.innerHTML=skel(5,56);
-  try{
-    const d = await api(`/api/mini-app/leaderboard?period=${period}&user_id=${UID||''}`);
-    const users = d.data||[];
-    if(!users.length){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">No data yet</div>';return}
-    const [g,s,b,...rest]=users;
-    let html='';
-    if(g){
-      html+=`<div class="lb-hero">
-        <span class="lb-crown">👑</span>
-        <div style="font-size:24px;margin-bottom:4px">${esc(g.avatar||g.sex||'')}</div>
-        <div class="lb-1-name">${esc(g.weekly_badge||'')} ${esc(g.name)}</div>
-        <div style="margin-top:6px"><span class="pill">${esc(g.aura)} ${g.points} pts</span></div>
-        <div class="lb-medals">
-          ${s?`<div class="lb-medal"><div class="lb-medal-icon">🥈</div><div class="lb-medal-name">${esc(s.name)}</div><div class="lb-medal-pts">${s.points} pts</div></div>`:''}
-          ${b?`<div class="lb-medal"><div class="lb-medal-icon">🥉</div><div class="lb-medal-name">${esc(b.name)}</div><div class="lb-medal-pts">${b.points} pts</div></div>`:''}
-        </div>
-      </div>`;
-    }
-    if(rest.length){
-      html+='<div class="sl">More contributors</div><div class="lb-list card" style="margin-top:0">';
-      rest.forEach((u,i)=>{
-        html+=`<div class="lb-row">
-          <div class="lb-rank">${i+4}</div>
-          <div class="ava" style="width:34px;height:34px;font-size:14px">${esc(u.avatar||u.sex||'👤')}</div>
-          <div style="flex:1;min-width:0">
-            <div class="lb-name" onclick="showProfile('${u.id}')">${esc(u.weekly_badge||'')} ${esc(u.name)}</div>
-            <div class="lb-sub">${esc(u.aura)}</div>
-          </div>
-          <div class="lb-pts">${u.points}</div>
-        </div>`;
-      });
-      html+='</div>';
-    }
-    box.innerHTML=html;
-  }catch(e){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>'}
-}
- 
-/* ── profile ── */
-async function loadProfile(){
-  if(!UID) return;
-  const box = document.getElementById('prof-content');
-  box.innerHTML=skel(1,200);
-  try{
-    const d = await api(`/api/mini-app/profile/${UID}?viewer_id=${UID}`);
-    profCache=d.data; const p=d.data;
-    const myPosts = await api(`/api/mini-app/get-posts?user_id=${UID}&page=1`);
-    const mine = (myPosts.data||[]).filter(x=>x.author?.is_me).slice(0,3);
-    box.innerHTML=`
-      <div class="prof-hero">
-        <div style="position:absolute;top:16px;right:16px"><button class="btn-ghost" onclick="go('edit')" style="font-size:12px;padding:6px 12px">Edit</button></div>
-        <div class="prof-ava">${esc(p.avatar||p.sex||'👤')}</div>
-        <div class="prof-name">${esc(p.weekly_badge||'')} ${esc(p.name)}</div>
-        <div style="margin-top:6px"><span class="pill">${esc(p.aura)} ${p.rating} pts</span></div>
-        <div class="prof-stats">
-          <div><div class="ps-num">${p.stats?.posts||0}</div><div class="ps-lbl">Vents</div></div>
-          <div><div class="ps-num">${p.stats?.followers||0}</div><div class="ps-lbl">Followers</div></div>
-          <div><div class="ps-num">${p.stats?.comments||0}</div><div class="ps-lbl">Replies</div></div>
-        </div>
-      </div>
-      ${mine.length?`<div class="sl">My recent vents</div><div style="padding:0 16px">${mine.map(p=>`<div class="post" onclick="openPost(${p.id})" style="margin:0 0 9px"><div class="post-body" style="-webkit-line-clamp:2">${esc(p.content)}</div><div style="font-size:11px;color:var(--text3);margin-top:5px">${esc(p.time_ago)}</div></div>`).join('')}</div>`:''}
-    `;
-  }catch(e){box.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">Could not load profile</div>'}
-}
- 
-function buildEmojiGrid(){
-  document.getElementById('emoji-grid').innerHTML=EMOJIS.map(e=>
-    `<div class="eo${selEmoji===e?' on':''}" onclick="pickEmoji(this,'${e}')">${e}</div>`
-  ).join('');
-}
-function pickEmoji(el,e){selEmoji=e;document.querySelectorAll('.eo').forEach(x=>x.classList.remove('on'));el.classList.add('on')}
- 
-async function saveProfile(){
-  const name=document.getElementById('ep-name').value.trim();
-  if(!name) return toast('Name required');
-  const btn=document.getElementById('save-prof-btn');btn.disabled=true;
-  try{
-    await api(`/api/mini-app/profile/${UID}`,{method:'PUT',body:JSON.stringify({name,bio:document.getElementById('ep-bio').value.trim(),avatar:selEmoji})});
-    toast('✅ Profile updated');go('me',document.querySelector('[data-p="settings"]'));
-  }catch(e){toast(e.message)}finally{btn.disabled=false}
-}
- 
-/* ── settings ── */
-async function loadSettings(){
-  try{
-    const d=await api(`/api/mini-app/settings/${UID}`);
-    document.getElementById('set-notif').checked=d.data.notifications;
-    document.getElementById('set-priv').checked=d.data.privacy_public;
-  }catch(e){}
-  const th=document.getElementById('set-theme');
-  if(th) th.checked=document.body.classList.contains('light');
-}
-document.getElementById('set-notif').addEventListener('change', saveSettings);
-document.getElementById('set-priv').addEventListener('change', saveSettings);
-async function saveSettings(){
-  try{
-    await api(`/api/mini-app/settings/${UID}`,{method:'POST',body:JSON.stringify({notifications:document.getElementById('set-notif').checked,privacy_public:document.getElementById('set-priv').checked})});
-  }catch(e){}
-}
- 
-/* ── chats ── */
-async function loadChats(){
-  const list=document.getElementById('chats-list');
-  list.innerHTML=skel(4,62);
-  try{
-    const d=await api(`/api/mini-app/chats?user_id=${UID}`);
-    const chats=d.data||[];
-    const unread=chats.reduce((a,c)=>a+(c.unread_count||0),0);
-    document.getElementById('unread-lbl').textContent=unread?`${unread} unread`:'All caught up';
-    if(!chats.length){list.innerHTML='<div style="text-align:center;padding:50px;color:var(--text3);font-size:14px">No messages yet</div>';return}
-    list.innerHTML=chats.map(c=>`
-      <div class="ch-item" onclick="openCR('${c.partner_id}','${esc(c.partner_name||'Anon')}','${esc(c.partner_avatar||c.partner_sex||'👤')}')">
-        <div class="ava" style="width:42px;height:42px;font-size:18px">${esc(c.partner_avatar||c.partner_sex||'👤')}</div>
-        <div class="ch-right">
-          <div class="ch-top"><span class="ch-name">${esc(c.partner_name||'Anon')}</span><span class="ch-time">${esc(c.time_ago||'')}</span></div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <div class="ch-prev">${c.is_mine?'You: ':''}${esc(c.last_message||'')}</div>
-            ${c.unread_count>0?`<span class="ubadge">${c.unread_count}</span>`:''}
-          </div>
-        </div>
-      </div>`).join('');
-  }catch(e){list.innerHTML='<div style="padding:20px;color:var(--text3)">Failed to load</div>'}
-}
- 
-function openCR(pid,name,ava){
-  crPid=pid;
-  document.getElementById('cr-nm').textContent=name;
-  document.getElementById('cr-ava').textContent=ava;
-  document.getElementById('cr-status').textContent='';
-  document.getElementById('cr').classList.add('open');
-  document.getElementById('cr-txt').value='';
-  fetchCRMsgs(true);
-  clearInterval(crPoll);crPoll=setInterval(fetchCRMsgs,3500);
-}
-function closeCR(){
-  document.getElementById('cr').classList.remove('open');
-  clearInterval(crPoll);crPid=null;loadChats();
-}
-async function fetchCRMsgs(scroll=false){
-  if(!crPid) return;
-  try{
-    const d=await api(`/api/mini-app/chats/${crPid}?user_id=${UID}`);
-    const box=document.getElementById('cr-msgs');
-    const wasBottom=box.scrollHeight-box.scrollTop<=box.clientHeight+100;
-    box.innerHTML=(d.data||[]).map(m=>`
-      <div class="mr ${m.is_mine?'me':'them'}">
-        <div class="mb">${esc(m.content)}</div>
-        <div class="mt">${esc(m.timestamp||'')}</div>
-      </div>`).join('');
-    if(scroll||wasBottom) box.scrollTop=box.scrollHeight;
-  }catch(e){}
-}
-async function crSend(){
-  const txt=document.getElementById('cr-txt').value.trim();
-  if(!txt||!crPid) return;
-  document.getElementById('cr-txt').value='';
-  try{
-    await api('/api/mini-app/chats/send',{method:'POST',body:JSON.stringify({sender_id:UID,receiver_id:crPid,content:txt})});
-    fetchCRMsgs(true);
-  }catch(e){toast(e.message)}
-}
-document.getElementById('cr-txt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();crSend()}});
- 
-/* ── profile modal ── */
-async function showProfile(userId){
-  if(!userId) return;
-  if(String(userId)===String(UID)){go('me',document.querySelector('[data-p="settings"]'));return}
-  const mask=document.getElementById('pmask');
-  mask.classList.add('on');
-  document.getElementById('pm-content').innerHTML='<div class="spin" style="margin:20px auto;width:36px;height:36px"></div>';
-  try{
-    const d=await api(`/api/mini-app/profile/${userId}?viewer_id=${UID}`);
-    const u=d.data;
-    const reqR=await fetch(`${API}/api/mini-app/chat-request/status?user_id=${UID}&target_id=${userId}`);
-    const reqD=await reqR.json();
-    const status=reqD.status||'none';
-    let btnHtml='';
-    if(status==='accepted') btnHtml=`<button class="pm-btn pm-primary" onclick="closePMopenChat('${userId}','${esc(u.name)}','${esc(u.avatar||u.sex||'👤')}')">💬 Open Chat</button>`;
-    else if(status==='pending') btnHtml=`<button class="pm-btn pm-secondary" disabled>⏳ Request sent</button>`;
-    else btnHtml=`<button class="pm-btn pm-primary" onclick="sendChatReq('${userId}')">✉️ Request to Chat</button>`;
-    document.getElementById('pm-content').innerHTML=`
-      <div class="pm-ava">${esc(u.avatar||u.sex||'👤')}</div>
-      <div class="pm-name">${esc(u.weekly_badge||'')} ${esc(u.name)}</div>
-      <div style="margin-top:5px"><span class="pill" style="font-size:11px">${esc(u.aura)}</span></div>
-      <div class="pm-stats">
-        <div><div class="pms-n">${u.stats?.posts||0}</div><div class="pms-l">Vents</div></div>
-        <div><div class="pms-n">${u.stats?.comments||0}</div><div class="pms-l">Replies</div></div>
-        <div><div class="pms-n">${u.stats?.followers||0}</div><div class="pms-l">Followers</div></div>
-      </div>
-      ${btnHtml}`;
-  }catch(e){document.getElementById('pm-content').innerHTML=`<div style="color:var(--text3);padding:20px">Could not load</div>`}
-}
-function closePM(e){if(e&&e.target!==document.getElementById('pmask'))return;document.getElementById('pmask').classList.remove('on')}
-function closePMopenChat(pid,name,ava){document.getElementById('pmask').classList.remove('on');openCR(pid,name,ava)}
-async function sendChatReq(targetId){
-  try{
-    await api('/api/mini-app/chat-request/send',{method:'POST',body:JSON.stringify({sender_id:UID,receiver_id:targetId})});
-    toast('✅ Chat request sent!');
-    document.getElementById('pmask').classList.remove('on');
-  }catch(e){toast(e.message)}
-}
- 
-/* ── init ── */
-async function init(){
-  // Apply saved theme
-  if(localStorage.getItem('cv-theme')==='light') document.body.classList.add('light');
-  
-  const tg=window.Telegram?.WebApp;
-  if(tg){try{tg.expand();tg.ready()}catch(e){}}
-  const user=tg?.initDataUnsafe?.user;
-  if(user?.id) UID=String(user.id);
-  if(!UID){
-    const t=new URLSearchParams(location.search).get('token');
-    if(t){try{const r=await fetch(`${API}/api/verify-token/${t}`);const d=await r.json();if(d.success)UID=String(d.user_id)}catch(e){}}
-  }
- 
-  document.getElementById('auth').style.display='none';
-  document.getElementById('shell').style.display='flex';
- 
-  if(UID) loadFeed();
-  else document.getElementById('feed-list').innerHTML='<div style="text-align:center;padding:60px 20px;color:var(--text3)"><div style="font-size:32px;margin-bottom:10px">🔒</div><div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:5px">Sign in required</div><div style="font-size:13px">Open via the Telegram bot</div></div>';
- 
-  buildCats();
-  buildEmojiGrid();
- 
-  // Vent text counter
-  document.getElementById('vent-txt').addEventListener('input',e=>{
-    document.getElementById('vent-cnt').textContent=e.target.value.length;
-  });
-  document.getElementById('submit-vent').addEventListener('click',submitVent);
-  document.getElementById('load-more-btn').addEventListener('click',()=>loadFeed(true));
-  document.getElementById('csend').addEventListener('click',postComment);
-  document.getElementById('save-prof-btn').addEventListener('click',saveProfile);
- 
-  // Search debounce
-  let st;
-  document.getElementById('search-inp').addEventListener('input',e=>{
-    clearTimeout(st);searchQ=e.target.value.trim();
-    st=setTimeout(()=>{feedPage=1;loadFeed()},480);
-  });
- 
-  // Set edit profile fields when going to edit
-  document.querySelector('[data-p="settings"]').addEventListener('click',()=>{
-    // already handled via go() - just ensure emoji grid rebuilt
-    setTimeout(()=>{
-      if(profCache){
-        document.getElementById('ep-name').value=profCache.name||'';
-        document.getElementById('ep-bio').value=profCache.bio||'';
-        selEmoji=profCache.avatar||null;
-        buildEmojiGrid();
-      }
-    },100);
-  });
-}
-init();
-</script>
+
+    <script>
+        // Auto-login via Telegram WebApp initData
+        const tg = window.Telegram?.WebApp;
+        if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
+            tg.ready();
+            const userId = tg.initDataUnsafe.user.id;
+            
+            // Show a premium temporary loading state
+            document.body.innerHTML = `
+                <div class="auth-container">
+                    <div class="auth-spinner"></div>
+                    <h2 class="auth-title">Authenticating</h2>
+                    <p class="auth-subtitle">Securing your connection...</p>
+                </div>
+            `;
+            
+            fetch('/api/generate-token/' + userId)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success && data.token) {
+                        window.location.replace('/?token=' + data.token);
+                    }
+                })
+                .catch(e => console.error("Auto-login failed:", e));
+        }
+    </script>
 </body>
 </html>'''
 
@@ -8794,7 +8069,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
       <div class="section-label">Responses</div>
       <div id="detail-comments" style="padding:0 16px 80px"></div>
     </div>
-    <div class="page" id="page-leaderboard"><div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Top Voices</h1><div class="page-head-sub">Community leaders</div></div></div></div><div style="display:flex; gap:8px; margin:16px 16px 0;"><button class="leaderboard-tab active" data-period="week">📅 Weekly</button><button class="leaderboard-tab" data-period="month">📆 Monthly</button><button class="leaderboard-tab" data-period="all">🏆 All-Time</button></div><div id="lb-content"></div></div>
+    <div class="page" id="page-leaderboard"><div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Top Voices</h1><div class="page-head-sub">Weekly community leaders</div></div></div></div><div id="lb-content"></div></div>
     <div class="page" id="page-profile"><div id="profile-content"></div></div>
     <div class="page" id="page-edit">
       <button class="back-btn" onclick="go('profile')"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Profile</button>
@@ -8909,9 +8184,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('send-comment').addEventListener('click',postComment);
   document.getElementById('save-profile-btn').addEventListener('click',saveProfile);
   document.getElementById('save-settings-btn').addEventListener('click',saveSettings);
-  document.querySelectorAll('.leaderboard-tab').forEach(tab => {
-      tab.addEventListener('click', () => loadLB(tab.dataset.period));
-    });
   let st;document.getElementById('search-inp').addEventListener('input',e=>{
     clearTimeout(st);searchQ=e.target.value.trim();st=setTimeout(()=>{feedPage=1;loadFeed()},500);
   });
@@ -9101,53 +8373,22 @@ async function delComment(id){
     renderComments(cd.data||[],null);}catch(e){toast(e.message)}
 }
 
-let currentLeaderboardPeriod = 'week';
-
-async function loadLB(period = currentLeaderboardPeriod) {
-  currentLeaderboardPeriod = period;
-  const box = document.getElementById('lb-content');
-  box.innerHTML = skelLB();
-  // Update active tab styling
-  document.querySelectorAll('.leaderboard-tab').forEach(tab => {
-    if(tab.dataset.period === period) tab.classList.add('active');
-    else tab.classList.remove('active');
-  });
+async function loadLB(){
+  const box=document.getElementById('lb-content');box.innerHTML=skelLB();
   try{
-    const d = await api(`/api/mini-app/leaderboard?period=${period}&user_id=${UID}`);
-    const users = d.data || [];
-    if(!users.length){
-      box.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No data for this period</div>';
-      return;
-    }
-    const [g, s, b, ...rest] = users;
-    let html = '';
-    if(g){
-      html += `<div class="lb-hero">
-        <span class="lb-crown">${esc(g.weekly_badge||'👑')}</span>
-        <div class="lb-top-name">${esc(g.name)}</div>
-        <div class="lb-top-pts">${esc(g.aura)} ${g.points} pts</div>
-        <div class="lb-medals">
-          ${s?`<div class="lb-medal-card"><div class="lb-medal-rank">🥈</div><div class="lb-medal-name">${esc(s.name)}</div><div class="lb-medal-pts">${s.points} pts</div></div>`:''}
-          ${b?`<div class="lb-medal-card"><div class="lb-medal-rank">🥉</div><div class="lb-medal-name">${esc(b.name)}</div><div class="lb-medal-pts">${b.points} pts</div></div>`:''}
-        </div>
-      </div>`;
-    }
+    const d=await api('/api/mini-app/leaderboard');
+    const users=d.data||[];
+    if(!users.length){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">No data yet</div>';return}
+    const [g,s,b,...rest]=users;
+    let html='';
+    if(g){html+=`<div class="lb-hero"><span class="lb-crown">${esc(g.weekly_badge||'👑')}</span><div class="lb-top-name">${esc(g.name)}</div><div class="lb-top-pts">${esc(g.aura)} ${g.points} pts</div><div class="lb-medals">${s?`<div class="lb-medal-card"><div class="lb-medal-rank">🥈</div><div class="lb-medal-name">${esc(s.name)}</div><div class="lb-medal-pts">${s.points} pts</div></div>`:''}${b?`<div class="lb-medal-card"><div class="lb-medal-rank">🥉</div><div class="lb-medal-name">${esc(b.name)}</div><div class="lb-medal-pts">${b.points} pts</div></div>`:''}</div></div>`}
     if(rest.length){
-      html += '<div class="section-label">More contributors</div><div class="lb-list card">';
-      rest.forEach((u,i)=>{
-        html += `<div class="lb-row">
-          <div class="lb-rank">${i+4}</div>
-          <div class="ava" style="width:36px;height:36px">${esc(u.avatar||u.sex||'👤')}</div>
-          <div class="lb-info"><div class="lb-info-name" onclick="showUserProfile('${u.id}')">${esc(u.weekly_badge||'')} ${esc(u.name)}</div><div class="lb-info-aura">${esc(u.aura)}</div></div>
-          <div class="lb-pts">${u.points}</div>
-        </div>`;
-      });
-      html += '</div>';
+      html+='<div class="section-label">More contributors</div><div class="lb-list card">';
+      rest.forEach((u,i)=>{html+=`<div class="lb-row"><div class="lb-rank">${i+4}</div><div class="ava" style="width:36px;height:36px">${esc(u.avatar||u.sex||'👤')}</div><div class="lb-info"><div class="lb-info-name" onclick="showUserProfile('${u.id}')">${esc(u.weekly_badge||'')} ${esc(u.name)}</div><div class="lb-info-aura">${esc(u.aura)}</div></div><div class="lb-pts">${u.points}</div></div>`});
+      html+='</div>';
     }
-    box.innerHTML = html;
-  } catch(e){
-    box.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>';
-  }
+    box.innerHTML=html;
+  }catch(e){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>'}
 }
 
 async function loadProfile(){
