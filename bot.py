@@ -9475,10 +9475,24 @@ def mini_app_send_chat_request():
     return jsonify({'success': True, 'status': 'pending', 'message': 'Chat request sent'})
 @flask_app.route('/api/mini-app/leaderboard', methods=['GET'])
 def mini_app_leaderboard():
-    """API endpoint for leaderboard data"""
+    """API endpoint for leaderboard data with period filtering (week, month, all)"""
     try:
-        # Get top 10 users with weighted aura
-        top_users = db_fetch_all('''
+        period = request.args.get('period', 'all')
+        
+        now = datetime.now()
+        if period == 'week':
+            start_date = now - timedelta(days=7)
+        elif period == 'month':
+            start_date = now - timedelta(days=30)
+        else:
+            start_date = None
+        
+        if start_date:
+            date_filter = f"AND p.timestamp >= '{start_date}'"
+        else:
+            date_filter = ""
+        
+        query = f"""
             SELECT 
                 u.user_id,
                 u.anonymous_name,
@@ -9486,26 +9500,33 @@ def mini_app_leaderboard():
                 u.avatar_emoji,
                 u.weekly_badge,
                 (
-                    (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
-                    (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
+                    COALESCE((SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE {date_filter}), 0) * 10 +
+                    COALESCE((SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id {date_filter}), 0) * 2 +
                     COALESCE((
-                        SELECT SUM(CASE WHEN r.type = 'like' THEN 1 WHEN r.type = 'dislike' THEN -2 ELSE 0 END)
+                        SELECT SUM(
+                            CASE WHEN r.type IN ('like', '🙏', '❤️', '🔥', '😢') THEN 1
+                                 WHEN r.type IN ('dislike', '😡', '👎') THEN -2
+                                 ELSE 0 END
+                        )
                         FROM reactions r
-                        JOIN comments c2 ON r.comment_id = c2.comment_id
-                        WHERE c2.author_id = u.user_id
+                        LEFT JOIN comments c2 ON r.comment_id = c2.comment_id
+                        LEFT JOIN posts p2 ON r.post_id = p2.post_id
+                        WHERE (c2.author_id = u.user_id OR p2.author_id = u.user_id)
+                          AND (c2.timestamp {date_filter} OR p2.timestamp {date_filter} OR r.timestamp {date_filter})
                     ), 0) -
-                    (SELECT COUNT(*) FROM blocks b WHERE b.blocked_id = u.user_id) * 10
+                    COALESCE((SELECT COUNT(*) FROM blocks b WHERE b.blocked_id = u.user_id {date_filter}), 0) * 10
                 ) as total
             FROM users u
             WHERE u.is_admin = FALSE
             ORDER BY total DESC
-            LIMIT 10
-        ''')
-
+            LIMIT 50
+        """
+        top_users = db_fetch_all(query)
         
-        # Format users
         formatted_users = []
         for idx, user in enumerate(top_users, start=1):
+            if user['total'] <= 0 and period != 'all':
+                continue
             formatted_users.append({
                 'id': str(user['user_id']),
                 'rank': idx,
@@ -9516,12 +9537,10 @@ def mini_app_leaderboard():
                 'aura': format_aura(user['total']),
                 'weekly_badge': user['weekly_badge'] or ""
             })
-
-
         
         return jsonify({
             'success': True,
-            'data': formatted_users
+            'data': formatted_users[:10]
         })
         
     except Exception as e:
