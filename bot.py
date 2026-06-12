@@ -7553,7 +7553,7 @@ def mini_app_page():
     _text = TEXT_COLOR
     _rgb = PRIMARY_RGB
 
-    html = ("""<!DOCTYPE html>
+    html = ("""!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -7860,7 +7860,7 @@ body.light .cr-input{background:rgba(245,243,240,0.95)}
 </style>
 </head>
 <body>
-<div id="auth"><div class="auth-ring"></div><span class="auth-label">Connecting…</span></div>
+<div id="auth"><div class="auth-ring"></div><span class="auth-label">Connecting…</span><span style="font-size:12px;color:var(--text3);margin-top:4px" id="auth-sub">Checking your session</span></div>
  
 <div id="app" style="display:none;height:100vh;flex-direction:column">
 <div id="shell">
@@ -8726,27 +8726,70 @@ function skelProfile(){return `<div style="margin:20px 16px 0"><div class="skel"
 function skelChats(){return Array(4).fill(`<div style="display:flex;gap:12px;padding:14px 16px;border-bottom:0.5px solid var(--border)"><div class="skel" style="width:44px;height:44px;border-radius:50%;flex-shrink:0"></div><div style="flex:1"><div class="skel" style="height:13px;width:50%;margin-bottom:6px"></div><div class="skel" style="height:11px;width:80%"></div></div></div>`).join('')}
  
 // ── INIT ──
-async function init(){
-  const tg=window.Telegram?.WebApp;
-  if(tg){try{tg.expand();tg.ready()}catch(e){}}
-  const user=tg?.initDataUnsafe?.user;
-  if(user?.id)UID=String(user.id);
-  if(!UID){
-    const t=new URLSearchParams(location.search).get('token');
-    if(t){try{const r=await fetch(API+'/api/verify-token/'+t);const d=await r.json();if(d.success)UID=String(d.user_id)}catch(e){}}
-  }
+function setAuthLabel(msg,sub){ const el=document.querySelector('.auth-label'); if(el) el.textContent=msg; const sel=document.getElementById('auth-sub'); if(sel&&sub) sel.textContent=sub; }
+function showApp(){
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='flex';
-  if(UID)loadFeed();
-  else document.getElementById('feed-list').innerHTML='<div style="text-align:center;padding:60px 20px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">🔒</div><div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div><div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';
+}
+ 
+async function fetchWithTimeout(url, opts={}, ms=5000){
+  const ctrl=new AbortController();
+  const tid=setTimeout(()=>ctrl.abort(), ms);
+  try{ return await fetch(url,{...opts, signal:ctrl.signal}); }
+  finally{ clearTimeout(tid); }
+}
+ 
+async function init(){
+  // Hard safety net — never hang more than 8 seconds total
+  const safetyTimer=setTimeout(()=>{ showApp(); }, 8000);
+ 
+  try{
+    // Step 1: init Telegram WebApp
+    const tg=window.Telegram?.WebApp;
+    if(tg){ try{ tg.expand(); tg.ready(); }catch(e){} }
+ 
+    // Step 2: try Telegram user directly (fastest path, no network)
+    const user=tg?.initDataUnsafe?.user;
+    if(user?.id){
+      UID=String(user.id);
+      setAuthLabel('Welcome back ✝️','Loading your feed…');
+    }
+ 
+    // Step 3: fallback — token in URL query string
+    if(!UID){
+      const t=new URLSearchParams(location.search).get('token');
+      if(t){
+        setAuthLabel('Verifying…','Checking token…');
+        try{
+          const r=await fetchWithTimeout(API+'/api/verify-token/'+t, {}, 5000);
+          const d=await r.json();
+          if(d.success) UID=String(d.user_id);
+        }catch(e){
+          // timeout or network error — continue without UID
+          console.warn('Token verify failed:', e.message);
+        }
+      }
+    }
+  } catch(e){
+    console.error('Init error:', e);
+  } finally{
+    clearTimeout(safetyTimer);
+    showApp();
+    if(UID) loadFeed();
+    else document.getElementById('feed-list').innerHTML=
+      '<div style="text-align:center;padding:60px 20px;color:var(--text3)">'+
+      '<div style="font-size:32px;margin-bottom:12px">🔒</div>'+
+      '<div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div>'+
+      '<div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';
+  }
 }
 init();
 </script>
 </body>
 </html>""")
-    
-    html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
-    return html
+ 
+html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
+return html
 
 
 # ==================== MINI APP API ENDPOINTS ====================
