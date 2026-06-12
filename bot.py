@@ -8739,48 +8739,70 @@ async function fetchWithTimeout(url, opts={}, ms=5000){
   finally{ clearTimeout(tid); }
 }
  
-async function init(){
-  // Hard safety net — never hang more than 8 seconds total
-  const safetyTimer=setTimeout(()=>{ showApp(); }, 8000);
- 
-  try{
-    // Step 1: init Telegram WebApp
-    const tg=window.Telegram?.WebApp;
-    if(tg){ try{ tg.expand(); tg.ready(); }catch(e){} }
- 
-    // Step 2: try Telegram user directly (fastest path, no network)
-    const user=tg?.initDataUnsafe?.user;
-    if(user?.id){
-      UID=String(user.id);
-      setAuthLabel('Welcome back ✝️','Loading your feed…');
-    }
- 
-    // Step 3: fallback — token in URL query string
-    if(!UID){
-      const t=new URLSearchParams(location.search).get('token');
-      if(t){
-        setAuthLabel('Verifying…','Checking token…');
-        try{
-          const r=await fetchWithTimeout(API+'/api/verify-token/'+t, {}, 5000);
-          const d=await r.json();
-          if(d.success) UID=String(d.user_id);
-        }catch(e){
-          // timeout or network error — continue without UID
-          console.warn('Token verify failed:', e.message);
-        }
+// ── FASTER INIT WITH BACKGROUND LOADING ──
+let authCompleted = false;
+
+function showMainApp() {
+  if (authCompleted) return;
+  authCompleted = true;
+  document.getElementById('auth').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  if (UID) loadFeed();
+  else {
+    document.getElementById('feed-list').innerHTML =
+      '<div style="text-align:center;padding:60px 20px;color:var(--text3)">' +
+      '<div style="font-size:32px;margin-bottom:12px">🔒</div>' +
+      '<div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div>' +
+      '<div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';
+  }
+}
+
+async function init() {
+  // Force show main app after 2 seconds max (prevents infinite spinner)
+  const forceTimer = setTimeout(() => {
+    if (!authCompleted) showMainApp();
+  }, 2000);
+
+  try {
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      try { tg.expand(); tg.ready(); } catch(e) {}
+      const user = tg.initDataUnsafe?.user;
+      if (user?.id) {
+        UID = String(user.id);
+        document.querySelector('.auth-label').textContent = 'Welcome back ✝️';
+        // Show app immediately – feed loads below
+        showMainApp();
+        clearTimeout(forceTimer);
+        return;
       }
     }
-  } catch(e){
+
+    // If no Telegram user, try token from URL (fast, only 2s timeout)
+    const token = new URLSearchParams(location.search).get('token');
+    if (token) {
+      document.querySelector('.auth-label').textContent = 'Verifying token…';
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      try {
+        const res = await fetch(API + '/api/verify-token/' + token, { signal: controller.signal });
+        const data = await res.json();
+        if (data.success) UID = String(data.user_id);
+      } catch (e) {
+        console.warn('Token verify failed:', e);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    // Always show app after token attempt (even if no UID)
+    showMainApp();
+
+  } catch (e) {
     console.error('Init error:', e);
-  } finally{
-    clearTimeout(safetyTimer);
-    showApp();
-    if(UID) loadFeed();
-    else document.getElementById('feed-list').innerHTML=
-      '<div style="text-align:center;padding:60px 20px;color:var(--text3)">'+
-      '<div style="font-size:32px;margin-bottom:12px">🔒</div>'+
-      '<div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div>'+
-      '<div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';
+    showMainApp();
+  } finally {
+    clearTimeout(forceTimer);
   }
 }
 init();
