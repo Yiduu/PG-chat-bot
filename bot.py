@@ -1068,6 +1068,24 @@ def login_page():
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        .leaderboard-tab {
+          flex:1;
+          background:var(--bg2);
+          border:0.5px solid var(--border);
+          border-radius:20px;
+          padding:8px;
+          font-family:'Inter',sans-serif;
+          font-weight:600;
+          font-size:12px;
+          color:var(--text3);
+          cursor:pointer;
+          transition:all 0.2s;
+        }
+        .leaderboard-tab.active {
+          background:rgba(201,168,76,0.15);
+          border-color:var(--gold);
+          color:var(--gold);
+        }
     </style>
 </head>
 <body>
@@ -8069,7 +8087,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
       <div class="section-label">Responses</div>
       <div id="detail-comments" style="padding:0 16px 80px"></div>
     </div>
-    <div class="page" id="page-leaderboard"><div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Top Voices</h1><div class="page-head-sub">Weekly community leaders</div></div></div></div><div id="lb-content"></div></div>
+    <div class="page" id="page-leaderboard"><div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Top Voices</h1><div class="page-head-sub">Community leaders</div></div></div></div><div style="display:flex; gap:8px; margin:16px 16px 0;"><button class="leaderboard-tab active" data-period="week">📅 Weekly</button><button class="leaderboard-tab" data-period="month">📆 Monthly</button><button class="leaderboard-tab" data-period="all">🏆 All-Time</button></div><div id="lb-content"></div></div>
     <div class="page" id="page-profile"><div id="profile-content"></div></div>
     <div class="page" id="page-edit">
       <button class="back-btn" onclick="go('profile')"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Profile</button>
@@ -8184,6 +8202,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('send-comment').addEventListener('click',postComment);
   document.getElementById('save-profile-btn').addEventListener('click',saveProfile);
   document.getElementById('save-settings-btn').addEventListener('click',saveSettings);
+  document.querySelectorAll('.leaderboard-tab').forEach(tab => {
+      tab.addEventListener('click', () => loadLB(tab.dataset.period));
+    });
   let st;document.getElementById('search-inp').addEventListener('input',e=>{
     clearTimeout(st);searchQ=e.target.value.trim();st=setTimeout(()=>{feedPage=1;loadFeed()},500);
   });
@@ -8373,22 +8394,53 @@ async function delComment(id){
     renderComments(cd.data||[],null);}catch(e){toast(e.message)}
 }
 
-async function loadLB(){
-  const box=document.getElementById('lb-content');box.innerHTML=skelLB();
+let currentLeaderboardPeriod = 'week';
+
+async function loadLB(period = currentLeaderboardPeriod) {
+  currentLeaderboardPeriod = period;
+  const box = document.getElementById('lb-content');
+  box.innerHTML = skelLB();
+  // Update active tab styling
+  document.querySelectorAll('.leaderboard-tab').forEach(tab => {
+    if(tab.dataset.period === period) tab.classList.add('active');
+    else tab.classList.remove('active');
+  });
   try{
-    const d=await api('/api/mini-app/leaderboard');
-    const users=d.data||[];
-    if(!users.length){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">No data yet</div>';return}
-    const [g,s,b,...rest]=users;
-    let html='';
-    if(g){html+=`<div class="lb-hero"><span class="lb-crown">${esc(g.weekly_badge||'👑')}</span><div class="lb-top-name">${esc(g.name)}</div><div class="lb-top-pts">${esc(g.aura)} ${g.points} pts</div><div class="lb-medals">${s?`<div class="lb-medal-card"><div class="lb-medal-rank">🥈</div><div class="lb-medal-name">${esc(s.name)}</div><div class="lb-medal-pts">${s.points} pts</div></div>`:''}${b?`<div class="lb-medal-card"><div class="lb-medal-rank">🥉</div><div class="lb-medal-name">${esc(b.name)}</div><div class="lb-medal-pts">${b.points} pts</div></div>`:''}</div></div>`}
-    if(rest.length){
-      html+='<div class="section-label">More contributors</div><div class="lb-list card">';
-      rest.forEach((u,i)=>{html+=`<div class="lb-row"><div class="lb-rank">${i+4}</div><div class="ava" style="width:36px;height:36px">${esc(u.avatar||u.sex||'👤')}</div><div class="lb-info"><div class="lb-info-name" onclick="showUserProfile('${u.id}')">${esc(u.weekly_badge||'')} ${esc(u.name)}</div><div class="lb-info-aura">${esc(u.aura)}</div></div><div class="lb-pts">${u.points}</div></div>`});
-      html+='</div>';
+    const d = await api(`/api/mini-app/leaderboard?period=${period}&user_id=${UID}`);
+    const users = d.data || [];
+    if(!users.length){
+      box.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No data for this period</div>';
+      return;
     }
-    box.innerHTML=html;
-  }catch(e){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>'}
+    const [g, s, b, ...rest] = users;
+    let html = '';
+    if(g){
+      html += `<div class="lb-hero">
+        <span class="lb-crown">${esc(g.weekly_badge||'👑')}</span>
+        <div class="lb-top-name">${esc(g.name)}</div>
+        <div class="lb-top-pts">${esc(g.aura)} ${g.points} pts</div>
+        <div class="lb-medals">
+          ${s?`<div class="lb-medal-card"><div class="lb-medal-rank">🥈</div><div class="lb-medal-name">${esc(s.name)}</div><div class="lb-medal-pts">${s.points} pts</div></div>`:''}
+          ${b?`<div class="lb-medal-card"><div class="lb-medal-rank">🥉</div><div class="lb-medal-name">${esc(b.name)}</div><div class="lb-medal-pts">${b.points} pts</div></div>`:''}
+        </div>
+      </div>`;
+    }
+    if(rest.length){
+      html += '<div class="section-label">More contributors</div><div class="lb-list card">';
+      rest.forEach((u,i)=>{
+        html += `<div class="lb-row">
+          <div class="lb-rank">${i+4}</div>
+          <div class="ava" style="width:36px;height:36px">${esc(u.avatar||u.sex||'👤')}</div>
+          <div class="lb-info"><div class="lb-info-name" onclick="showUserProfile('${u.id}')">${esc(u.weekly_badge||'')} ${esc(u.name)}</div><div class="lb-info-aura">${esc(u.aura)}</div></div>
+          <div class="lb-pts">${u.points}</div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    box.innerHTML = html;
+  } catch(e){
+    box.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>';
+  }
 }
 
 async function loadProfile(){
