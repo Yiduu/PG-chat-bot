@@ -7553,7 +7553,7 @@ def mini_app_page():
     _text = TEXT_COLOR
     _rgb = PRIMARY_RGB
 
-    html = ("""!DOCTYPE html>
+    html = ("""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -8787,9 +8787,9 @@ init();
 </script>
 </body>
 </html>""")
- 
-html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
-return html
+    
+    html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
+    return html
 
 
 # ==================== MINI APP API ENDPOINTS ====================
