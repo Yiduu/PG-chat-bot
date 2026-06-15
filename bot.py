@@ -616,7 +616,7 @@ except Exception as e:
 
 
 def db_execute(query, params=(), fetch=False, fetchone=False):
-    """Execute a SQL query using the global connection pool."""
+    """Execute a SQL query using the global connection pool. Raises on error."""
     conn = None
     try:
         conn = db_pool.getconn()
@@ -634,7 +634,7 @@ def db_execute(query, params=(), fetch=False, fetchone=False):
         logging.error(f"Database error: {e}")
         if conn:
             conn.rollback()
-        return None
+        raise   # <-- IMPORTANT: re-raise so caller knows it failed
     finally:
         if conn:
             db_pool.putconn(conn)
@@ -6754,46 +6754,102 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not report:
                     await query.answer("❌ Report not found.", show_alert=True)
                     return
-                preview, author_id = get_report_content_preview(report['target_type'], report['target_id'])
-                # Delete the reported content
-                if report['target_type'] == 'post':
-                    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (report['target_id'],))
-                    if post:
-                        if post['channel_message_id']:
+        
+                target_type = report['target_type']
+                target_id = report['target_id']
+                author_id = None
+        
+                if target_type == 'post':
+                    # ---------- DELETE POST ----------
+                    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (target_id,))
+                    if not post:
+                        await query.answer("❌ Post already deleted.", show_alert=True)
+                        return
+        
+                    # 1. Try to delete or hide channel message
+                    if post.get('channel_message_id'):
+                        try:
+                            await context.bot.delete_message(
+                                chat_id=CHANNEL_ID,
+                                message_id=post['channel_message_id']
+                            )
+                            logger.info(f"Deleted channel message for post {target_id}")
+                        except Exception as e:
+                            logger.error(f"Failed to delete channel message: {e}")
+                            # Fallback: edit the message to show it's removed
                             try:
-                                await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=post['channel_message_id'])
-                            except Exception:
-                                pass
-                        comments_list = db_fetch_all("SELECT comment_id FROM comments WHERE post_id = %s", (report['target_id'],))
-                        for c in comments_list:
-                            db_execute("DELETE FROM reactions WHERE comment_id = %s", (c['comment_id'],))
-                        db_execute("DELETE FROM comments WHERE post_id = %s", (report['target_id'],))
-                        db_execute("DELETE FROM post_categories WHERE post_id = %s", (report['target_id'],))
-                        db_execute("DELETE FROM posts WHERE post_id = %s", (report['target_id'],))
-                elif report['target_type'] == 'comment':
-                    comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (report['target_id'],))
-                    if comment:
-                        post_id_for_count = comment['post_id']
-                        db_execute("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (report['target_id'],))
-                        db_execute("DELETE FROM reactions WHERE comment_id = %s", (report['target_id'],))
-                        db_execute("DELETE FROM comments WHERE comment_id = %s", (report['target_id'],))
-                        await adopt_orphaned_replies(context, post_id_for_count)
+                                await context.bot.edit_message_text(
+                                    chat_id=CHANNEL_ID,
+                                    message_id=post['channel_message_id'],
+                                    text="⚠️ *This content has been removed by an admin.*",
+                                    parse_mode=ParseMode.MARKDOWN,
+                                    reply_markup=None
+                                )
+                            except Exception as edit_err:
+                                logger.error(f"Also failed to edit channel message: {edit_err}")
+        
+                    # 2. Delete all associated data (comments, reactions, categories)
+                    db_execute("DELETE FROM reactions WHERE comment_id IN (SELECT comment_id FROM comments WHERE post_id = %s)", (target_id,))
+                    db_execute("DELETE FROM comments WHERE post_id = %s", (target_id,))
+                    db_execute("DELETE FROM post_categories WHERE post_id = %s", (target_id,))
+                    # 3. Delete the post itself, verify it's gone
+                    deleted = db_execute("DELETE FROM posts WHERE post_id = %s RETURNING post_id", (target_id,), fetchone=True)
+                    if not deleted:
+                        raise Exception("Post deletion from database failed (no rows returned)")
+        
+                    author_id = post.get('author_id')
+                    logger.info(f"Post {target_id} deleted by admin {user_id}")
+        
+                elif target_type == 'comment':
+                    # ---------- DELETE COMMENT ----------
+                    comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (target_id,))
+                    if not comment:
+                        await query.answer("❌ Comment already deleted.", show_alert=True)
+                        return
+        
+                    post_id = comment['post_id']
+                    # 1. Re‑parent child comments to top level
+                    db_execute("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (target_id,))
+                    # 2. Delete reactions and the comment itself
+                    db_execute("DELETE FROM reactions WHERE comment_id = %s", (target_id,))
+                    deleted = db_execute("DELETE FROM comments WHERE comment_id = %s RETURNING comment_id", (target_id,), fetchone=True)
+                    if not deleted:
+                        raise Exception("Comment deletion from database failed (no rows returned)")
+        
+                    # 3. Update comment count and channel button
+                    await adopt_orphaned_replies(context, post_id)
+        
+                    author_id = comment.get('author_id')
+                    logger.info(f"Comment {target_id} deleted by admin {user_id}")
+        
+                else:
+                    await query.answer("❌ Unknown target type.", show_alert=True)
+                    return
+        
+                # ---------- AFTER DELETION: update report, clear caches, notify author ----------
                 resolve_report(report_id, user_id, 'action_taken', 'deleted')
-                # Notify the content author (without revealing the reporter)
-                if author_id:
+        
+                # Clear aura caches (important for leaderboard updates)
+                calculate_user_rating.cache_clear()
+                format_aura.cache_clear()
+        
+                # Notify the content author (if we have an author_id and it's not the admin themselves)
+                if author_id and str(author_id) != str(user_id):
                     try:
                         await context.bot.send_message(
                             chat_id=author_id,
                             text="⚠️ Your content was reviewed and removed by an admin due to a community report. Please ensure your posts follow our community guidelines."
                         )
-                    except Exception:
-                        pass
+                    except Exception as notify_err:
+                        logger.warning(f"Could not notify author {author_id}: {notify_err}")
+        
+                # Success feedback
                 await query.answer("✅ Content deleted.", show_alert=False)
                 await show_admin_reports(update, context, page=1)
+        
             except Exception as e:
-                logger.error(f"Error in report_delete handler: {e}")
-                await query.answer("❌ Error deleting content", show_alert=True)
-
+                logger.error(f"Error in report_delete handler: {e}", exc_info=True)
+                await query.answer(f"❌ Deletion failed: {str(e)[:50]}", show_alert=True)
         elif query.data.startswith('report_warn_'):
             try:
                 report_id = int(query.data.split('_')[2])
@@ -6813,7 +6869,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(
                             chat_id=author_id,
                             text=(
-                                "⚠️ *Warning from Admin*\n\n"
+                                "⚠️ Warning from Admin \n\n"
                                 "Your content has been reported and reviewed by an admin. "
                                 "Please ensure your posts and comments follow our community guidelines.\n\n"
                                 "Repeated violations may result in content removal or other actions."
