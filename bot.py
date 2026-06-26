@@ -8175,7 +8175,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 <script>
 'use strict';
 const API = location.origin;
-let UID = null, profileCache = null, crPartnerId = null, crPoll = null;
+let UID = null, profileCache = null, crPartnerId = null, crPoll = null, currentPostAuthorId = null;
 let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null;
 const selCats = new Set();
 let selEmoji = null;
@@ -8323,6 +8323,7 @@ async function openPost(id){
   try{
     const d=await api(`/api/mini-app/post/${id}?viewer_id=${UID}`);
     const p=d.data;
+    currentPostAuthorId = p.author_id;
     const cats=(p.categories||[]).map(c=>`<span class="pill pill-sm">${esc(c)}</span>`).join('');
     let reactionsHtml='';
     if(p.reactions&&p.reactions.counts){
@@ -8335,7 +8336,7 @@ async function openPost(id){
     }
     document.getElementById('detail-post').innerHTML=`
       <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
-        <div class="post-meta"><div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div><div><div class="post-name" style="font-size:14px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}', true)"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:12px;color:var(--text3)">${esc(p.author?.aura||'')}</span></div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
+        <div class="post-meta"><div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div><div><div class="post-name" style="font-size:14px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}')"`}>🛡 Vent author</div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
         <div style="font-size:15px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
         <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">${reactionsHtml}<button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="showReactionDock(this,'post',${p.id})">➕ React</button></div>
@@ -8352,7 +8353,7 @@ function renderComments(comments,postAuthorId){
   const roots=[];comments.forEach(c=>c.parent_id&&map[c.parent_id]?map[c.parent_id].children.push(map[c.id]):roots.push(map[c.id]));
   const rr=(c,dep)=>{
     const isAuthor=String(c.author_id)===String(postAuthorId);
-    const name=isAuthor?'✝️ Vent author':(c.author?.name||'Anonymous');
+    const name=isAuthor?'🛡 Vent author':(c.author?.name||'Anonymous');
     const mine=String(c.author_id)===String(UID);
     let reactionsHtml='';
     if(c.reactions&&c.reactions.counts){
@@ -8564,43 +8565,54 @@ async function sendChatRequest(targetId){
   }catch(e){toast(e.message); return false;}
 }
 
-async function showUserProfile(userId, postAuthor = false){
+async function showUserProfile(userId){
   if(!userId) return;
   if(String(userId)===String(UID)){ go('profile'); return; }
   const modal=document.getElementById('profileModal');
   const contentDiv=document.getElementById('modalContent');
   modal.classList.add('active');
   contentDiv.innerHTML='<div class="skel" style="height:150px;"></div>';
+  
+  const isPostAuthor = (currentPostAuthorId && String(userId) === String(currentPostAuthorId));
+  
   try{
-    const data=await api(`/api/mini-app/profile/${userId}?viewer_id=${UID}`);
-    const u=data.data;
-    const requestStatus=await getChatRequestStatus(userId);
-    let buttonHtml='';
+    const data = await api(`/api/mini-app/profile/${userId}?viewer_id=${UID}`);
+    const u = data.data;
+    const requestStatus = await getChatRequestStatus(userId);
+    let buttonHtml = '';
     if(requestStatus==='accepted'){
-      buttonHtml=`<button class="modal-btn modal-btn-primary" id="chatActionBtn">💬 Open Chat</button>`;
+      buttonHtml = `<button class="modal-btn modal-btn-primary" id="chatActionBtn">💬 Open Chat</button>`;
     }else if(requestStatus==='pending'){
-      buttonHtml=`<button class="modal-btn modal-btn-secondary" disabled style="opacity:0.6">⏳ Request Pending</button>`;
+      buttonHtml = `<button class="modal-btn modal-btn-secondary" disabled style="opacity:0.6">⏳ Request Pending</button>`;
     }else{
-      buttonHtml=`<button class="modal-btn modal-btn-primary" id="chatActionBtn">✉️ Request to Chat</button>`;
+      buttonHtml = `<button class="modal-btn modal-btn-primary" id="chatActionBtn">✉️ Request to Chat</button>`;
     }
-    let statsHtml = '';
-    if(!postAuthor){
-      statsHtml = `<div class="modal-stats"><div class="modal-stat"><div class="modal-stat-num">${u.stats?.posts||0}</div><div class="modal-stat-lbl">Vents</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.comments||0}</div><div class="modal-stat-lbl">Replies</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.followers||0}</div><div class="modal-stat-lbl">Followers</div></div></div>`;
+    
+    let nameDisplay = u.name;
+    if(isPostAuthor){
+      nameDisplay = '🛡 Vent author';
+      contentDiv.innerHTML = `
+        <div class="modal-avatar">${esc(u.avatar||u.sex||'👤')}</div>
+        <div class="modal-name">${esc(nameDisplay)}</div>
+        ${buttonHtml}
+      `;
+    } else {
+      contentDiv.innerHTML = `
+        <div class="modal-avatar">${esc(u.avatar||u.sex||'👤')}</div>
+        <div class="modal-name">${esc(u.name)}</div>
+        <div class="modal-stats"><div class="modal-stat"><div class="modal-stat-num">${u.stats?.posts||0}</div><div class="modal-stat-lbl">Vents</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.comments||0}</div><div class="modal-stat-lbl">Replies</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.followers||0}</div><div class="modal-stat-lbl">Followers</div></div></div>
+        ${buttonHtml}
+      `;
     }
-    contentDiv.innerHTML=`
-      <div class="modal-avatar">${esc(u.avatar||u.sex||'👤')}</div>
-      <div class="modal-name">${esc(u.name)}</div>
-      ${statsHtml}
-      ${buttonHtml}
-    `;
-    const btn=document.getElementById('chatActionBtn');
+    
+    const btn = document.getElementById('chatActionBtn');
     if(btn && requestStatus!=='pending'){
-      btn.onclick=async()=>{
+      btn.onclick = async function(){
         if(requestStatus==='accepted'){
           closeProfileModal();
           openCR(userId, u.name, u.avatar||u.sex);
         }else{
-          const sent=await sendChatRequest(userId);
+          const sent = await sendChatRequest(userId);
           if(sent){
             closeProfileModal();
             toast('Request sent! You can chat once they accept.');
@@ -9053,7 +9065,8 @@ def mini_app_get_post_comments(post_id):
                     cid = row['comment_id']
                     rtype = row['type']
                     comment_user_reactions_map[cid] = rtype
-
+        post_author = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
+        post_author_id = post_author['author_id'] if post_author else None
         formatted_comments = []
         now = datetime.now()
         for c in comments:
@@ -9086,7 +9099,8 @@ def mini_app_get_post_comments(post_id):
                     'sex': c['author_sex'] or '👤',
                     'avatar': c['author_avatar'] or "",
                     'aura': "🔵" if c['author_is_admin'] else format_aura(rating),
-                    'is_admin': c['author_is_admin']
+                    'is_admin': c['author_is_admin'],
+                    'is_vent_author': str(c['author_id']) == str(post_author_id) if post_author_id else False
                 },
                 'reactions': {
                     'counts': comment_reactions_map.get(c['comment_id'], {}),
