@@ -8335,7 +8335,7 @@ async function openPost(id){
     }
     document.getElementById('detail-post').innerHTML=`
       <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
-        <div class="post-meta"><div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div><div><div class="post-name" style="font-size:14px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:12px;color:var(--text3)">${esc(p.author?.aura||'')}</span></div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
+        <div class="post-meta"><div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div><div><div class="post-name" style="font-size:14px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}', true)"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:12px;color:var(--text3)">${esc(p.author?.aura||'')}</span></div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
         <div style="font-size:15px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
         <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">${reactionsHtml}<button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="showReactionDock(this,'post',${p.id})">➕ React</button></div>
@@ -8564,7 +8564,7 @@ async function sendChatRequest(targetId){
   }catch(e){toast(e.message); return false;}
 }
 
-async function showUserProfile(userId){
+async function showUserProfile(userId, postAuthor = false){
   if(!userId) return;
   if(String(userId)===String(UID)){ go('profile'); return; }
   const modal=document.getElementById('profileModal');
@@ -8583,10 +8583,14 @@ async function showUserProfile(userId){
     }else{
       buttonHtml=`<button class="modal-btn modal-btn-primary" id="chatActionBtn">✉️ Request to Chat</button>`;
     }
+    let statsHtml = '';
+    if(!postAuthor){
+      statsHtml = `<div class="modal-stats"><div class="modal-stat"><div class="modal-stat-num">${u.stats?.posts||0}</div><div class="modal-stat-lbl">Vents</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.comments||0}</div><div class="modal-stat-lbl">Replies</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.followers||0}</div><div class="modal-stat-lbl">Followers</div></div></div>`;
+    }
     contentDiv.innerHTML=`
       <div class="modal-avatar">${esc(u.avatar||u.sex||'👤')}</div>
       <div class="modal-name">${esc(u.name)}</div>
-      <div class="modal-stats"><div class="modal-stat"><div class="modal-stat-num">${u.stats?.posts||0}</div><div class="modal-stat-lbl">Vents</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.comments||0}</div><div class="modal-stat-lbl">Replies</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.followers||0}</div><div class="modal-stat-lbl">Followers</div></div></div>
+      ${statsHtml}
       ${buttonHtml}
     `;
     const btn=document.getElementById('chatActionBtn');
