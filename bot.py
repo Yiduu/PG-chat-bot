@@ -8308,7 +8308,7 @@ function renderPost(p){
     }
   }
   return `<div class="post-card">
-    <div class="post-meta"><div class="ava" style="width:34px;height:34px">${esc(p.author?.avatar||p.author?.sex||'👤')}</div><div><div class="post-name" onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')">${esc(p.author?.name||'Anonymous')} <span style="font-size:12px">${esc(p.author?.aura||'')}</span></div></div><div class="post-time">${esc(p.time_ago||'')}</div></div>
+    <div class="post-meta"><div class="ava" style="width:34px;height:34px">${esc(p.author?.avatar||p.author?.sex||'👤')}</div><div><div class="post-name"${p.author?.is_admin ? '' : ` onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:12px">${esc(p.author?.aura||'')}</span></div></div><div class="post-time">${esc(p.time_ago||'')}</div></div>
     ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${cats}</div>`:''}
     <div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
     <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0">${reactionsHtml}<button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="event.stopPropagation(); showReactionDock(this,'post',${p.id})">➕ React</button></div>
@@ -8335,7 +8335,7 @@ async function openPost(id){
     }
     document.getElementById('detail-post').innerHTML=`
       <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
-        <div class="post-meta"><div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div><div><div class="post-name" style="font-size:14px;cursor:pointer" onclick="showUserProfile('${p.author?.id}')">${esc(p.author?.name||'Anonymous')} <span style="font-size:12px;color:var(--text3)">${esc(p.author?.aura||'')}</span></div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
+        <div class="post-meta"><div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div><div><div class="post-name" style="font-size:14px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:12px;color:var(--text3)">${esc(p.author?.aura||'')}</span></div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
         <div style="font-size:15px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
         <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">${reactionsHtml}<button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="showReactionDock(this,'post',${p.id})">➕ React</button></div>
@@ -8363,7 +8363,7 @@ function renderComments(comments,postAuthorId){
         }
       }
     }
-    return `<div class="comment-item${dep>0?' reply':''}"><div class="ava" style="width:28px;height:28px;font-size:13px">${esc(c.author?.sex||'👤')}</div><div class="comment-body"><div class="comment-name" onclick="showUserProfile('${c.author_id}')">${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div><div class="comment-text">${esc(c.content)}</div><div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0">${reactionsHtml}<button class="reaction-trigger" data-type="comment" data-id="${c.id}" onclick="showReactionDock(this,'comment',${c.id})">➕ React</button></div><div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">↩ Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
+    return `<div class="comment-item${dep>0?' reply':''}"><div class="ava" style="width:28px;height:28px;font-size:13px">${esc(c.author?.sex||'👤')}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div><div class="comment-text">${esc(c.content)}</div><div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0">${reactionsHtml}<button class="reaction-trigger" data-type="comment" data-id="${c.id}" onclick="showReactionDock(this,'comment',${c.id})">➕ React</button></div><div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">↩ Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
   };
   box.innerHTML=roots.map(c=>rr(c,0)).join('');
 }
@@ -8879,7 +8879,8 @@ def mini_app_get_posts():
                     'sex': post['author_sex'] or '👤',
                     'avatar': post['author_avatar'] or "",
                     'aura': aura_sticker,
-                    'is_me': str(post['author_id']) == str(user_id)
+                    'is_me': str(post['author_id']) == str(user_id),
+                    'is_admin': post['author_is_admin']
                 },
                 'has_media': post['media_type'] != 'text',
                 'reactions': {
@@ -8978,7 +8979,8 @@ def mini_app_get_single_post(post_id):
                 'name': 'Anonymous',
                 'sex': post['author_sex'] or '👤',
                 'avatar': post['author_avatar'] or "",
-                'aura': "🔵" if post['author_is_admin'] else format_aura(rating)
+                'aura': "🔵" if post['author_is_admin'] else format_aura(rating),
+                'is_admin': post['author_is_admin']
             },
             'reactions': {
                 'counts': counts,
@@ -9079,7 +9081,8 @@ def mini_app_get_post_comments(post_id):
                     'name': c['author_name'] or 'Anonymous',
                     'sex': c['author_sex'] or '👤',
                     'avatar': c['author_avatar'] or "",
-                    'aura': "🔵" if c['author_is_admin'] else format_aura(rating)
+                    'aura': "🔵" if c['author_is_admin'] else format_aura(rating),
+                    'is_admin': c['author_is_admin']
                 },
                 'reactions': {
                     'counts': comment_reactions_map.get(c['comment_id'], {}),
