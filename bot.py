@@ -3309,7 +3309,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     profile_text = f"👤 *{escape_markdown(display_name, version=2)}*{' ' + escape_markdown(display_sex, version=2) if display_sex else ''}\n\n"
                     # Only add a note if not self? But we already handle self above.
                     # Add a simple spacer
-                    profile_text += "_This is the author of the vent._\n"
+                    profile_text += "_This is the author of the vent_\n"
                 else:
                     # Normal profile (including self)
                     display_name = get_display_name(user_data)
