@@ -3238,139 +3238,155 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(parts) >= 2:
                 target_user_id = parts[1]
                 post_id = parts[2] if len(parts) >= 3 else None
-                
+
                 user_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (target_user_id,))
-                if user_data:
-                    followers = db_fetch_all("SELECT * FROM followers WHERE followed_id = %s", (user_data['user_id'],))
-                    rating = calculate_user_rating(user_data['user_id'])
-                    current_user_id = user_id
-                    btn = []
-                    
-                    if user_data['user_id'] != current_user_id:
-                        is_following = db_fetch_one(
-                            "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
-                            (current_user_id, user_data['user_id'])
-                        )
-                        # Check if blocked to show toggle
-                        is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id']))
-                        
-                        # Check if chat request already accepted between the two users
-                        accepted_request = db_fetch_one(
-                            "SELECT status FROM chat_requests WHERE "
-                            "((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s)) AND status = 'accepted'",
-                            (current_user_id, user_data['user_id'], user_data['user_id'], current_user_id)
-                        )
-                        
-                        chat_btn_text = "💬 Chat" if accepted_request else "✉️ Request to Chat"
-                        chat_btn_callback = f'message_{user_data["user_id"]}' if accepted_request else f'chatrequest_{user_data["user_id"]}'
-                        
-                        if is_following:
-                            btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
-                        else:
-                            btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
-                            
+                if not user_data:
+                    await update.message.reply_text("❌ User not found.")
+                    return
+
+                followers = db_fetch_all("SELECT * FROM followers WHERE followed_id = %s", (user_data['user_id'],))
+                rating = calculate_user_rating(user_data['user_id'])
+                current_user_id = user_id
+
+                # Determine if this is a vent author context (viewing from a post)
+                is_vent_author = False
+                if post_id:
+                    post_info = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
+                    if post_info and str(post_info['author_id']) == str(target_user_id) and str(target_user_id) != str(current_user_id):
+                        is_vent_author = True
+
+                # Build buttons
+                btn = []
+                if user_data['user_id'] != current_user_id:
+                    # Check chat request status
+                    accepted_request = db_fetch_one(
+                        "SELECT status FROM chat_requests WHERE "
+                        "((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s)) AND status = 'accepted'",
+                        (current_user_id, user_data['user_id'], user_data['user_id'], current_user_id)
+                    )
+
+                    chat_btn_text = "💬 Chat" if accepted_request else "✉️ Request to Chat"
+                    chat_btn_callback = f'message_{user_data["user_id"]}' if accepted_request else f'chatrequest_{user_data["user_id"]}'
+
+                    # For vent authors, only show chat and block/unblock (no follow/unfollow)
+                    if is_vent_author:
                         btn.append([InlineKeyboardButton(chat_btn_text, callback_data=chat_btn_callback)])
-                        
+                        # Check block status
+                        is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id']))
                         if is_blocked:
                             btn.append([InlineKeyboardButton("🔓 Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
                         else:
                             btn.append([InlineKeyboardButton("⛔ Block User", callback_data=f'block_user_{user_data["user_id"]}')])
-                
-                # Contextual Anonymity Check
-                display_name = get_display_name(user_data)
-                if post_id:
-                    post_info = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
-                    if post_info and str(post_info['author_id']) == str(target_user_id) and str(target_user_id) != str(user_id):
-                        display_name = "🛡 Vent Author"
+                    else:
+                        # Normal profile: show follow/unfollow, chat, block
+                        is_following = db_fetch_one(
+                            "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
+                            (current_user_id, user_data['user_id'])
+                        )
+                        if is_following:
+                            btn.append([InlineKeyboardButton("🚫 Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
+                        else:
+                            btn.append([InlineKeyboardButton("🫂 Follow", callback_data=f'follow_{user_data["user_id"]}')])
 
+                        btn.append([InlineKeyboardButton(chat_btn_text, callback_data=chat_btn_callback)])
+
+                        is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id']))
+                        if is_blocked:
+                            btn.append([InlineKeyboardButton("🔓 Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
+                        else:
+                            btn.append([InlineKeyboardButton("⛔ Block User", callback_data=f'block_user_{user_data["user_id"]}')])
+
+                # Prepare display variables
                 display_sex = get_display_sex(user_data)
-                
-                weekly_badge = user_data.get('weekly_badge')
-                if weekly_badge:
-                    display_name = f"{weekly_badge} {display_name}"
-
-                level = (rating // 10) + 1
                 bio = user_data.get('bio', 'No bio set.')
-                
-                # Check for admin viewer
-                viewer_data = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
-                is_viewer_admin = viewer_data['is_admin'] if viewer_data else False
-                is_owner = str(user_id) == str(target_user_id)
-                
-                # Apply privacy filters
-                if not is_viewer_admin and not is_owner:
-                    if user_data.get('hide_aura'):
-                        rating_str = "🔒 Hidden"
-                        level_str = "🔒 Hidden"
-                        aura_str = "🔒 Hidden"
+                is_owner = str(current_user_id) == str(target_user_id)
+
+                # For vent author, we override display name and hide all stats
+                if is_vent_author:
+                    display_name = "🛡 Vent author"
+                    # Hide stats – we will not include them in the text
+                    # We also don't show bio for vent author to keep minimal
+                    profile_text = f"👤 *{escape_markdown(display_name, version=2)}*{' ' + escape_markdown(display_sex, version=2) if display_sex else ''}\n\n"
+                    # Only add a note if not self? But we already handle self above.
+                    # Add a simple spacer
+                    profile_text += "_This is the author of the vent._\n"
+                else:
+                    # Normal profile (including self)
+                    display_name = get_display_name(user_data)
+                    weekly_badge = user_data.get('weekly_badge')
+                    if weekly_badge:
+                        display_name = f"{weekly_badge} {display_name}"
+
+                    level = (rating // 10) + 1
+
+                    # Privacy filters
+                    viewer_data = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (current_user_id,))
+                    is_viewer_admin = viewer_data['is_admin'] if viewer_data else False
+
+                    if not is_viewer_admin and not is_owner:
+                        if user_data.get('hide_aura'):
+                            rating_str = "🔒 Hidden"
+                            level_str = "🔒 Hidden"
+                            aura_str = "🔒 Hidden"
+                        else:
+                            rating_str = str(rating)
+                            level_str = str(level)
+                            is_target_admin = user_data.get('is_admin', False)
+                            aura_str = "🔵" if is_target_admin else format_aura(rating)
+
+                        if user_data.get('hide_bio'):
+                            bio = "_[Hidden by user]_"
+
+                        if user_data.get('hide_follower_count'):
+                            follower_count = "🔒 Hidden"
+                            following_count = "🔒 Hidden"
+                        else:
+                            follower_count = str(len(followers))
+                            following_row = db_fetch_one(
+                                "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
+                            )
+                            following_count = str(following_row['count'] if following_row else 0)
+
+                        hide_role = user_data.get('hide_role')
                     else:
                         rating_str = str(rating)
                         level_str = str(level)
                         is_target_admin = user_data.get('is_admin', False)
                         aura_str = "🔵" if is_target_admin else format_aura(rating)
-                        
-                    if user_data.get('hide_bio'):
-                        bio = "_[Hidden by user]_"
-                        
-                    if user_data.get('hide_follower_count'):
-                        follower_count = "🔒 Hidden"
-                        following_count = "🔒 Hidden"
-                    else:
                         follower_count = str(len(followers))
                         following_row = db_fetch_one(
                             "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
                         )
                         following_count = str(following_row['count'] if following_row else 0)
-                        
-                    hide_role = user_data.get('hide_role')
-                else:
-                    rating_str = str(rating)
-                    level_str = str(level)
+                        hide_role = False
+
                     is_target_admin = user_data.get('is_admin', False)
-                    aura_str = "🔵" if is_target_admin else format_aura(rating)
-                    follower_count = str(len(followers))
-                    following_row = db_fetch_one(
-                        "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
-                    )
-                    following_count = str(following_row['count'] if following_row else 0)
-                    hide_role = False
-
-                is_target_admin = user_data.get('is_admin', False)
-                if is_target_admin:
-                    # Standardize escaping for V2
                     safe_name = escape_markdown(display_name, version=2)
                     safe_sex = escape_markdown(display_sex, version=2)
                     safe_bio = escape_markdown(bio, version=2)
-                    
-                    role_display = "Administrator"
-                    if hide_role and not is_viewer_admin and not is_owner:
-                        role_display = "🔒 Hidden"
 
-                    profile_text = (
-                        f"👤 *{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
-                        f"🛡 *Role:* {role_display}\n"
-                        f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
-                        f"📖 *About:*\n{safe_bio}\n"
-                    )
-                else:
-                    # Standardize escaping for V2
-                    safe_name = escape_markdown(display_name, version=2)
-                    safe_sex = escape_markdown(display_sex, version=2)
-                    safe_bio = escape_markdown(bio, version=2)
-                    safe_level = escape_markdown(level_str, version=2)
-                    safe_rating = escape_markdown(rating_str, version=2)
-                    safe_aura = escape_markdown(aura_str, version=2)
+                    if is_target_admin:
+                        role_display = "Administrator"
+                        if hide_role and not is_viewer_admin and not is_owner:
+                            role_display = "🔒 Hidden"
+                        profile_text = (
+                            f"👤 *{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
+                            f"🛡 *Role:* {role_display}\n"
+                            f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
+                            f"📖 *About:*\n{safe_bio}\n"
+                        )
+                    else:
+                        safe_level = escape_markdown(level_str, version=2)
+                        safe_rating = escape_markdown(rating_str, version=2)
+                        safe_aura = escape_markdown(aura_str, version=2)
+                        profile_text = (
+                            f"👤 *{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
+                            f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
+                            f"⭐️ *Points:* {safe_rating}\n"
+                            f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
+                            f"📖 *About:*\n{safe_bio}\n"
+                        )
 
-                    profile_text = (
-                        f"👤 *{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
-                        f"✨ *Aura Level:* {safe_level} \\({safe_aura}\\)\n"
-                        f"⭐️ *Points:* {safe_rating}\n"
-                        f"👥 *Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
-                        f"📖 *About:*\n{safe_bio}\n"
-                    )
-
-
-                
                 await update.message.reply_text(
                     profile_text,
                     reply_markup=InlineKeyboardMarkup(btn) if btn else None,
