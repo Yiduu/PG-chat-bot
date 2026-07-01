@@ -108,7 +108,8 @@ def init_db():
                     comment_count INTEGER DEFAULT 0,
                     approved BOOLEAN DEFAULT FALSE,
                     admin_approved_by TEXT,
-                    thread_from_post_id BIGINT DEFAULT NULL
+                    thread_from_post_id BIGINT DEFAULT NULL,
+                    deleted BOOLEAN DEFAULT FALSE
                 )
                 ''')
 
@@ -417,6 +418,15 @@ def init_db():
                     logger.info("Adding telegram_message_id column to comments table")
                     c.execute("ALTER TABLE comments ADD COLUMN telegram_message_id BIGINT DEFAULT NULL")
                     c.execute("CREATE INDEX IF NOT EXISTS idx_comments_telegram_message_id ON comments(telegram_message_id)")
+
+                # Check for 'deleted' column in posts
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name='posts' AND column_name='deleted'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: deleted to posts table")
+                    c.execute("ALTER TABLE posts ADD COLUMN deleted BOOLEAN DEFAULT FALSE")
 
                 # ---------------- Create admin user if specified ----------------
                 if ADMIN_ID:
@@ -3937,7 +3947,7 @@ async def show_comments_menu(update, context, post_id, page=1):
         [InlineKeyboardButton("🚨 Report Post", callback_data=f"report_post_{post_id}")]
     ]
 
-    post_text = post['content']
+    post_text = "⚠️ This post has been deleted by the author." if post.get('deleted') else post['content']
     escaped_text = escape_markdown(post_text, version=2)
 
     if hasattr(update, 'message') and update.message:
@@ -4169,7 +4179,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         await context.bot.send_message(chat_id, "❌ Post not found.")
         return
 
-    post_author_id = post['author_id']
+    post_author_id = post['author_id'] if not post.get('deleted') else None
     per_page = 10
     offset = (page - 1) * per_page
 
@@ -4654,12 +4664,12 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # Get user's posts with pagination (newest first)
     posts = db_fetch_all(
-        "SELECT * FROM posts WHERE author_id = %s AND approved = TRUE ORDER BY timestamp DESC LIMIT %s OFFSET %s",
+        "SELECT * FROM posts WHERE author_id = %s AND approved = TRUE AND deleted = FALSE ORDER BY timestamp DESC LIMIT %s OFFSET %s",
         (user_id, per_page, offset)
     )
     
     total_posts_row = db_fetch_one(
-        "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE",
+        "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE AND deleted = FALSE",
         (user_id,)
     )
     total_posts = total_posts_row['count'] if total_posts_row else 0
@@ -5917,23 +5927,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
                 
                 if post and post['author_id'] == user_id:
-                    # Delete the post (same logic as before)
                     if post['channel_message_id']:
                         try:
-                            await context.bot.delete_message(
-                                chat_id=CHANNEL_ID,
-                                message_id=post['channel_message_id']
-                            )
+                            placeholder_text = "⚠️ This post has been deleted by the author."
+                            if post.get('media_type', 'text') == 'text':
+                                await context.bot.edit_message_text(
+                                    chat_id=CHANNEL_ID,
+                                    message_id=post['channel_message_id'],
+                                    text=placeholder_text,
+                                    reply_markup=None
+                                )
+                            else:
+                                await context.bot.edit_message_caption(
+                                    chat_id=CHANNEL_ID,
+                                    message_id=post['channel_message_id'],
+                                    caption=placeholder_text,
+                                    reply_markup=None
+                                )
                         except Exception as e:
-                            logger.error(f"Error deleting channel message: {e}")
+                            logger.error(f"Error editing channel message: {e}")
                     
-                    # Delete all comments and reactions for this post
-                    comments = db_fetch_all("SELECT comment_id FROM comments WHERE post_id = %s", (post_id,))
-                    for comment in comments:
-                        db_execute("DELETE FROM reactions WHERE comment_id = %s", (comment['comment_id'],))
-                    
-                    db_execute("DELETE FROM comments WHERE post_id = %s", (post_id,))
-                    db_execute("DELETE FROM posts WHERE post_id = %s", (post_id,))
+                    db_execute("UPDATE posts SET deleted = TRUE WHERE post_id = %s", (post_id,))
                     
                     await query.answer("✅ Post deleted successfully")
                     await query.message.edit_text(
@@ -8339,6 +8353,16 @@ async function openPost(id){
   try{
     const d=await api(`/api/mini-app/post/${id}?viewer_id=${UID}`);
     const p=d.data;
+    if(p.deleted){
+      currentPostAuthorId = null;
+      document.getElementById('detail-post').innerHTML=`
+        <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
+          <div style="font-size:15px;line-height:1.65;color:var(--text3);font-style:italic;padding:16px;">⚠️ This post has been deleted by the author.</div>
+        </div>`;
+      const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}`);
+      renderComments(cd.data||[],null);
+      return;
+    }
     currentPostAuthorId = p.author_id;
     const cats=(p.categories||[]).map(c=>`<span class="pill pill-sm">${esc(c)}</span>`).join('');
     let reactionsHtml='';
@@ -8436,14 +8460,14 @@ async function postComment(){
     await api(`/api/mini-app/post/${currentPostId}/comment`,{method:'POST',body:JSON.stringify({user_id:UID,content:txt,parent_comment_id:replyToId})});
     document.getElementById('comment-txt').value='';replyToId=0;toast('Posted');
     const cd=await api(`/api/mini-app/post/${currentPostId}/comments?viewer_id=${UID}`);
-    renderComments(cd.data||[],null);
+    renderComments(cd.data||[],currentPostAuthorId);
   }catch(e){toast(e.message)}finally{btn.disabled=false}
 }
 async function delComment(id){
   if(!confirm('Delete this response?'))return;
   try{await api(`/api/mini-app/comment/${id}`,{method:'DELETE',body:JSON.stringify({user_id:UID})});
     toast('Deleted');const cd=await api(`/api/mini-app/post/${currentPostId}/comments?viewer_id=${UID}`);
-    renderComments(cd.data||[],null);}catch(e){toast(e.message)}
+    renderComments(cd.data||[],currentPostAuthorId);}catch(e){toast(e.message)}
 }
 
 async function loadLB(){
@@ -8830,7 +8854,7 @@ def mini_app_get_posts():
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
-            WHERE p.approved = TRUE
+            WHERE p.approved = TRUE AND p.deleted = FALSE
             GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
             ORDER BY p.timestamp DESC
             LIMIT %s OFFSET %s
@@ -8942,7 +8966,7 @@ def mini_app_get_single_post(post_id):
     try:
         post = db_fetch_one('''
             SELECT 
-                p.post_id, p.content, p.timestamp, p.comment_count, p.media_type,
+                p.post_id, p.content, p.timestamp, p.comment_count, p.media_type, p.deleted,
                 u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
                 u.is_admin as author_is_admin,
                 STRING_AGG(pc.category_code, ', ') as categories
@@ -8950,7 +8974,7 @@ def mini_app_get_single_post(post_id):
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.post_id = %s AND p.approved = TRUE
-            GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
+            GROUP BY p.post_id, p.deleted, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
         ''', (post_id,))
         
         if not post:
@@ -8998,6 +9022,30 @@ def mini_app_get_single_post(post_id):
                 WHERE post_id = %s AND user_id = %s AND post_id IS NOT NULL
             """, (post_id, str(viewer_id)))
             user_reaction = user_res['type'] if user_res else None
+
+        if post.get('deleted'):
+            formatted_post = {
+                'id': post['post_id'],
+                'content': "⚠️ This post has been deleted by the author.",
+                'categories': [],
+                'time_ago': time_ago,
+                'comments': post['comment_count'] or 0,
+                'author_id': post['author_id'],
+                'deleted': True,
+                'author': {
+                    'id': post['author_id'],
+                    'name': 'Anonymous',
+                    'sex': post['author_sex'] or '👤',
+                    'avatar': post['author_avatar'] or "",
+                    'aura': "🔵" if post['author_is_admin'] else format_aura(rating),
+                    'is_admin': post['author_is_admin']
+                },
+                'reactions': {
+                    'counts': {},
+                    'user_reaction': None
+                }
+            }
+            return jsonify({'success': True, 'data': formatted_post})
 
         formatted_post = {
             'id': post['post_id'],
@@ -9764,7 +9812,7 @@ def mini_app_search():
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
-            WHERE p.approved = TRUE
+            WHERE p.approved = TRUE AND p.deleted = FALSE
         '''
         params = []
         
