@@ -7976,6 +7976,35 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   display:flex;align-items:center;justify-content:center;
 }
 .comment-input-bar button svg{width:16px;height:16px;stroke:#0c0b09;fill:none;stroke-width:2.2}
+.media-attach-btn{
+  width:36px;height:36px;border-radius:50%;flex-shrink:0;
+  background:var(--bg2);border:0.5px solid var(--border);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  -webkit-tap-highlight-color:transparent;
+}
+.media-attach-btn svg{width:16px;height:16px;stroke:var(--text2);fill:none;stroke-width:2}
+.media-attach-btn.has-media{border-color:var(--gold)}
+.media-attach-btn.has-media svg{stroke:var(--gold)}
+.media-preview{
+  display:flex;align-items:center;gap:8px;
+  background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-xs);
+  padding:8px 10px;margin:8px 16px 0;font-size:12px;color:var(--text2);
+}
+.media-preview img{width:36px;height:36px;border-radius:8px;object-fit:cover;flex-shrink:0}
+.media-preview .mp-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.media-preview .mp-remove{background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0 4px}
+.media-preview .mp-remove:hover{color:var(--gold)}
+#comment-media-preview.media-preview{margin:0 0 8px}
+.post-media, .comment-media{margin:10px 0;border-radius:var(--radius-sm);overflow:hidden}
+.post-media img, .comment-media img{width:100%;display:block;border-radius:var(--radius-sm)}
+.post-media video, .comment-media video{width:100%;display:block;border-radius:var(--radius-sm);background:#000}
+.post-media audio, .comment-media audio{width:100%;display:block}
+.post-media .doc-link, .comment-media .doc-link{
+  display:flex;align-items:center;gap:10px;background:var(--bg2);border:0.5px solid var(--border);
+  border-radius:var(--radius-sm);padding:12px;color:var(--text);text-decoration:none;font-size:13px;
+}
+.post-media .doc-link svg{width:20px;height:20px;stroke:var(--gold);fill:none;stroke-width:2;flex-shrink:0}
+.post-media img.sticker-media, .comment-media img.sticker-media{width:100px;border-radius:0}
 .chat-item{
   display:flex;align-items:center;gap:12px;
   padding:14px 16px;border-bottom:0.5px solid var(--border);
@@ -8142,7 +8171,13 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
     <div class="page active" id="page-vent">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Share</h1><div class="page-head-sub">Speak your heart, anonymously</div></div><img src="/static/images/vent logo.png" class="logo-img" onerror="this.style.display='none'"></div></div>
       <div class="section-label">Categories</div><div style="padding:0 16px"><div id="cat-grid" class="cat-grid"></div></div>
-      <div style="padding:0 16px;margin-top:14px"><textarea id="vent-txt" class="input-area" rows="5" placeholder="What's on your heart today…" maxlength="5000"></textarea><div class="char-count"><span id="vent-cnt">0</span> / 5000</div><button class="btn-gold" id="submit-vent">Post Anonymously</button></div>
+      <div style="padding:0 16px;margin-top:14px"><textarea id="vent-txt" class="input-area" rows="5" placeholder="What's on your heart today…" maxlength="5000"></textarea><div class="char-count"><span id="vent-cnt">0</span> / 5000</div></div>
+      <div id="vent-media-preview" style="display:none"></div>
+      <div style="padding:0 16px;margin-top:14px;display:flex;gap:10px;align-items:center">
+        <button type="button" class="media-attach-btn" id="vent-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+        <input type="file" id="vent-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
+        <button class="btn-gold" id="submit-vent" style="flex:1">Post Anonymously</button>
+      </div>
     </div>
     <div class="page" id="page-feed">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Community</h1><div class="page-head-sub">Read, reflect, respond</div></div></div></div>
@@ -8188,9 +8223,14 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 </div>
 
 <!-- FIXED COMMENT INPUT BAR (outside #pages) -->
-<div class="comment-input-bar" id="commentBar">
-  <textarea id="comment-txt" placeholder="Add a response…" rows="1"></textarea>
-  <button id="send-comment"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+<div class="comment-input-bar" id="commentBar" style="flex-direction:column;align-items:stretch">
+  <div id="comment-media-preview" style="display:none"></div>
+  <div style="display:flex;align-items:flex-end;gap:8px">
+    <button type="button" class="media-attach-btn" id="comment-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+    <input type="file" id="comment-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
+    <textarea id="comment-txt" placeholder="Add a response…" rows="1"></textarea>
+    <button id="send-comment"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+  </div>
 </div>
 
 <div id="chat-room">
@@ -8206,6 +8246,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 'use strict';
 const API = location.origin;
 let UID = null, profileCache = null, crPartnerId = null, crPoll = null, currentPostAuthorId = null;
+let pendingMedia = null, pendingCommentMedia = null;
 let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null;
 const selCats = new Set();
 let selEmoji = null;
@@ -8225,6 +8266,38 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 async function api(path,opts={}){
   const r=await fetch(API+path,{headers:{'Content-Type':'application/json'},...opts});
   const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||'Error');return d;
+}
+
+const MAX_MEDIA_BYTES=20*1024*1024;
+async function uploadMedia(file){
+  if(!file)return null;
+  if(file.size>MAX_MEDIA_BYTES)throw new Error('File too large (max 20MB)');
+  const fd=new FormData();fd.append('file',file);fd.append('user_id',UID);
+  const r=await fetch(API+'/api/mini-app/upload-media',{method:'POST',body:fd});
+  const d=await r.json();
+  if(!r.ok||!d.success)throw new Error(d.error||'Upload failed');
+  return {media_type:d.media_type,media_id:d.file_id,name:file.name,previewUrl:URL.createObjectURL(file)};
+}
+
+function renderMediaPreview(container,media,onRemove){
+  if(!media){container.style.display='none';container.innerHTML='';return}
+  container.style.display='flex';
+  const thumb=media.media_type==='photo'||media.media_type==='sticker'||media.media_type==='gif'
+    ?`<img src="${media.previewUrl}">`
+    :`<span style="width:36px;height:36px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex-shrink:0">📎</span>`;
+  container.innerHTML=`${thumb}<span class="mp-name">${esc(media.name)}</span><button class="mp-remove" type="button">✕</button>`;
+  container.querySelector('.mp-remove').onclick=onRemove;
+}
+
+function renderMedia(mediaType,mediaId){
+  if(!mediaId||!mediaType||mediaType==='text')return '';
+  const src=`/api/mini-app/file/${encodeURIComponent(mediaId)}`;
+  if(mediaType==='photo')return `<div class="post-media"><img src="${src}" loading="lazy"></div>`;
+  if(mediaType==='gif')return `<div class="post-media"><video src="${src}" autoplay loop muted playsinline></video></div>`;
+  if(mediaType==='sticker')return `<div class="post-media"><img class="sticker-media" src="${src}"></div>`;
+  if(mediaType==='video')return `<div class="post-media"><video src="${src}" controls playsinline></video></div>`;
+  if(mediaType==='voice'||mediaType==='audio')return `<div class="post-media"><audio src="${src}" controls></audio></div>`;
+  return `<div class="post-media"><a class="doc-link" href="${src}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Download attachment</a></div>`;
 }
 
 const ink=document.getElementById('nav-ink');
@@ -8287,21 +8360,64 @@ document.addEventListener('DOMContentLoaded',()=>{
   }
   // Initially hide comment bar
   document.getElementById('commentBar').style.display='none';
+
+  // Vent page media attach
+  const ventAttachBtn=document.getElementById('vent-attach-btn');
+  const ventFileInput=document.getElementById('vent-file-input');
+  const ventMediaPreview=document.getElementById('vent-media-preview');
+  ventAttachBtn.addEventListener('click',()=>ventFileInput.click());
+  ventFileInput.addEventListener('change',async()=>{
+    const file=ventFileInput.files[0];if(!file)return;
+    ventAttachBtn.disabled=true;
+    try{
+      pendingMedia=await uploadMedia(file);
+      ventAttachBtn.classList.add('has-media');
+      renderMediaPreview(ventMediaPreview,pendingMedia,()=>{
+        pendingMedia=null;ventFileInput.value='';ventAttachBtn.classList.remove('has-media');
+        renderMediaPreview(ventMediaPreview,null);
+      });
+    }catch(e){toast(e.message);ventFileInput.value=''}
+    finally{ventAttachBtn.disabled=false}
+  });
+
+  // Comment bar media attach
+  const commentAttachBtn=document.getElementById('comment-attach-btn');
+  const commentFileInput=document.getElementById('comment-file-input');
+  const commentMediaPreview=document.getElementById('comment-media-preview');
+  commentAttachBtn.addEventListener('click',()=>commentFileInput.click());
+  commentFileInput.addEventListener('change',async()=>{
+    const file=commentFileInput.files[0];if(!file)return;
+    commentAttachBtn.disabled=true;
+    try{
+      pendingCommentMedia=await uploadMedia(file);
+      commentAttachBtn.classList.add('has-media');
+      renderMediaPreview(commentMediaPreview,pendingCommentMedia,()=>{
+        pendingCommentMedia=null;commentFileInput.value='';commentAttachBtn.classList.remove('has-media');
+        renderMediaPreview(commentMediaPreview,null);
+      });
+    }catch(e){toast(e.message);commentFileInput.value=''}
+    finally{commentAttachBtn.disabled=false}
+  });
 });
 
 async function submitVent(){
   const txt=document.getElementById('vent-txt').value.trim();
   const cats=[...selCats];
-  if(!txt)return toast('Write something first');
+  if(!txt&&!pendingMedia)return toast('Write something first');
   if(!cats.length)return toast('Pick at least one category');
   const btn=document.getElementById('submit-vent');
   btn.disabled=true;btn.textContent='Posting…';
   try{
-    await api('/api/mini-app/submit-vent',{method:'POST',body:JSON.stringify({user_id:UID,content:txt,categories:cats})});
+    const payload={user_id:UID,content:txt,categories:cats};
+    if(pendingMedia){payload.media_type=pendingMedia.media_type;payload.media_id=pendingMedia.media_id}
+    await api('/api/mini-app/submit-vent',{method:'POST',body:JSON.stringify(payload)});
     toast('✅ Shared — awaiting review');
     document.getElementById('vent-txt').value='';
     document.getElementById('vent-cnt').textContent='0';
     selCats.clear();document.querySelectorAll('.cat-chip').forEach(c=>c.classList.remove('on'));
+    pendingMedia=null;document.getElementById('vent-file-input').value='';
+    document.getElementById('vent-attach-btn').classList.remove('has-media');
+    renderMediaPreview(document.getElementById('vent-media-preview'),null);
   }catch(e){toast(e.message)}
   finally{btn.disabled=false;btn.textContent='Post Anonymously'}
 }
@@ -8341,6 +8457,7 @@ function renderPost(p){
     <div class="post-meta"><div class="ava" style="width:34px;height:34px">${esc(p.author?.avatar||p.author?.sex||'👤')}</div><div><div class="post-name"${p.author?.is_admin ? '' : ` onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:12px">${esc(p.author?.aura||'')}</span></div></div><div class="post-time">${esc(p.time_ago||'')}</div></div>
     ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${cats}</div>`:''}
     <div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
+    ${p.media_id?`<div onclick="openPost(${p.id})">${renderMedia(p.media_type,p.media_id)}</div>`:''}
     <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0">${reactionsHtml}<button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="event.stopPropagation(); showReactionDock(this,'post',${p.id})">➕ React</button></div>
     <div class="post-footer" onclick="openPost(${p.id})"><div class="post-footer-left"><span class="stat-btn"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>${p.comments||0}</span>${unread}</div><span class="read-more">Read →</span></div>
   </div>`;
@@ -8379,6 +8496,7 @@ async function openPost(id){
         <div class="post-meta"><div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div><div><div class="post-name" style="font-size:14px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}')"`}>🛡 Vent author</div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
         <div style="font-size:15px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
+        ${p.media_id?renderMedia(p.media_type,p.media_id):''}
         <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">${reactionsHtml}<button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="showReactionDock(this,'post',${p.id})">➕ React</button></div>
       </div>`;
     const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}`);
@@ -8404,7 +8522,7 @@ function renderComments(comments,postAuthorId){
         }
       }
     }
-    return `<div class="comment-item${dep>0?' reply':''}"><div class="ava" style="width:28px;height:28px;font-size:13px">${esc(c.author?.sex||'👤')}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div><div class="comment-text">${esc(c.content)}</div><div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0">${reactionsHtml}<button class="reaction-trigger" data-type="comment" data-id="${c.id}" onclick="showReactionDock(this,'comment',${c.id})">➕ React</button></div><div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">↩ Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
+    return `<div class="comment-item${dep>0?' reply':''}"><div class="ava" style="width:28px;height:28px;font-size:13px">${esc(c.author?.sex||'👤')}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div><div class="comment-text">${esc(c.content)}</div>${c.media_id?renderMedia(c.media_type,c.media_id):''}<div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0">${reactionsHtml}<button class="reaction-trigger" data-type="comment" data-id="${c.id}" onclick="showReactionDock(this,'comment',${c.id})">➕ React</button></div><div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">↩ Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
   };
   box.innerHTML=roots.map(c=>rr(c,0)).join('');
 }
@@ -8454,11 +8572,16 @@ let replyToId=0;
 function replyTo(id){replyToId=id;const t=document.getElementById('comment-txt');t.placeholder='Replying…';t.focus()}
 async function postComment(){
   const txt=document.getElementById('comment-txt').value.trim();
-  if(!txt||!currentPostId)return;
+  if((!txt&&!pendingCommentMedia)||!currentPostId)return;
   const btn=document.getElementById('send-comment');btn.disabled=true;
   try{
-    await api(`/api/mini-app/post/${currentPostId}/comment`,{method:'POST',body:JSON.stringify({user_id:UID,content:txt,parent_comment_id:replyToId})});
+    const payload={user_id:UID,content:txt,parent_comment_id:replyToId};
+    if(pendingCommentMedia){payload.media_type=pendingCommentMedia.media_type;payload.media_id=pendingCommentMedia.media_id}
+    await api(`/api/mini-app/post/${currentPostId}/comment`,{method:'POST',body:JSON.stringify(payload)});
     document.getElementById('comment-txt').value='';replyToId=0;toast('Posted');
+    pendingCommentMedia=null;document.getElementById('comment-file-input').value='';
+    document.getElementById('comment-attach-btn').classList.remove('has-media');
+    renderMediaPreview(document.getElementById('comment-media-preview'),null);
     const cd=await api(`/api/mini-app/post/${currentPostId}/comments?viewer_id=${UID}`);
     renderComments(cd.data||[],currentPostAuthorId);
   }catch(e){toast(e.message)}finally{btn.disabled=false}
@@ -8712,11 +8835,13 @@ def mini_app_submit_vent():
         user_id = data.get('user_id')
         content = data.get('content', '').strip()
         categories = data.get('categories', []) # Expected as array
-        
+        media_type = data.get('media_type') or 'text'
+        media_id = data.get('media_id')
+
         if not user_id:
             return jsonify({'success': False, 'error': 'User ID required'}), 400
         
-        if not content:
+        if not content and not media_id:
             return jsonify({'success': False, 'error': 'Content cannot be empty'}), 400
             
         if not categories:
@@ -8727,10 +8852,13 @@ def mini_app_submit_vent():
         if not user:
             return jsonify({'success': False, 'error': 'User not found'}), 404
         
-        # Insert the post (no category column)
+        if not media_id:
+            media_type = 'text'
+
+        # Insert the post
         post_row = db_execute(
-            "INSERT INTO posts (content, author_id, media_type, approved) VALUES (%s, %s, 'text', FALSE) RETURNING post_id",
-            (content, user_id),
+            "INSERT INTO posts (content, author_id, media_type, media_id, approved) VALUES (%s, %s, %s, %s, FALSE) RETURNING post_id",
+            (content, user_id, media_type, media_id),
             fetchone=True
         )
         
@@ -8819,6 +8947,115 @@ def update_channel_post_comment_count_sync(post_id):
     except Exception as e:
         logger.error(f"Error in sync channel comment update: {e}")
 
+MINI_APP_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB, matches Telegram's bot-API upload cap
+
+def _detect_mini_app_media_type(filename, mimetype):
+    """Map an uploaded file's name/mimetype to (our media_type, telegram send method, telegram field name)."""
+    ext = os.path.splitext(filename or '')[1].lower()
+    mt = (mimetype or '').lower()
+
+    if ext == '.gif' or mt == 'image/gif':
+        return 'gif', 'sendAnimation', 'animation'
+    if ext == '.webp':
+        return 'sticker', 'sendSticker', 'sticker'
+    if mt.startswith('image/') or ext in {'.jpg', '.jpeg', '.png'}:
+        return 'photo', 'sendPhoto', 'photo'
+    if mt.startswith('video/') or ext in {'.mp4', '.mov', '.mkv'}:
+        return 'video', 'sendVideo', 'video'
+    if ext in {'.ogg', '.oga'} or mt in {'audio/ogg', 'audio/oga'}:
+        return 'voice', 'sendVoice', 'voice'
+    if mt.startswith('audio/'):
+        return 'audio', 'sendAudio', 'audio'
+    return 'document', 'sendDocument', 'document'
+
+@flask_app.route('/api/mini-app/upload-media', methods=['POST'])
+def mini_app_upload_media():
+    """Uploads a file straight to Telegram's servers (no local disk storage) and
+    returns the resulting file_id + media_type, ready to attach to a post/comment."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file provided'}), 400
+
+        upload = request.files['file']
+        if not upload or not upload.filename:
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+
+        upload.stream.seek(0, os.SEEK_END)
+        size = upload.stream.tell()
+        upload.stream.seek(0)
+        if size == 0:
+            return jsonify({'success': False, 'error': 'Empty file'}), 400
+        if size > MINI_APP_MAX_UPLOAD_BYTES:
+            return jsonify({'success': False, 'error': 'File too large (max 20MB)'}), 400
+
+        media_type, tg_method, tg_field = _detect_mini_app_media_type(upload.filename, upload.mimetype)
+
+        storage_chat_id = ADMIN_ID or CHANNEL_ID
+        if not storage_chat_id:
+            return jsonify({'success': False, 'error': 'Media storage is not configured'}), 500
+
+        def _send(method, field):
+            upload.stream.seek(0)
+            files = {field: (upload.filename, upload.stream, upload.mimetype or 'application/octet-stream')}
+            data = {'chat_id': storage_chat_id}
+            resp = requests.post(f"https://api.telegram.org/bot{TOKEN}/{method}", data=data, files=files, timeout=30)
+            return resp.json()
+
+        result = _send(tg_method, tg_field)
+
+        # Fall back to sendDocument if Telegram rejects the specialized type (e.g. bad sticker format)
+        if not result.get('ok') and tg_method != 'sendDocument':
+            result = _send('sendDocument', 'document')
+            media_type = 'document'
+
+        if not result.get('ok'):
+            logger.error(f"Telegram media upload failed: {result}")
+            return jsonify({'success': False, 'error': 'Failed to upload media to Telegram'}), 502
+
+        msg = result['result']
+        file_id = None
+        if media_type == 'photo' and msg.get('photo'):
+            file_id = msg['photo'][-1]['file_id']
+        elif media_type == 'video' and msg.get('video'):
+            file_id = msg['video']['file_id']
+        elif media_type == 'voice' and msg.get('voice'):
+            file_id = msg['voice']['file_id']
+        elif media_type == 'audio' and msg.get('audio'):
+            file_id = msg['audio']['file_id']
+        elif media_type == 'sticker' and msg.get('sticker'):
+            file_id = msg['sticker']['file_id']
+        elif media_type == 'gif' and msg.get('animation'):
+            file_id = msg['animation']['file_id']
+        elif msg.get('document'):
+            file_id = msg['document']['file_id']
+            media_type = 'document'
+
+        if not file_id:
+            logger.error(f"Could not extract file_id from Telegram response: {result}")
+            return jsonify({'success': False, 'error': 'Could not read uploaded file'}), 502
+
+        logger.info(f"📎 Mini App media uploaded: {media_type} -> {file_id}")
+        return jsonify({'success': True, 'file_id': file_id, 'media_type': media_type})
+
+    except Exception as e:
+        logger.error(f"Error in mini-app media upload: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/file/<path:file_id>', methods=['GET'])
+def mini_app_file_proxy(file_id):
+    """Resolves a Telegram file_id to its CDN URL and redirects there, so the
+    bot token never needs to be exposed to the frontend."""
+    try:
+        resp = requests.get(f"https://api.telegram.org/bot{TOKEN}/getFile", params={'file_id': file_id}, timeout=10)
+        result = resp.json()
+        if not result.get('ok'):
+            return jsonify({'success': False, 'error': 'File not found'}), 404
+        file_path = result['result']['file_path']
+        return redirect(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
+    except Exception as e:
+        logger.error(f"Error proxying file {file_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @flask_app.route('/api/mini-app/get-posts', methods=['GET'])
 def mini_app_get_posts():
     """API endpoint for getting posts from mini app - With Pagination and Unread Counts"""
@@ -8836,6 +9073,7 @@ def mini_app_get_posts():
                 p.timestamp,
                 p.comment_count,
                 p.media_type,
+                p.media_id,
                 u.user_id as author_id,
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
@@ -8939,6 +9177,8 @@ def mini_app_get_posts():
                     'is_admin': post['author_is_admin']
                 },
                 'has_media': post['media_type'] != 'text',
+                'media_type': post['media_type'],
+                'media_id': post['media_id'],
                 'reactions': {
                     'counts': reactions_map.get(post['post_id'], {}),
                     'user_reaction': user_reactions_map.get(post['post_id'], None)
@@ -8966,7 +9206,7 @@ def mini_app_get_single_post(post_id):
     try:
         post = db_fetch_one('''
             SELECT 
-                p.post_id, p.content, p.timestamp, p.comment_count, p.media_type, p.deleted,
+                p.post_id, p.content, p.timestamp, p.comment_count, p.media_type, p.media_id, p.deleted,
                 u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
                 u.is_admin as author_is_admin,
                 STRING_AGG(pc.category_code, ', ') as categories
@@ -9054,6 +9294,8 @@ def mini_app_get_single_post(post_id):
             'time_ago': time_ago,
             'comments': post['comment_count'] or 0,
             'author_id': post['author_id'],
+            'media_type': post['media_type'],
+            'media_id': post['media_id'],
             'author': {
                 'id': post['author_id'],
                 'name': 'Anonymous',
@@ -9082,6 +9324,8 @@ def mini_app_get_post_comments(post_id):
                 c.comment_id,
                 c.parent_comment_id,
                 c.content,
+                c.type as media_type,
+                c.file_id as media_id,
                 c.timestamp as time_ago,
                 u.user_id as author_id,
                 u.sex as author_sex,
@@ -9155,6 +9399,8 @@ def mini_app_get_post_comments(post_id):
                 'id': c['comment_id'],
                 'parent_id': c['parent_comment_id'] or 0,
                 'content': c['content'],
+                'media_type': c['media_type'],
+                'media_id': c['media_id'],
                 'time_ago': calc_time,
                 'author_id': c['author_id'],
                 'author': {
@@ -9185,15 +9431,19 @@ def mini_app_submit_comment(post_id):
         user_id = data.get('user_id')
         content = data.get('content', '').strip()
         parent_comment_id = data.get('parent_comment_id', 0) or 0
+        media_type = data.get('media_type') or 'text'
+        file_id = data.get('media_id') or data.get('file_id')
 
         if not user_id:
             return jsonify({'success': False, 'error': 'Not authenticated'}), 401
-        if not content:
+        if not content and not file_id:
             return jsonify({'success': False, 'error': 'Empty response'}), 400
+        if not file_id:
+            media_type = 'text'
 
         db_execute(
-            "INSERT INTO comments (post_id, author_id, content, parent_comment_id) VALUES (%s, %s, %s, %s)",
-            (post_id, user_id, content, parent_comment_id)
+            "INSERT INTO comments (post_id, author_id, content, parent_comment_id, type, file_id) VALUES (%s, %s, %s, %s, %s, %s)",
+            (post_id, user_id, content, parent_comment_id, media_type, file_id)
         )
         db_execute(
             "UPDATE posts SET comment_count = COALESCE(comment_count, 0) + 1 WHERE post_id = %s",
