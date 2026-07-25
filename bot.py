@@ -260,6 +260,16 @@ def init_db():
                     c.execute("CREATE INDEX IF NOT EXISTS idx_pm_lookup ON private_messages (sender_id, receiver_id, timestamp DESC)")
                     c.execute("CREATE INDEX IF NOT EXISTS idx_pm_unread ON private_messages (receiver_id, is_read)")
 
+                # Private messages media columns
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name='private_messages' AND column_name='media_type'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing media columns to private_messages table")
+                    c.execute("ALTER TABLE private_messages ADD COLUMN media_type TEXT DEFAULT 'text'")
+                    c.execute("ALTER TABLE private_messages ADD COLUMN media_id TEXT")
+
                 # Add timestamp to blocks
                 c.execute("""
                     SELECT column_name FROM information_schema.columns 
@@ -7284,7 +7294,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user and user['waiting_for_private_message']:
         if text in main_menu_buttons: return
         target_id = user['private_message_target']
-        message_content = text
+        
+        message_content = update.message.text or update.message.caption or ""
+        media_type = 'text'
+        media_id = None
+
+        if update.message.photo:
+            media_type = 'photo'
+            media_id = update.message.photo[-1].file_id
+        elif update.message.voice:
+            media_type = 'voice'
+            media_id = update.message.voice.file_id
+        elif update.message.video:
+            media_type = 'video'
+            media_id = update.message.video.file_id
+        elif update.message.document:
+            media_type = 'document'
+            media_id = update.message.document.file_id
+        elif update.message.animation:
+            media_type = 'gif'
+            media_id = update.message.animation.file_id
+
+        if not message_content and not media_id:
+            await update.message.reply_text("❌ Please send a message or media.")
+            return
         
         # Check if blocked
         is_blocked = db_fetch_one(
@@ -7307,8 +7340,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Save message
         message_row = db_execute(
-            "INSERT INTO private_messages (sender_id, receiver_id, content) VALUES (%s, %s, %s) RETURNING message_id",
-            (user_id, target_id, message_content),
+            "INSERT INTO private_messages (sender_id, receiver_id, content, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING message_id",
+            (user_id, target_id, message_content, media_type, media_id),
             fetchone=True
         )
         
@@ -7979,9 +8012,10 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .media-attach-btn{
   width:36px;height:36px;border-radius:50%;flex-shrink:0;
   background:var(--bg2);border:0.5px solid var(--border);cursor:pointer;
-  display:flex;align-items:center;justify-content:center;
+  display:flex;align-items:center;justify-content:center;position:relative;
   -webkit-tap-highlight-color:transparent;
 }
+.media-attach-btn:active{transform:scale(0.92)}
 .media-attach-btn svg{width:16px;height:16px;stroke:var(--text2);fill:none;stroke-width:2}
 .media-attach-btn.has-media{border-color:var(--gold)}
 .media-attach-btn.has-media svg{stroke:var(--gold)}
@@ -8005,6 +8039,40 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 }
 .post-media .doc-link svg{width:20px;height:20px;stroke:var(--gold);fill:none;stroke-width:2;flex-shrink:0}
 .post-media img.sticker-media, .comment-media img.sticker-media{width:100px;border-radius:0}
+
+/* ----- Voice recording button & UI ----- */
+.voice-record-btn{
+  width:36px;height:36px;border-radius:50%;flex-shrink:0;
+  background:var(--bg2);border:0.5px solid var(--border);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:background 0.15s, transform 0.15s;
+  -webkit-tap-highlight-color:transparent;
+}
+.voice-record-btn.recording{background:#e74c3c;border-color:#e74c3c;transform:scale(1.1)}
+.voice-record-btn.recording svg{stroke:#fff}
+.voice-record-timer{
+  position:fixed;bottom:calc(var(--nav-h) + 100px);left:50%;transform:translateX(-50%);
+  background:rgba(0,0,0,0.8);color:#fff;padding:8px 20px;border-radius:40px;
+  font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;
+  display:none;z-index:999;backdrop-filter:blur(8px);
+}
+.voice-record-timer .cancel-hint{
+  font-size:11px;font-weight:400;opacity:0.7;margin-left:12px;
+}
+.voice-record-timer.active{display:flex;align-items:center;gap:12px}
+
+/* ----- Direct reaction buttons ----- */
+.reaction-buttons{
+  display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;
+}
+.reaction-btn{
+  display:flex;align-items:center;gap:4px;
+  padding:4px 10px;border-radius:20px;background:var(--bg2);
+  border:0.5px solid var(--border);cursor:pointer;font-size:13px;
+  transition:all 0.15s;font-family:'Inter',sans-serif;color:var(--text2);
+}
+.reaction-btn.on{background:rgba(201,168,76,0.12);border-color:var(--gold);color:var(--gold)}
+.reaction-btn:active{transform:scale(0.92)}
 .chat-item{
   display:flex;align-items:center;gap:12px;
   padding:14px 16px;border-bottom:0.5px solid var(--border);
@@ -8061,7 +8129,12 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 }
 .msg-time{font-size:10px;color:var(--text3);margin-top:4px;padding:0 4px}
 .cr-input{
-  display:flex;align-items:flex-end;gap:8px;padding:12px 16px;
+  display:flex;flex-direction:column;gap:8px;padding:12px 16px;
+  border-top:0.5px solid var(--border);
+  background:rgba(12,11,9,0.95);flex-shrink:0;
+}
+.cr-input-row{
+  display:flex;align-items:flex-end;gap:8px;
   border-top:0.5px solid var(--border);
   background:rgba(12,11,9,0.95);flex-shrink:0;
 }
@@ -8178,6 +8251,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
         <input type="file" id="vent-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
         <button class="btn-gold" id="submit-vent" style="flex:1">Post Anonymously</button>
       </div>
+      <div style="padding:0 16px;margin-top:8px"><button id="vent-voice-btn" class="voice-record-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button></div>
     </div>
     <div class="page" id="page-feed">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Community</h1><div class="page-head-sub">Read, reflect, respond</div></div></div></div>
@@ -8229,6 +8303,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
     <button type="button" class="media-attach-btn" id="comment-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
     <input type="file" id="comment-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
     <textarea id="comment-txt" placeholder="Add a response…" rows="1"></textarea>
+    <button type="button" class="voice-record-btn" id="comment-voice-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
     <button id="send-comment"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
   </div>
 </div>
@@ -8236,17 +8311,27 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 <div id="chat-room">
   <div class="cr-head"><button onclick="closeCR()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button><div class="ava" id="cr-ava" style="width:36px;height:36px">👤</div><div><div class="cr-name" id="cr-name">Chat</div></div></div>
   <div class="cr-msgs" id="cr-msgs"></div>
-  <div class="cr-input"><textarea id="cr-txt" placeholder="Message…" rows="1"></textarea><button class="cr-send" onclick="crSend()"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button></div>
+  <div class="cr-input" style="padding-top:12px;flex-direction:column;gap:6px">
+    <div id="chat-media-preview" style="display:none"></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button type="button" class="media-attach-btn" id="chat-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+      <input type="file" id="chat-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
+      <button type="button" class="voice-record-btn" id="chat-voice-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+      <textarea id="cr-txt" placeholder="Message…" rows="1" style="flex:1;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:10px 16px;color:var(--text);font-family:'Inter',sans-serif;font-size:14px;outline:none;resize:none;min-height:40px;max-height:100px;"></textarea>
+      <button class="cr-send" onclick="crSend()"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+    </div>
+  </div>
 </div>
 
 <div id="profileModal" class="modal-mask" onclick="closeProfileModal(event)"><div class="modal-container" onclick="event.stopPropagation()"><span class="modal-close" onclick="closeProfileModal()">&times;</span><div id="modalContent">Loading...</div></div></div>
 <div id="toast"></div>
+<div id="voice-timer" class="voice-record-timer"><span id="voice-time">0:00</span><span class="cancel-hint">⬆️ swipe up to cancel</span></div>
 
 <script>
 'use strict';
 const API = location.origin;
 let UID = null, profileCache = null, crPartnerId = null, crPoll = null, currentPostAuthorId = null;
-let pendingMedia = null, pendingCommentMedia = null;
+let pendingMedia = null, pendingCommentMedia = null, pendingChatMedia = null;
 let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null;
 const selCats = new Set();
 let selEmoji = null;
@@ -8298,6 +8383,175 @@ function renderMedia(mediaType,mediaId){
   if(mediaType==='video')return `<div class="post-media"><video src="${src}" controls playsinline></video></div>`;
   if(mediaType==='voice'||mediaType==='audio')return `<div class="post-media"><audio src="${src}" controls></audio></div>`;
   return `<div class="post-media"><a class="doc-link" href="${src}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Download attachment</a></div>`;
+}
+
+// ========== VOICE RECORDING (Telegram-style hold-to-record) ==========
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordingTimer = null;
+let recordingStartTime = 0;
+let currentVoiceTarget = null; // 'vent' | 'comment' | 'chat'
+let voiceCancel = false;
+
+function setupVoiceButton(btnId, target) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  let pressTimer = null;
+  let isPressed = false;
+  let startY = 0;
+
+  const startRecording = (e) => {
+    e.preventDefault();
+    if (mediaRecorder && mediaRecorder.state === 'recording') return;
+    voiceCancel = false;
+    currentVoiceTarget = target;
+    isPressed = true;
+    startY = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
+    // Start recording after a short hold (like Telegram)
+    pressTimer = setTimeout(() => {
+      if (isPressed) {
+        btn.classList.add('recording');
+        document.getElementById('voice-timer').classList.add('active');
+        navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(stream => {
+            recordedChunks = [];
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+            mediaRecorder.onstop = () => {
+              stream.getTracks().forEach(t => t.stop());
+              btn.classList.remove('recording');
+              document.getElementById('voice-timer').classList.remove('active');
+              clearInterval(recordingTimer);
+              if (!voiceCancel && recordedChunks.length) {
+                const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+                const file = new File([blob], 'voice.webm', { type: 'audio/webm' });
+                handleVoiceFile(file, target);
+              }
+              recordedChunks = [];
+            };
+            mediaRecorder.start();
+            recordingStartTime = Date.now();
+            recordingTimer = setInterval(updateVoiceTimer, 200);
+          })
+          .catch(err => { toast('Microphone access denied'); });
+      }
+    }, 300);
+  };
+
+  const stopRecording = (e) => {
+    e.preventDefault();
+    clearTimeout(pressTimer);
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      // Check if swipe up to cancel (distance > 80px)
+      const endY = e.type === 'touchend' ? e.changedTouches[0].clientY : e.clientY;
+      if (startY - endY > 80) {
+        voiceCancel = true;
+        toast('Cancelled');
+      }
+      mediaRecorder.stop();
+    }
+    isPressed = false;
+  };
+
+  const cancelRecording = (e) => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      voiceCancel = true;
+      mediaRecorder.stop();
+    }
+    clearTimeout(pressTimer);
+    isPressed = false;
+  };
+
+  btn.addEventListener('mousedown', startRecording);
+  btn.addEventListener('mouseup', stopRecording);
+  btn.addEventListener('mouseleave', cancelRecording);
+  btn.addEventListener('touchstart', startRecording, { passive: false });
+  btn.addEventListener('touchend', stopRecording, { passive: false });
+  btn.addEventListener('touchcancel', cancelRecording, { passive: false });
+}
+
+function updateVoiceTimer() {
+  const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+  const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+  const secs = String(elapsed % 60).padStart(2, '0');
+  document.getElementById('voice-time').textContent = `${mins}:${secs}`;
+}
+
+async function handleVoiceFile(file, target) {
+  try {
+    const media = await uploadMedia(file);
+    if (target === 'vent') {
+      pendingMedia = media;
+      const preview = document.getElementById('vent-media-preview');
+      renderMediaPreview(preview, pendingMedia, () => {
+        pendingMedia = null;
+        document.getElementById('vent-file-input').value = '';
+        document.getElementById('vent-attach-btn').classList.remove('has-media');
+        renderMediaPreview(preview, null);
+      });
+      document.getElementById('vent-attach-btn').classList.add('has-media');
+    } else if (target === 'comment') {
+      pendingCommentMedia = media;
+      const preview = document.getElementById('comment-media-preview');
+      renderMediaPreview(preview, pendingCommentMedia, () => {
+        pendingCommentMedia = null;
+        document.getElementById('comment-file-input').value = '';
+        document.getElementById('comment-attach-btn').classList.remove('has-media');
+        renderMediaPreview(preview, null);
+      });
+      document.getElementById('comment-attach-btn').classList.add('has-media');
+    } else if (target === 'chat') {
+      pendingChatMedia = media;
+      const preview = document.getElementById('chat-media-preview');
+      renderMediaPreview(preview, pendingChatMedia, () => {
+        pendingChatMedia = null;
+        document.getElementById('chat-file-input').value = '';
+        document.getElementById('chat-attach-btn').classList.remove('has-media');
+        renderMediaPreview(preview, null);
+      });
+      document.getElementById('chat-attach-btn').classList.add('has-media');
+    }
+  } catch (e) { toast(e.message); }
+}
+
+// ========== REACTIONS FOR POSTS (direct buttons) ==========
+function renderReactionButtons(itemId, itemType, counts, userReaction) {
+  const types = ['like', 'dislike', 'heart'];
+  const labels = { like: '👍', dislike: '👎', heart: '❤️' };
+  let html = '<div class="reaction-buttons">';
+  for (const t of types) {
+    const count = counts[t] || 0;
+    const active = (userReaction === t) ? 'on' : '';
+    html += `<button class="reaction-btn ${active}" data-type="${itemType}" data-id="${itemId}" data-emoji="${t}" onclick="toggleReaction(this, '${itemType}', ${itemId}, '${t}')">${labels[t]} ${count}</button>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+async function toggleReaction(btn, itemType, itemId, emoji) {
+  const payload = { user_id: UID, type: emoji };
+  if (itemType === 'post') payload.post_id = itemId;
+  else payload.comment_id = itemId;
+  
+  const parent = btn.closest('.reaction-buttons');
+  const allBtns = parent.querySelectorAll('.reaction-btn');
+  const labels = { like: '👍', dislike: '👎', heart: '❤️' };
+  
+  try {
+    const resp = await api('/api/mini-app/react', { method: 'POST', body: JSON.stringify(payload) });
+    const counts = resp.reactions.counts;
+    const userReaction = resp.reactions.user_reaction;
+    
+    allBtns.forEach(b => {
+      const t = b.dataset.emoji;
+      const count = counts[t] || 0;
+      b.innerHTML = `${labels[t]} ${count}`;
+      if (userReaction === t) b.classList.add('on');
+      else b.classList.remove('on');
+    });
+  } catch (e) {
+    toast(e.message);
+  }
 }
 
 const ink=document.getElementById('nav-ink');
@@ -8398,6 +8652,27 @@ document.addEventListener('DOMContentLoaded',()=>{
     }catch(e){toast(e.message);commentFileInput.value=''}
     finally{commentAttachBtn.disabled=false}
   });
+
+  // Chat page media attach
+  const chatAttachBtn = document.getElementById('chat-attach-btn');
+  const chatFileInput = document.getElementById('chat-file-input');
+  const chatMediaPreview = document.getElementById('chat-media-preview');
+  if (chatAttachBtn && chatFileInput) {
+    chatAttachBtn.addEventListener('click', () => chatFileInput.click());
+    chatFileInput.addEventListener('change', async () => {
+      const file = chatFileInput.files[0]; if (!file) return;
+      chatAttachBtn.disabled = true;
+      try {
+        pendingChatMedia = await uploadMedia(file);
+        chatAttachBtn.classList.add('has-media');
+        renderMediaPreview(chatMediaPreview, pendingChatMedia, () => {
+          pendingChatMedia = null; chatFileInput.value = ''; chatAttachBtn.classList.remove('has-media');
+          renderMediaPreview(chatMediaPreview, null);
+        });
+      } catch (e) { toast(e.message); chatFileInput.value = ''; }
+      finally { chatAttachBtn.disabled = false; }
+    });
+  }
 });
 
 async function submitVent(){
@@ -8458,7 +8733,9 @@ function renderPost(p){
     ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${cats}</div>`:''}
     <div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
     ${p.media_id?`<div onclick="openPost(${p.id})">${renderMedia(p.media_type,p.media_id)}</div>`:''}
-    <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0">${reactionsHtml}<button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="event.stopPropagation(); showReactionDock(this,'post',${p.id})">➕ React</button></div>
+    <div onclick="event.stopPropagation();">
+      ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
+    </div>
     <div class="post-footer" onclick="openPost(${p.id})"><div class="post-footer-left"><span class="stat-btn"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>${p.comments||0}</span>${unread}</div><span class="read-more">Read →</span></div>
   </div>`;
 }
@@ -8497,7 +8774,9 @@ async function openPost(id){
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
         <div style="font-size:15px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
         ${p.media_id?renderMedia(p.media_type,p.media_id):''}
-        <div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">${reactionsHtml}<button class="reaction-trigger" data-type="post" data-id="${p.id}" onclick="showReactionDock(this,'post',${p.id})">➕ React</button></div>
+        <div>
+          ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
+        </div>
       </div>`;
     const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}`);
     renderComments(cd.data||[],p.author_id);
@@ -8522,7 +8801,9 @@ function renderComments(comments,postAuthorId){
         }
       }
     }
-    return `<div class="comment-item${dep>0?' reply':''}"><div class="ava" style="width:28px;height:28px;font-size:13px">${esc(c.author?.sex||'👤')}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div><div class="comment-text">${esc(c.content)}</div>${c.media_id?renderMedia(c.media_type,c.media_id):''}<div class="reactions-container" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0">${reactionsHtml}<button class="reaction-trigger" data-type="comment" data-id="${c.id}" onclick="showReactionDock(this,'comment',${c.id})">➕ React</button></div><div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">↩ Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
+    return `<div class="comment-item${dep>0?' reply':''}"><div class="ava" style="width:28px;height:28px;font-size:13px">${esc(c.author?.sex||'👤')}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div><div class="comment-text">${esc(c.content)}</div>${c.media_id?renderMedia(c.media_type,c.media_id):''}
+      ${renderReactionButtons(c.id, 'comment', c.reactions?.counts || {}, c.reactions?.user_reaction)}
+      <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">↩ Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
   };
   box.innerHTML=roots.map(c=>rr(c,0)).join('');
 }
@@ -8698,16 +8979,31 @@ async function fetchCRMsgs(scroll=false){
     const d=await api(`/api/mini-app/chats/${crPartnerId}?user_id=${UID}`);
     const box=document.getElementById('cr-msgs');
     const wasBottom=box.scrollHeight-box.scrollTop<=box.clientHeight+80;
-    box.innerHTML=(d.data||[]).map(m=>`<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble">${esc(m.content)}</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`).join('');
+    box.innerHTML=(d.data||[]).map(m=>`<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble">${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`).join('');
     if(scroll||wasBottom)box.scrollTop=box.scrollHeight;
   }catch(e){}
 }
 async function crSend(){
   const txt=document.getElementById('cr-txt').value.trim();
-  if(!txt||!crPartnerId)return;
+  if((!txt&&!pendingChatMedia)||!crPartnerId)return;
+  
+  const payload = {sender_id:UID, receiver_id:crPartnerId, content:txt};
+  if(pendingChatMedia) {
+    payload.media_type = pendingChatMedia.media_type;
+    payload.media_id = pendingChatMedia.media_id;
+  }
+  
   document.getElementById('cr-txt').value='';
-  try{await api('/api/mini-app/chats/send',{method:'POST',body:JSON.stringify({sender_id:UID,receiver_id:crPartnerId,content:txt})});
-    fetchCRMsgs(true);}catch(e){toast(e.message)}
+  try{
+    await api('/api/mini-app/chats/send',{method:'POST',body:JSON.stringify(payload)});
+    if(pendingChatMedia) {
+      pendingChatMedia = null;
+      document.getElementById('chat-file-input').value = '';
+      document.getElementById('chat-attach-btn').classList.remove('has-media');
+      renderMediaPreview(document.getElementById('chat-media-preview'), null);
+    }
+    fetchCRMsgs(true);
+  }catch(e){toast(e.message)}
 }
 
 // Chat request functions (requires backend endpoints)
@@ -8809,6 +9105,11 @@ async function init(){
   document.getElementById('app').style.display='flex';
   if(UID){loadFeed();}
   else{document.getElementById('feed-list').innerHTML='<div style="text-align:center;padding:60px 20px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">🔒</div><div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div><div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';}
+
+  // Setup voice buttons after DOM ready
+  setupVoiceButton('vent-voice-btn', 'vent');
+  setupVoiceButton('comment-voice-btn', 'comment');
+  setupVoiceButton('chat-voice-btn', 'chat');
 }
 init();
 </script>
@@ -9682,7 +9983,7 @@ def mini_app_get_messages(partner_id):
         
         # Get messages history
         rows = db_fetch_all("""
-            SELECT message_id, sender_id, receiver_id, content, timestamp, is_read
+            SELECT message_id, sender_id, receiver_id, content, timestamp, is_read, media_type, media_id
             FROM private_messages
             WHERE (sender_id = %s AND receiver_id = %s)
                OR (sender_id = %s AND receiver_id = %s)
@@ -9701,6 +10002,8 @@ def mini_app_get_messages(partner_id):
                 'sender_id': r['sender_id'],
                 'receiver_id': r['receiver_id'],
                 'content': r['content'],
+                'media_type': r.get('media_type', 'text'),
+                'media_id': r.get('media_id'),
                 'timestamp': format_ethiopian_time(msg_time),
                 'is_read': r['is_read'],
                 'is_mine': str(r['sender_id']) == str(user_id)
@@ -9718,9 +10021,13 @@ def mini_app_send_message():
         sender_id = str(data.get('sender_id', ''))
         receiver_id = str(data.get('receiver_id', ''))
         content = data.get('content', '').strip()
+        media_type = data.get('media_type', 'text')
+        media_id = data.get('media_id')
         
-        if not sender_id or not receiver_id or not content:
-            return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+        if not sender_id or not receiver_id:
+            return jsonify({'success': False, 'error': 'Missing sender/receiver'}), 400
+        if not content and not media_id:
+            return jsonify({'success': False, 'error': 'Empty message'}), 400
             
         # Block check
         block_check = db_fetch_one("""
@@ -9732,10 +10039,10 @@ def mini_app_send_message():
             
         # Save message
         res = db_execute("""
-            INSERT INTO private_messages (sender_id, receiver_id, content) 
-            VALUES (%s, %s, %s) 
+            INSERT INTO private_messages (sender_id, receiver_id, content, media_type, media_id) 
+            VALUES (%s, %s, %s, %s, %s) 
             RETURNING message_id, timestamp
-        """, (sender_id, receiver_id, content), fetchone=True)
+        """, (sender_id, receiver_id, content, media_type, media_id), fetchone=True)
         
         # Try sending background Telegram Bot notification
         try:
@@ -9744,9 +10051,14 @@ def mini_app_send_message():
             sender_icon = sender['avatar_emoji'] or sender['sex'] or '👤'
             
             url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+            
+            notif_text = content
+            if media_id and media_type != 'text':
+                notif_text = f"[{media_type.capitalize()} attachment] " + notif_text
+                
             payload = {
                 "chat_id": int(receiver_id),
-                "text": f"📩 *New Private Message*\n\n👤 From: *{sender_icon} {sender_name}*\n\n💬 _{content}_\n\n💭 _Use /inbox or the Christian Vent App to view all messages_",
+                "text": f"📩 *New Private Message*\n\n👤 From: *{sender_icon} {sender_name}*\n\n💬 _{notif_text}_\n\n💭 _Use /inbox or the Christian Vent App to view all messages_",
                 "parse_mode": "Markdown",
                 "reply_markup": {
                     "inline_keyboard": [
