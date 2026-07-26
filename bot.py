@@ -1376,7 +1376,11 @@ def calculate_user_rating(user_id):
     block_res = db_fetch_one("SELECT COUNT(*) as count FROM blocks WHERE blocked_id = %s", (user_id,))
     block_points = (block_res['count'] if block_res else 0) * -10
     
-    return post_points + comm_points + rx_points + block_points
+    # 5. Follower Bonus (+2 per follower)
+    follower_res = db_fetch_one("SELECT COUNT(*) as cnt FROM followers WHERE followed_id = %s", (user_id,))
+    follower_points = (follower_res['cnt'] if follower_res else 0) * 2
+
+    return post_points + comm_points + rx_points + block_points + follower_points
 
 def calculate_top_weekly_contributors():
     """Calculate top 3 users by aura points earned in the last 7 days."""
@@ -3960,9 +3964,11 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("❌ Error loading messages. Please try again.")
 
-async def show_comments_menu(update, context, post_id, page=1, force_reveal=False):
+async def show_comments_menu(update, context, post_id, page=1, force_reveal=False, auto_show_comments=False):
     """Entry point for viewing a post: shows the post content (or an explicit-content
-    warning) directly followed by its paginated comments — no intermediate menu."""
+    warning) with "View Comments" / "Write Comment" buttons. Comments are only loaded
+    once the user taps "View Comments" (or immediately if auto_show_comments=True,
+    which is used right after a user posts a new comment so they can see it land)."""
     post = db_fetch_one("""
         SELECT p.*, STRING_AGG(pc.category_code, ', ') as categories
         FROM posts p
@@ -4029,7 +4035,11 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
         f"{escaped_text}"
     )
 
-    header_kb = [[InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")]]
+    comment_count = count_all_comments(post_id)
+    header_kb = [
+        [InlineKeyboardButton(f"👁 View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_1")],
+        [InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")]
+    ]
     if not post.get('deleted'):
         header_kb.append([InlineKeyboardButton("🚨 Report Post", callback_data=f"report_post_{post_id}")])
 
@@ -4040,8 +4050,10 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
             parse_mode=ParseMode.MARKDOWN_V2
         )
 
-    # Comments are shown directly beneath the post — no extra tap required
-    await show_comments_page(update, context, post_id, page)
+    # Comments only load once the user taps "View Comments" — unless we were asked
+    # to auto-show them (e.g. right after the user posts a new comment).
+    if auto_show_comments:
+        await show_comments_page(update, context, post_id, page)
 
 def escape_markdown_v2(text):
     """Escape all special characters for MarkdownV2"""
@@ -5662,6 +5674,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "DELETE FROM followers WHERE follower_id = %s AND followed_id = %s",
                     (user_id, target_uid)
                 )
+            calculate_user_rating.cache_clear()
             await query.message.reply_text("✅ Successfully updated!")
             await send_updated_profile(target_uid, query.message.chat.id, context)
         
@@ -7441,7 +7454,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_comments_now = count_all_comments(post_id)
             per_page = 10
             last_page = max(1, (total_comments_now + per_page - 1) // per_page)
-            await show_comments_menu(update, context, post_id, page=last_page, force_reveal=True)
+            await show_comments_menu(update, context, post_id, page=last_page, force_reveal=True, auto_show_comments=True)
         except Exception as e:
             logger.error(f"Error refreshing comments view after posting: {e}")
 
