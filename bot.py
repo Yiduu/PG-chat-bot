@@ -21,8 +21,9 @@ from flask import Flask, jsonify, request, redirect, send_from_directory
 from datetime import datetime, timedelta, timezone, time
 import time
 import asyncio
-from functools import lru_cache
 import html
+from types import SimpleNamespace
+from functools import lru_cache
 
 # FIX: moved logger setup to top
 logging.basicConfig(
@@ -438,6 +439,15 @@ def init_db():
                     logger.info("Adding missing column: deleted to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN deleted BOOLEAN DEFAULT FALSE")
 
+                # Check for 'explicit' column in posts
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name='posts' AND column_name='explicit'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding missing column: explicit to posts table")
+                    c.execute("ALTER TABLE posts ADD COLUMN explicit BOOLEAN DEFAULT FALSE")
+
                 # ---------------- Create admin user if specified ----------------
                 if ADMIN_ID:
                     c.execute('''
@@ -687,7 +697,7 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
     # Reset context flags
     if context:
         context_keys = ['editing_comment', 'editing_post', 'thread_from_post_id', 
-                       'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type',
+                       'pending_post', 'pending_explicit_check', 'broadcasting', 'broadcast_step', 'broadcast_type',
                        'rejecting_post', 'awaiting_rejection_reason', 'reporting']
         for key in context_keys:
             if key in context.user_data:
@@ -1877,7 +1887,7 @@ async def show_privacy_settings(update: Update, context: ContextTypes.DEFAULT_TY
         if "Message is not modified" not in str(e):
             logger.error(f"Error in show_privacy_settings: {e}")
 
-async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None):
+async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None, explicit: bool = False):
     keyboard = [
         [
             InlineKeyboardButton("✏️ Edit", callback_data='edit_post'),
@@ -1902,8 +1912,10 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     category_list = category.split(',') if category else []
     cat_display = ", ".join(category_list)
     
+    explicit_tag = "🔞 *Marked as explicit content*\n\n" if explicit else ""
+    
     preview_text = (
-        f"{thread_text}📝 *Post Preview* [{escape_markdown(cat_display, 2)}]\n\n"
+        f"{thread_text}{explicit_tag}📝 *Post Preview* [{escape_markdown(cat_display, 2)}]\n\n"
         f"{escape_markdown(post_content, version=2)}\n\n"
         f"Please confirm your post\\:"
     )
@@ -1915,6 +1927,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
         'media_type': media_type,
         'media_id': media_id,
         'thread_from_post_id': thread_from_post_id,
+        'explicit': explicit,
         'timestamp': time.time()
     }
     
@@ -2966,11 +2979,17 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
                 reply_to_message_id = original_post['channel_message_id']
         
         # Send post to channel based on media type
-        safe_content = html.escape(post['content'])
+        if post.get('explicit'):
+            body_html = (
+                "⚠️ This post contains explicit content that may not be suitable for all members.\n"
+                "Click the \"View Comments\" button below if you still wish to view it."
+            )
+        else:
+            body_html = html.escape(post['content'])
         safe_hashtags = html.escape(hashtags)
         channel_text = (
             f"<code>{vent_display}</code>\n\n"
-            f"{safe_content}\n\n"
+            f"{body_html}\n\n"
             f"━━━━━━━━━━━━━━━\n"
             f"{safe_hashtags}\n"
             f"<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
@@ -3941,31 +3960,88 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("❌ Error loading messages. Please try again.")
 
-async def show_comments_menu(update, context, post_id, page=1):
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+async def show_comments_menu(update, context, post_id, page=1, force_reveal=False):
+    """Entry point for viewing a post: shows the post content (or an explicit-content
+    warning) directly followed by its paginated comments — no intermediate menu."""
+    post = db_fetch_one("""
+        SELECT p.*, STRING_AGG(pc.category_code, ', ') as categories
+        FROM posts p
+        LEFT JOIN post_categories pc ON p.post_id = pc.post_id
+        WHERE p.post_id = %s
+        GROUP BY p.post_id
+    """, (post_id,))
     if not post:
         if hasattr(update, 'message') and update.message:
             viewer_id = str(update.effective_user.id) if update.effective_user else None
             await update.message.reply_text("❌ Post not found.", reply_markup=get_main_menu(viewer_id) if viewer_id else None)
-
         return
 
-    comment_count = count_all_comments(post_id)
-    keyboard = [
-        [InlineKeyboardButton(f"👁 View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_{page}")],
-        [InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")],
-        [InlineKeyboardButton("🚨 Report Post", callback_data=f"report_post_{post_id}")]
-    ]
+    viewer_id = str(update.effective_user.id) if update.effective_user else None
+    viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (viewer_id,)) if viewer_id else None
+    is_admin_viewer = bool(viewer_row and viewer_row.get('is_admin'))
+    is_owner = viewer_id is not None and str(post['author_id']) == viewer_id
 
-    post_text = "⚠️ This post has been deleted by the author." if post.get('deleted') else post['content']
+    target_message = None
+    if hasattr(update, 'message') and update.message:
+        target_message = update.message
+    elif hasattr(update, 'callback_query') and update.callback_query:
+        target_message = update.callback_query.message
+
+    # Explicit-content gate: authors and admins see it directly; everyone else must
+    # tap through a warning first. Deleted posts skip the gate (nothing to reveal).
+    if post.get('explicit') and not post.get('deleted') and not is_owner and not is_admin_viewer and not force_reveal:
+        comment_count = count_all_comments(post_id)
+        reveal_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔓 View Post & Comments", callback_data=f"revealexplicit_{post_id}_{page}")]
+        ])
+        warning_text = (
+            "🔞 *Explicit Content Warning*\n\n"
+            "This post contains explicit or sexual content that may not be suitable for all members\\.\n\n"
+            f"💬 {comment_count} comment\\(s\\)\n\n"
+            "Tap below if you still wish to view it\\."
+        )
+        if target_message:
+            await target_message.reply_text(warning_text, reply_markup=reveal_kb, parse_mode=ParseMode.MARKDOWN_V2)
+        return
+
+    # Build the post header
+    if post.get('deleted'):
+        post_text = "⚠️ This content has been deleted by the author."
+    else:
+        post_text = post['content']
     escaped_text = escape_markdown(post_text, version=2)
 
-    if hasattr(update, 'message') and update.message:
-        await update.message.reply_text(
-            f"💬\n{escaped_text}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+    categories_display = post['categories'] or 'Other'
+    escaped_categories = escape_markdown(categories_display, version=2)
+
+    if post.get('vent_number'):
+        vent_display = f"Vent - {post['vent_number']:03d}"
+    else:
+        vent_display = f"Post #{post_id}"
+    escaped_vent = escape_markdown(vent_display, version=2)
+
+    explicit_tag = "🔞 _Explicit content_\n" if post.get('explicit') else ""
+
+    header_text = (
+        f"📌 *{escaped_vent}*\n"
+        f"{explicit_tag}"
+        f"🏷 {escaped_categories}\n\n"
+        f"{escaped_text}"
+    )
+
+    header_kb = [[InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")]]
+    if not post.get('deleted'):
+        header_kb.append([InlineKeyboardButton("🚨 Report Post", callback_data=f"report_post_{post_id}")])
+
+    if target_message:
+        await target_message.reply_text(
+            header_text,
+            reply_markup=InlineKeyboardMarkup(header_kb),
             parse_mode=ParseMode.MARKDOWN_V2
         )
+
+    # Comments are shown directly beneath the post — no extra tap required
+    await show_comments_page(update, context, post_id, page)
 
 def escape_markdown_v2(text):
     """Escape all special characters for MarkdownV2"""
@@ -5671,6 +5747,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.MARKDOWN
                 )
 
+        elif query.data.startswith('revealexplicit_'):
+            try:
+                parts = query.data.split('_')
+                post_id = int(parts[1])
+                page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 1
+                await query.answer()
+                await show_comments_menu(update, context, post_id, page=page, force_reveal=True)
+            except Exception as e:
+                logger.error(f"RevealExplicit error: {e}")
+                await query.answer("❌ Error loading post", show_alert=True)
+
         elif query.data.startswith('viewcomments_'):
             await query.answer("🔄 Loading comments...", show_alert=False)
             try:
@@ -6306,6 +6393,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await show_comments_page(update, context, post_id, comment_page, reply_pages={comment_id: reply_page})
             return
 
+        elif query.data in ('post_explicit_yes', 'post_explicit_no'):
+            pending = context.user_data.get('pending_explicit_check')
+            if not pending:
+                await query.answer("❌ Post data not found. Please start over.", show_alert=True)
+                return
+            await query.answer()
+            explicit_flag = query.data == 'post_explicit_yes'
+            del context.user_data['pending_explicit_check']
+
+            # Remove the Yes/No buttons from the question message
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+            # Send the preview as a fresh message (not an edit) so photo/voice posts render correctly
+            fake_update = SimpleNamespace(
+                callback_query=None,
+                message=query.message,
+                effective_user=update.effective_user,
+                effective_chat=update.effective_chat
+            )
+            await send_post_confirmation(
+                fake_update, context,
+                pending['content'], pending['category'],
+                pending.get('media_type', 'text'), pending.get('media_id'),
+                thread_from_post_id=pending.get('thread_from_post_id'),
+                explicit=explicit_flag
+            )
+            return
+
         elif query.data in ('edit_post', 'cancel_post', 'confirm_post'):
             pending_post = context.user_data.get('pending_post')
             if not pending_post:
@@ -6395,18 +6513,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_type = pending_post.get('media_type', 'text')
                 media_id = pending_post.get('media_id')
                 thread_from_post_id = pending_post.get('thread_from_post_id')
+                explicit_flag = pending_post.get('explicit', False)
                 
                 # Insert post (without 'category' column which was dropped)
                 if thread_from_post_id:
                     post_row = db_execute(
-                        "INSERT INTO posts (content, author_id, media_type, media_id, thread_from_post_id) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
-                        (post_content, user_id, media_type, media_id, thread_from_post_id),
+                        "INSERT INTO posts (content, author_id, media_type, media_id, thread_from_post_id, explicit) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, media_type, media_id, thread_from_post_id, explicit_flag),
                         fetchone=True
                     )
                 else:
                     post_row = db_execute(
-                        "INSERT INTO posts (content, author_id, media_type, media_id) VALUES (%s, %s, %s, %s) RETURNING post_id",
-                        (post_content, user_id, media_type, media_id),
+                        "INSERT INTO posts (content, author_id, media_type, media_id, explicit) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, media_type, media_id, explicit_flag),
                         fetchone=True
                     )
                 
@@ -7141,7 +7260,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pending_post['category'], 
                 pending_post.get('media_type', 'text'), 
                 pending_post.get('media_id'),
-                pending_post.get('thread_from_post_id')
+                pending_post.get('thread_from_post_id'),
+                explicit=pending_post.get('explicit', False)
             )
             return
         else:
@@ -7215,10 +7335,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 (user_id,)
             )
             
-            # Send confirmation
-            await send_post_confirmation(update, context, post_content, category, media_type, media_id, thread_from_post_id=thread_from_post_id)
+            # Ask whether the post contains explicit content before showing the preview
+            context.user_data['pending_explicit_check'] = {
+                'content': post_content,
+                'category': category,
+                'media_type': media_type,
+                'media_id': media_id,
+                'thread_from_post_id': thread_from_post_id,
+            }
+            explicit_kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Yes", callback_data='post_explicit_yes'),
+                    InlineKeyboardButton("🚫 No", callback_data='post_explicit_no')
+                ]
+            ])
+            await update.message.reply_text(
+                "🔞 Does this post contain explicit or sexual content?\n\n"
+                "This helps us show a content warning to other members before they view it.",
+                reply_markup=explicit_kb
+            )
             
-            # Clear thread context from DB after it's been passed to confirmation
+            # Clear thread context from DB now that it's been captured for the pending post
             if thread_from_post_id:
                 db_execute("UPDATE users SET thread_context_post_id = NULL WHERE user_id = %s", (user_id,))
             return
@@ -7298,6 +7435,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
         await update.message.reply_text("✅ Your comment has been posted!", reply_markup=get_main_menu(user_id))
+
+        # Refresh the post + comments view so the new comment is visible right away
+        try:
+            total_comments_now = count_all_comments(post_id)
+            per_page = 10
+            last_page = max(1, (total_comments_now + per_page - 1) // per_page)
+            await show_comments_menu(update, context, post_id, page=last_page, force_reveal=True)
+        except Exception as e:
+            logger.error(f"Error refreshing comments view after posting: {e}")
 
         
         # Update comment count in background
@@ -8265,6 +8411,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
     <div class="page active" id="page-vent">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Share</h1><div class="page-head-sub">Speak your heart, anonymously</div></div><img src="/static/images/vent logo.png" class="logo-img" onerror="this.style.display='none'"></div></div>
       <div class="section-label">Categories</div><div style="padding:0 16px"><div id="cat-grid" class="cat-grid"></div></div>
+      <div style="padding:0 16px;margin-top:12px;display:flex;align-items:flex-start;gap:8px"><input type="checkbox" id="vent-explicit-check" style="margin-top:3px;width:16px;height:16px;flex-shrink:0"><label for="vent-explicit-check" style="font-size:12.5px;color:var(--text2);line-height:1.4">This post contains explicit content (may not be suitable for all viewers)</label></div>
       <div style="padding:0 16px;margin-top:14px"><textarea id="vent-txt" class="input-area" rows="5" placeholder="What's on your heart today…" maxlength="5000"></textarea><div class="char-count"><span id="vent-cnt">0</span> / 5000</div></div>
       <div id="vent-media-preview" style="display:none"></div>
       <div style="padding:0 16px;margin-top:14px;display:flex;gap:10px;align-items:center">
@@ -8704,12 +8851,13 @@ async function submitVent(){
   const btn=document.getElementById('submit-vent');
   btn.disabled=true;btn.textContent='Posting…';
   try{
-    const payload={user_id:UID,content:txt,categories:cats};
+    const payload={user_id:UID,content:txt,categories:cats,explicit:document.getElementById('vent-explicit-check').checked};
     if(pendingMedia){payload.media_type=pendingMedia.media_type;payload.media_id=pendingMedia.media_id}
     await api('/api/mini-app/submit-vent',{method:'POST',body:JSON.stringify(payload)});
     toast('✅ Shared — awaiting review');
     document.getElementById('vent-txt').value='';
     document.getElementById('vent-cnt').textContent='0';
+    document.getElementById('vent-explicit-check').checked=false;
     selCats.clear();document.querySelectorAll('.cat-chip').forEach(c=>c.classList.remove('on'));
     pendingMedia=null;document.getElementById('vent-file-input').value='';
     document.getElementById('vent-attach-btn').classList.remove('has-media');
@@ -8761,12 +8909,13 @@ function renderPost(p){
   </div>`;
 }
 
-async function openPost(id){
+async function openPost(id, reveal){
   currentPostId=id;go('detail',null);
   document.getElementById('detail-post').innerHTML=skelPosts(1);
   document.getElementById('detail-comments').innerHTML='';
   try{
-    const d=await api(`/api/mini-app/post/${id}?viewer_id=${UID}`);
+    const revealParam = reveal ? '&reveal=1' : '';
+    const d=await api(`/api/mini-app/post/${id}?viewer_id=${UID}${revealParam}`);
     const p=d.data;
     if(p.deleted){
       currentPostAuthorId = null;
@@ -8774,8 +8923,22 @@ async function openPost(id){
         <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
           <div style="font-size:15px;line-height:1.65;color:var(--text3);font-style:italic;padding:16px;">⚠️ This post has been deleted by the author.</div>
         </div>`;
-      const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}`);
+      const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}${revealParam}`);
       renderComments(cd.data||[],null);
+      return;
+    }
+    if(p.content_hidden){
+      currentPostAuthorId = p.author_id;
+      document.getElementById('detail-post').innerHTML=`
+        <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
+          <div style="padding:20px;text-align:center">
+            <div style="font-size:28px;margin-bottom:8px">🔞</div>
+            <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px">Explicit Content Warning</div>
+            <div style="font-size:13px;color:var(--text3);margin-bottom:14px">${esc(p.content)}</div>
+            <button class="btn-gold" onclick="openPost(${id},true)">View Content</button>
+          </div>
+        </div>`;
+      document.getElementById('detail-comments').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px">Comments are hidden until you view the post.</div>';
       return;
     }
     currentPostAuthorId = p.author_id;
@@ -8789,9 +8952,11 @@ async function openPost(id){
         }
       }
     }
+    const explicitTag=p.explicit?`<div style="display:inline-block;font-size:11px;font-weight:600;color:var(--gold);border:1px solid var(--gold);border-radius:10px;padding:2px 8px;margin-bottom:8px">🔞 Explicit</div>`:'';
     document.getElementById('detail-post').innerHTML=`
       <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
         <div class="post-meta"><div class="ava" style="width:38px;height:38px">${esc(p.author?.sex||'👤')} ${esc(p.author?.avatar||'')}</div><div><div class="post-name" style="font-size:14px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}')"`}>🛡 Vent author</div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
+        ${explicitTag}
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
         <div style="font-size:15px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
         ${p.media_id?renderMedia(p.media_type,p.media_id):''}
@@ -8799,7 +8964,8 @@ async function openPost(id){
           ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
         </div>
       </div>`;
-    const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}`);
+    const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}${revealParam}`);
+    renderComments(cd.data||[],p.author_id);
     renderComments(cd.data||[],p.author_id);
   }catch(e){document.getElementById('detail-post').innerHTML='<div style="padding:20px;color:var(--text3)">Could not load</div>'}
 }
@@ -9160,6 +9326,8 @@ def mini_app_submit_vent():
         media_type = data.get('media_type') or 'text'
         media_id = data.get('media_id')
 
+        explicit = bool(data.get('explicit', False))
+
         if not user_id:
             return jsonify({'success': False, 'error': 'User ID required'}), 400
         
@@ -9179,8 +9347,8 @@ def mini_app_submit_vent():
 
         # Insert the post
         post_row = db_execute(
-            "INSERT INTO posts (content, author_id, media_type, media_id, approved) VALUES (%s, %s, %s, %s, FALSE) RETURNING post_id",
-            (content, user_id, media_type, media_id),
+            "INSERT INTO posts (content, author_id, media_type, media_id, approved, explicit) VALUES (%s, %s, %s, %s, FALSE, %s) RETURNING post_id",
+            (content, user_id, media_type, media_id, explicit),
             fetchone=True
         )
         
@@ -9396,6 +9564,7 @@ def mini_app_get_posts():
                 p.comment_count,
                 p.media_type,
                 p.media_id,
+                p.explicit,
                 u.user_id as author_id,
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
@@ -9454,6 +9623,8 @@ def mini_app_get_posts():
                     user_reactions_map[pid] = rtype
 
         formatted_posts = []
+        viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(user_id),)) if user_id else None
+        is_admin_viewer = bool(viewer_row and viewer_row.get('is_admin'))
         for post in posts:
             if isinstance(post['timestamp'], str):
                 post_time = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S')
@@ -9482,14 +9653,22 @@ def mini_app_get_posts():
             
             category_list = post['categories'].split(',') if post['categories'] else ['Other']
             
+            is_owner = str(post['author_id']) == str(user_id)
+            is_explicit = bool(post.get('explicit'))
+            hide_content = is_explicit and not is_owner and not is_admin_viewer
+            if hide_content:
+                content_preview = "⚠️ This post contains explicit content that may not be suitable for all viewers."
+            
             formatted_posts.append({
                 'id': post['post_id'],
                 'content': content_preview,
-                'full_content': post['content'],
+                'full_content': post['content'] if not hide_content else content_preview,
                 'categories': category_list,
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
                 'unread_comments': post['unread_comments'],
+                'explicit': is_explicit,
+                'content_hidden': hide_content,
                 'author': {
                     'name': 'Anonymous',
                     'sex': post['author_sex'] or '👤',
@@ -9498,9 +9677,9 @@ def mini_app_get_posts():
                     'is_me': str(post['author_id']) == str(user_id),
                     'is_admin': post['author_is_admin']
                 },
-                'has_media': post['media_type'] != 'text',
-                'media_type': post['media_type'],
-                'media_id': post['media_id'],
+                'has_media': post['media_type'] != 'text' and not hide_content,
+                'media_type': None if hide_content else post['media_type'],
+                'media_id': None if hide_content else post['media_id'],
                 'reactions': {
                     'counts': reactions_map.get(post['post_id'], {}),
                     'user_reaction': user_reactions_map.get(post['post_id'], None)
@@ -9528,7 +9707,7 @@ def mini_app_get_single_post(post_id):
     try:
         post = db_fetch_one('''
             SELECT 
-                p.post_id, p.vent_number, p.content, p.timestamp, p.comment_count, p.media_type, p.media_id, p.deleted,
+                p.post_id, p.vent_number, p.content, p.timestamp, p.comment_count, p.media_type, p.media_id, p.deleted, p.explicit,
                 u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
                 u.is_admin as author_is_admin,
                 STRING_AGG(pc.category_code, ', ') as categories
@@ -9567,6 +9746,14 @@ def mini_app_get_single_post(post_id):
         
         # Get viewer_id
         viewer_id = request.args.get('viewer_id')
+        reveal_requested = request.args.get('reveal') == '1'
+        
+        viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(viewer_id),)) if viewer_id else None
+        is_privileged_viewer = bool(viewer_id) and (
+            str(viewer_id) == str(post['author_id']) or bool(viewer_row and viewer_row.get('is_admin'))
+        )
+        is_explicit = bool(post.get('explicit'))
+        show_content = is_privileged_viewer or reveal_requested or not is_explicit
         
         # Fetch post reactions counts
         counts_res = db_fetch_all("""
@@ -9595,6 +9782,8 @@ def mini_app_get_single_post(post_id):
                 'comments': post['comment_count'] or 0,
                 'author_id': post['author_id'],
                 'deleted': True,
+                'explicit': is_explicit,
+                'content_hidden': False,
                 'author': {
                     'id': post['author_id'],
                     'name': 'Anonymous',
@@ -9612,14 +9801,16 @@ def mini_app_get_single_post(post_id):
 
         formatted_post = {
             'id': post['post_id'],
-            'content': post['content'],
+            'content': post['content'] if show_content else "⚠️ This post contains explicit content that may not be suitable for all viewers.",
             'categories': category_list,
             'vent_number': post.get('vent_number'),
             'time_ago': time_ago,
             'comments': post['comment_count'] or 0,
             'author_id': post['author_id'],
-            'media_type': post['media_type'],
-            'media_id': post['media_id'],
+            'media_type': post['media_type'] if show_content else None,
+            'media_id': post['media_id'] if show_content else None,
+            'explicit': is_explicit,
+            'content_hidden': is_explicit and not show_content,
             'author': {
                 'id': post['author_id'],
                 'name': 'Anonymous',
@@ -9629,8 +9820,8 @@ def mini_app_get_single_post(post_id):
                 'is_admin': post['author_is_admin']
             },
             'reactions': {
-                'counts': counts,
-                'user_reaction': user_reaction
+                'counts': counts if show_content else {},
+                'user_reaction': user_reaction if show_content else None
             }
         }
         return jsonify({'success': True, 'data': formatted_post})
@@ -9643,6 +9834,19 @@ def mini_app_get_single_post(post_id):
 def mini_app_get_post_comments(post_id):
     """API endpoint for fetching a post's comments with threading support"""
     try:
+        # Get viewer_id
+        viewer_id = request.args.get('viewer_id')
+        reveal_requested = request.args.get('reveal') == '1'
+
+        post_gate = db_fetch_one("SELECT author_id, explicit FROM posts WHERE post_id = %s", (post_id,))
+        if post_gate and post_gate.get('explicit'):
+            viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(viewer_id),)) if viewer_id else None
+            is_privileged_viewer = bool(viewer_id) and (
+                str(viewer_id) == str(post_gate['author_id']) or bool(viewer_row and viewer_row.get('is_admin'))
+            )
+            if not is_privileged_viewer and not reveal_requested:
+                return jsonify({'success': True, 'data': [], 'content_hidden': True})
+
         comments = db_fetch_all('''
             SELECT 
                 c.comment_id,
@@ -9662,9 +9866,6 @@ def mini_app_get_post_comments(post_id):
             ORDER BY c.timestamp ASC
         ''', (post_id,))
 
-        # Get viewer_id
-        viewer_id = request.args.get('viewer_id')
-        
         # Batch load reactions for comments
         comment_ids = [c['comment_id'] for c in comments]
         comment_reactions_map = {}
@@ -10389,9 +10590,10 @@ def mini_app_search():
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
         offset = (page - 1) * per_page
+        user_id = request.args.get('user_id')
         
         sql = '''
-            SELECT p.post_id, p.content, p.timestamp, p.comment_count,
+            SELECT p.post_id, p.content, p.timestamp, p.comment_count, p.explicit, p.media_type, p.media_id,
                    u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
                    STRING_AGG(DISTINCT pc.category_code, ',') as categories
             FROM posts p
@@ -10417,13 +10619,23 @@ def mini_app_search():
         posts = db_fetch_all(sql, tuple(params))
         
         formatted_posts = []
+        viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(user_id),)) if user_id else None
+        is_admin_viewer = bool(viewer_row and viewer_row.get('is_admin'))
         for post in posts:
             rating = calculate_user_rating(post['author_id'])
+            is_owner = str(post['author_id']) == str(user_id)
+            is_explicit = bool(post.get('explicit'))
+            hide_content = is_explicit and not is_owner and not is_admin_viewer
+            content_preview = post['content'][:300] + '...' if len(post['content']) > 300 else post['content']
+            if hide_content:
+                content_preview = "⚠️ This post contains explicit content that may not be suitable for all viewers."
             formatted_posts.append({
                 'id': post['post_id'],
-                'content': post['content'][:300] + '...' if len(post['content']) > 300 else post['content'],
+                'content': content_preview,
                 'categories': post['categories'].split(',') if post['categories'] else [],
                 'comments': post['comment_count'] or 0,
+                'explicit': is_explicit,
+                'content_hidden': hide_content,
                 'author': {
                     'name': 'Anonymous',
                     'avatar': post['author_avatar'] or "",
