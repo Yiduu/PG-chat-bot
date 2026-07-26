@@ -5939,20 +5939,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if post and post['author_id'] == user_id:
                     if post['channel_message_id']:
                         try:
-                            placeholder_text = "⚠️ This post has been deleted by the author."
+                            if post.get('vent_number'):
+                                vent_display = f"Vent - {post['vent_number']:03d}"
+                            else:
+                                vent_display = "Vent"
+
+                            cats_row = db_fetch_all("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,))
+                            categories = [row['category_code'] for row in cats_row]
+                            hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
+                            safe_hashtags = html.escape(hashtags)
+                            deletion_notice = "⚠️ This content has been deleted by the author."
+
+                            channel_text = (
+                                f"<code>{vent_display}</code>\n\n"
+                                f"{deletion_notice}\n\n"
+                                f"━━━━━━━━━━━━━━━\n"
+                                f"{safe_hashtags}\n"
+                                f"<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
+                            )
+
+                            comment_count = post.get('comment_count') or 0
+                            keyboard = InlineKeyboardMarkup([
+                                [InlineKeyboardButton(f"💬 Add/view Comments ({comment_count})",
+                                    url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
+                            ])
+
                             if post.get('media_type', 'text') == 'text':
                                 await context.bot.edit_message_text(
-                                    chat_id=CHANNEL_ID,
-                                    message_id=post['channel_message_id'],
-                                    text=placeholder_text,
-                                    reply_markup=None
+                                    chat_id=CHANNEL_ID, message_id=post['channel_message_id'],
+                                    text=channel_text, parse_mode=ParseMode.HTML,
+                                    reply_markup=keyboard, disable_web_page_preview=True
                                 )
                             else:
                                 await context.bot.edit_message_caption(
-                                    chat_id=CHANNEL_ID,
-                                    message_id=post['channel_message_id'],
-                                    caption=placeholder_text,
-                                    reply_markup=None
+                                    chat_id=CHANNEL_ID, message_id=post['channel_message_id'],
+                                    caption=channel_text, parse_mode=ParseMode.HTML, reply_markup=keyboard
                                 )
                         except Exception as e:
                             logger.error(f"Error editing channel message: {e}")
@@ -9507,7 +9528,7 @@ def mini_app_get_single_post(post_id):
     try:
         post = db_fetch_one('''
             SELECT 
-                p.post_id, p.content, p.timestamp, p.comment_count, p.media_type, p.media_id, p.deleted,
+                p.post_id, p.vent_number, p.content, p.timestamp, p.comment_count, p.media_type, p.media_id, p.deleted,
                 u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
                 u.is_admin as author_is_admin,
                 STRING_AGG(pc.category_code, ', ') as categories
@@ -9567,8 +9588,9 @@ def mini_app_get_single_post(post_id):
         if post.get('deleted'):
             formatted_post = {
                 'id': post['post_id'],
-                'content': "⚠️ This post has been deleted by the author.",
-                'categories': [],
+                'content': "⚠️ This content has been deleted by the author.",
+                'categories': category_list,
+                'vent_number': post.get('vent_number'),
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
                 'author_id': post['author_id'],
@@ -9592,6 +9614,7 @@ def mini_app_get_single_post(post_id):
             'id': post['post_id'],
             'content': post['content'],
             'categories': category_list,
+            'vent_number': post.get('vent_number'),
             'time_ago': time_ago,
             'comments': post['comment_count'] or 0,
             'author_id': post['author_id'],
