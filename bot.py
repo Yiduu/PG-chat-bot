@@ -3964,11 +3964,10 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("❌ Error loading messages. Please try again.")
 
-async def show_comments_menu(update, context, post_id, page=1, force_reveal=False, auto_show_comments=False):
+async def show_comments_menu(update, context, post_id, page=1, force_reveal=False, auto_show_comments=False, show_comments=False):
     """Entry point for viewing a post: shows the post content (or an explicit-content
-    warning) with "View Comments" / "Write Comment" buttons. Comments are only loaded
-    once the user taps "View Comments" (or immediately if auto_show_comments=True,
-    which is used right after a user posts a new comment so they can see it land)."""
+    warning) with "View Comments" / "Write Comment" buttons. Comments are appended below
+    the post content in the SAME message when show_comments or auto_show_comments is True."""
     post = db_fetch_one("""
         SELECT p.*, STRING_AGG(pc.category_code, ', ') as categories
         FROM posts p
@@ -3980,18 +3979,14 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
         if hasattr(update, 'message') and update.message:
             viewer_id = str(update.effective_user.id) if update.effective_user else None
             await update.message.reply_text("❌ Post not found.", reply_markup=get_main_menu(viewer_id) if viewer_id else None)
+        elif hasattr(update, 'callback_query') and update.callback_query:
+            await update.callback_query.answer("❌ Post not found.", show_alert=True)
         return
 
     viewer_id = str(update.effective_user.id) if update.effective_user else None
     viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (viewer_id,)) if viewer_id else None
     is_admin_viewer = bool(viewer_row and viewer_row.get('is_admin'))
     is_owner = viewer_id is not None and str(post['author_id']) == viewer_id
-
-    target_message = None
-    if hasattr(update, 'message') and update.message:
-        target_message = update.message
-    elif hasattr(update, 'callback_query') and update.callback_query:
-        target_message = update.callback_query.message
 
     # Explicit-content gate: authors and admins see it directly; everyone else must
     # tap through a warning first. Deleted posts skip the gate (nothing to reveal).
@@ -4006,8 +4001,13 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
             f"💬 {comment_count} comment\\(s\\)\n\n"
             "Tap below if you still wish to view it\\."
         )
-        if target_message:
-            await target_message.reply_text(warning_text, reply_markup=reveal_kb, parse_mode=ParseMode.MARKDOWN_V2)
+        if hasattr(update, 'callback_query') and update.callback_query:
+            try:
+                await update.callback_query.edit_message_text(warning_text, reply_markup=reveal_kb, parse_mode=ParseMode.MARKDOWN_V2)
+            except Exception:
+                await update.callback_query.message.reply_text(warning_text, reply_markup=reveal_kb, parse_mode=ParseMode.MARKDOWN_V2)
+        elif hasattr(update, 'message') and update.message:
+            await update.message.reply_text(warning_text, reply_markup=reveal_kb, parse_mode=ParseMode.MARKDOWN_V2)
         return
 
     # Build the post header
@@ -4036,24 +4036,121 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
     )
 
     comment_count = count_all_comments(post_id)
-    header_kb = [
-        [InlineKeyboardButton(f"👁 View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_1")],
-        [InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")]
-    ]
+    per_page = 10
+    total_pages = max(1, (comment_count + per_page - 1) // per_page)
+    if page > total_pages:
+        page = total_pages
+
+    should_display_comments = show_comments or auto_show_comments
+    comments_text = ""
+
+    if should_display_comments:
+        offset = (page - 1) * per_page
+        comments = db_fetch_all("""
+            SELECT c.*, u.sex AS user_sex, u.avatar_emoji, u.anonymous_name, u.is_admin
+            FROM comments c
+            LEFT JOIN users u ON c.author_id = u.user_id
+            WHERE c.post_id = %s
+            ORDER BY c.timestamp ASC
+            LIMIT %s OFFSET %s
+        """, (post_id, per_page, offset))
+
+        divider = "\n\n━━━━━━━━━━━━━━━\n"
+        if not comments:
+            comments_text = divider + "💬 *Comments*\n\n_No comments yet\\. Be the first to comment\\!_"
+        else:
+            safe_page = escape_markdown(str(page), version=2)
+            safe_total_pages = escape_markdown(str(total_pages), version=2)
+            comments_text = divider + f"💬 *Comments* \\({safe_page}/{safe_total_pages}\\)\n\n"
+
+            post_author_id = post['author_id'] if not post.get('deleted') else None
+            for idx, c in enumerate(comments):
+                c_num = offset + idx + 1
+                safe_num = escape_markdown(str(c_num), version=2)
+
+                is_c_author = str(c['author_id']) == str(post_author_id)
+                profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{c['author_id']}_{post_id}"
+                c_rating = calculate_user_rating(c['author_id'])
+                aura_str = f"⚡ _Aura_ {c_rating} {format_aura(c_rating)}" if not c.get('is_admin') else ""
+
+                if is_c_author:
+                    sex_e = c.get('user_sex') or '👤'
+                    author_fmt = f"{sex_e} _[{escape_markdown('Vent author', version=2)}]({profile_link})_"
+                else:
+                    sex_e = c.get('user_sex') or '👤'
+                    av_e = c.get('avatar_emoji')
+                    if sex_e in ('👨', '👩'):
+                        av_str = f"{sex_e} {av_e}" if av_e else sex_e
+                    else:
+                        av_str = av_e if av_e else '👤'
+                    name_str = escape_markdown(c.get('anonymous_name') or 'Anonymous', version=2)
+                    author_fmt = f"{av_str} _[{name_str}]({profile_link})_ {aura_str}".strip()
+
+                c_type = c.get('type', 'text')
+                c_content = c.get('content') or ""
+                if c_type == 'voice':
+                    body_fmt = "🎵 _[Voice Message]_"
+                elif c_type == 'photo':
+                    body_fmt = f"🖼️ _[Photo]_ {escape_markdown(c_content, version=2)}" if c_content else "🖼️ _[Photo]_"
+                elif c_type == 'gif':
+                    body_fmt = f"👾 _[GIF]_ {escape_markdown(c_content, version=2)}" if c_content else "👾 _[GIF]_"
+                elif c_type == 'sticker':
+                    body_fmt = "🎨 _[Sticker]_"
+                else:
+                    body_fmt = escape_markdown(c_content, version=2)
+
+                if isinstance(c.get('timestamp'), datetime):
+                    c_time = c['timestamp'].strftime('%b %d, %H:%M')
+                else:
+                    c_time = str(c.get('timestamp', ''))
+                safe_time = escape_markdown(c_time, version=2)
+
+                indent = "  " if c.get('parent_comment_id', 0) != 0 else ""
+                reply_indicator = "↳ " if c.get('parent_comment_id', 0) != 0 else ""
+
+                comments_text += f"{indent}*{safe_num}\\.* {reply_indicator}{author_fmt}\n{indent}   {body_fmt}\n{indent}   _{safe_time}_\n\n"
+
+    full_message_text = header_text + comments_text
+
+    header_kb = []
+    if not should_display_comments:
+        header_kb.append([InlineKeyboardButton(f"👁 View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_1")])
+        header_kb.append([InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")])
+    else:
+        header_kb.append([InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")])
+        if total_pages > 1:
+            nav_row = []
+            if page > 1:
+                nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"viewcomments_{post_id}_{page-1}"))
+            nav_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="noop"))
+            if page < total_pages:
+                nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"viewcomments_{post_id}_{page+1}"))
+            header_kb.append(nav_row)
+
     if not post.get('deleted'):
         header_kb.append([InlineKeyboardButton("🚨 Report Post", callback_data=f"report_post_{post_id}")])
 
-    if target_message:
-        await target_message.reply_text(
-            header_text,
-            reply_markup=InlineKeyboardMarkup(header_kb),
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
+    reply_markup = InlineKeyboardMarkup(header_kb)
 
-    # Comments only load once the user taps "View Comments" — unless we were asked
-    # to auto-show them (e.g. right after the user posts a new comment).
-    if auto_show_comments:
-        await show_comments_page(update, context, post_id, page)
+    if hasattr(update, 'callback_query') and update.callback_query:
+        query = update.callback_query
+        try:
+            await query.edit_message_text(
+                full_message_text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                disable_web_page_preview=True
+            )
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                logger.error(f"Error editing comments menu message: {e}")
+    elif hasattr(update, 'message') and update.message:
+        await update.message.reply_text(
+            full_message_text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True
+        )
 
 def escape_markdown_v2(text):
     """Escape all special characters for MarkdownV2"""
@@ -5760,13 +5857,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.MARKDOWN
                 )
 
+        elif query.data == 'noop':
+            await query.answer()
+
         elif query.data.startswith('revealexplicit_'):
             try:
                 parts = query.data.split('_')
                 post_id = int(parts[1])
                 page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 1
                 await query.answer()
-                await show_comments_menu(update, context, post_id, page=page, force_reveal=True)
+                await show_comments_menu(update, context, post_id, page=page, force_reveal=True, show_comments=True)
             except Exception as e:
                 logger.error(f"RevealExplicit error: {e}")
                 await query.answer("❌ Error loading post", show_alert=True)
@@ -5778,11 +5878,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
                     post_id = int(parts[1])
                     page = int(parts[2])
-                    await show_comments_page(update, context, post_id, page)
+                    await show_comments_menu(update, context, post_id, page=page, show_comments=True)
             except Exception as e:
                 logger.error(f"ViewComments error: {e}")
                 await query.answer("❌ Error loading comments")
-  
+
         elif query.data.startswith('writecomment_'):
             await query.answer("✍️ Opening Writer...", show_alert=False)
             post_id_str = query.data.split('_', 1)[1]
@@ -5792,7 +5892,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s WHERE user_id = %s",
                     (post_id, user_id)
                 )
-                
+                if query.message:
+                    context.user_data['comment_menu_msg_id'] = query.message.message_id
+                    context.user_data['comment_menu_chat_id'] = query.message.chat_id
+
                 await query.message.reply_text(
                     "✍️ Please type your comment or send a voice message, GIF, or sticker:\n\nTap ❌ Cancel to return to menu.",
                     reply_markup=cancel_menu,
@@ -7454,7 +7557,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_comments_now = count_all_comments(post_id)
             per_page = 10
             last_page = max(1, (total_comments_now + per_page - 1) // per_page)
-            await show_comments_menu(update, context, post_id, page=last_page, force_reveal=True, auto_show_comments=True)
+
+            post_msg_id = context.user_data.get('comment_menu_msg_id')
+            post_chat_id = context.user_data.get('comment_menu_chat_id')
+
+            refreshed = False
+            if post_msg_id and post_chat_id:
+                try:
+                    fake_query = SimpleNamespace(
+                        message=SimpleNamespace(message_id=post_msg_id, chat_id=post_chat_id),
+                        edit_message_text=lambda text, **kwargs: context.bot.edit_message_text(
+                            chat_id=post_chat_id, message_id=post_msg_id, text=text, **kwargs
+                        )
+                    )
+                    fake_update = SimpleNamespace(
+                        callback_query=fake_query,
+                        message=None,
+                        effective_user=update.effective_user,
+                        effective_chat=update.effective_chat
+                    )
+                    await show_comments_menu(fake_update, context, post_id, page=last_page, force_reveal=True, show_comments=True)
+                    refreshed = True
+                except Exception as edit_err:
+                    logger.warning(f"Could not edit original comment menu message: {edit_err}")
+
+            if not refreshed:
+                await show_comments_menu(update, context, post_id, page=last_page, force_reveal=True, show_comments=True)
         except Exception as e:
             logger.error(f"Error refreshing comments view after posting: {e}")
 
