@@ -6031,12 +6031,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                 context.user_data['editing_comment'] = comment_id
                 
-                # Message 1: Copyable content
-                # Use HTML <pre> for a reliable tap-to-copy block in Telegram
+                # Message 1: ONLY the copyable content
                 content_escaped = html.escape(comment['content'])
                 
                 await query.message.reply_text(
-                    "📋 <b>Copy the text below</b> (tap the box to copy only the text):\n\n"
                     f"<pre>{content_escaped}</pre>",
                     parse_mode=ParseMode.HTML
                 )
@@ -6044,7 +6042,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Message 2: Instructions
                 await query.message.reply_text(
                     "✏️ <b>Edit your comment</b>\n\n"
-                    "Paste the copied text, make your changes, then send the <b>entire corrected comment</b> as a new message.\n\n"
+                    "Make your changes and send the <b>entire corrected comment</b> as a new message.\n\n"
                     "Tap ❌ Cancel to abort.",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
