@@ -698,7 +698,8 @@ async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: 
     if context:
         context_keys = ['editing_comment', 'editing_post', 'thread_from_post_id', 
                        'pending_post', 'pending_explicit_check', 'broadcasting', 'broadcast_step', 'broadcast_type',
-                       'rejecting_post', 'awaiting_rejection_reason', 'reporting']
+                       'rejecting_post', 'awaiting_rejection_reason', 'reporting',
+                       'editing_categories_for_pending', 'selected_categories', 'pending_comment_edit']
         for key in context_keys:
             if key in context.user_data:
                 del context.user_data[key]
@@ -1894,10 +1895,11 @@ async def show_privacy_settings(update: Update, context: ContextTypes.DEFAULT_TY
 async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None, explicit: bool = False):
     keyboard = [
         [
-            InlineKeyboardButton("✏️ Edit", callback_data='edit_post'),
-            InlineKeyboardButton("❌ Cancel", callback_data='cancel_post')
+            InlineKeyboardButton("✏️ Edit Text", callback_data='edit_post'),
+            InlineKeyboardButton("🏷️ Edit Categories", callback_data='edit_categories')
         ],
         [
+            InlineKeyboardButton("❌ Cancel", callback_data='cancel_post'),
             InlineKeyboardButton("✅ Submit", callback_data='confirm_post')
         ]
     ]
@@ -4064,6 +4066,41 @@ def escape_markdown_v2(text):
         text = text.replace(char, '\\' + char)
     return text
 
+# Fragments of our own "copy this" prompts that users sometimes paste back to us
+# by accident (e.g. selecting the whole message bubble instead of just the code block).
+_EDIT_INSTRUCTION_ARTIFACTS = [
+    "copy the text below (tap the box to copy only the text):",
+    "copy the text below:",
+    "copy the text below",
+]
+
+def sanitize_pasted_edit(raw_text: str):
+    """
+    Strip a leading '📋 Copy the text below...' instruction line if a user accidentally
+    copied it along with the content they meant to edit.
+    Returns (cleaned_text, was_cleaned).
+    """
+    if not raw_text:
+        return raw_text, False
+
+    cleaned = raw_text.strip()
+    if cleaned.startswith("📋"):
+        cleaned = cleaned.lstrip("📋").strip()
+
+    lowered = cleaned.lower()
+    for artifact in _EDIT_INSTRUCTION_ARTIFACTS:
+        if lowered.startswith(artifact):
+            cleaned = cleaned[len(artifact):]
+            break
+    else:
+        # Also catch it as a standalone first line even with slightly different wording
+        first_line, _, rest = cleaned.partition("\n")
+        if "copy the text below" in first_line.lower():
+            cleaned = rest
+
+    cleaned = cleaned.strip(" :\n")
+    return (cleaned if cleaned else raw_text.strip()), (cleaned.strip() != raw_text.strip())
+
 async def send_comment_message(context, chat_id, comment, author_text, reply_to_message_id=None, pre_fetched_data=None):
     """Helper function to send comments with proper media handling and pre-fetched data support"""
     comment_id = comment['comment_id']
@@ -5454,7 +5491,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not selected:
                 await query.answer("❌ Please select at least one category.", show_alert=True)
                 return
-            
+
+            # If the user got here from "🏷️ Edit Categories" on an existing preview,
+            # just update the category on that pending post and go back to the preview —
+            # don't discard their already-typed content and ask them to retype it.
+            if context.user_data.get('editing_categories_for_pending'):
+                del context.user_data['editing_categories_for_pending']
+                pending_post = context.user_data.get('pending_post')
+                await query.answer("✅ Categories updated")
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                if not pending_post:
+                    await query.message.reply_text(
+                        "❌ Post data not found. Please start over.",
+                        reply_markup=get_main_menu(user_id)
+                    )
+                    return
+
+                pending_post['category'] = ','.join(selected)
+                context.user_data['pending_post'] = pending_post
+
+                fake_update = SimpleNamespace(
+                    callback_query=None,
+                    message=query.message,
+                    effective_user=update.effective_user,
+                    effective_chat=update.effective_chat
+                )
+                await send_post_confirmation(
+                    fake_update, context,
+                    pending_post['content'], pending_post['category'],
+                    pending_post.get('media_type', 'text'), pending_post.get('media_id'),
+                    thread_from_post_id=pending_post.get('thread_from_post_id'),
+                    explicit=pending_post.get('explicit', False)
+                )
+                return
+
             # Check if this is a thread continuation
             user_data = db_fetch_one("SELECT thread_context_post_id FROM users WHERE user_id = %s", (user_id,))
             if user_data and user_data.get('thread_context_post_id'):
@@ -6437,6 +6510,45 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        elif query.data == 'edit_categories':
+            pending_post = context.user_data.get('pending_post')
+            if not pending_post:
+                await query.answer("❌ Post data not found. Please start over.", show_alert=True)
+                return
+
+            if time.time() - pending_post.get('timestamp', 0) > 300:
+                try:
+                    await query.message.edit_text("❌ Edit time expired. Please start a new post.")
+                except BadRequest:
+                    await query.message.edit_caption("❌ Edit time expired. Please start a new post.")
+                del context.user_data['pending_post']
+                await query.answer()
+                return
+
+            await query.answer()
+
+            # Pre-fill the category picker with whatever is currently selected
+            current_categories = pending_post.get('category', '')
+            selected = set(c.strip() for c in current_categories.split(',') if c.strip())
+            context.user_data['selected_categories'] = selected
+
+            # Flag that we're revising categories for a post that already has content,
+            # so cat_done should return straight to the preview instead of asking to retype it.
+            context.user_data['editing_categories_for_pending'] = True
+
+            # Remove the buttons on the stale preview so it can't be submitted while categories are being edited
+            try:
+                await query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+            await query.message.reply_text(
+                "🏷️ *Update categories* (you can choose multiple):\n\nYour post text is kept as is.",
+                reply_markup=build_multi_category_keyboard(selected),
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+
         elif query.data in ('edit_post', 'cancel_post', 'confirm_post'):
             pending_post = context.user_data.get('pending_post')
             if not pending_post:
@@ -6463,19 +6575,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Store that we're in edit mode
                 context.user_data['editing_post'] = True
                 
-                # Message 1: Copyable content
+                # Message 1: ONLY the copyable content — nothing else in this bubble,
+                # so selecting/copying the whole message can't drag in any instruction text.
                 content_escaped = html.escape(pending_post['content'])
                 
                 await query.message.reply_text(
-                    "📋 <b>Copy the text below</b> (tap the box to copy only the text):\n\n"
                     f"<pre>{content_escaped}</pre>",
                     parse_mode=ParseMode.HTML
                 )
                 
-                # Message 2: Instructions
+                # Message 2: Instructions (kept separate from the content on purpose)
                 await query.message.reply_text(
                     "✏️ <b>Edit your post</b>\n\n"
-                    "Paste the copied text, make your changes, then send the <b>entire corrected post</b> as a new message.\n\n"
+                    "📋 Tap the box above to copy just your text, make your changes, then send the "
+                    "<b>entire corrected post</b> back here as a new message.\n\n"
                     "Tap ❌ Cancel to abort.",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
@@ -7230,10 +7343,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
         
         if comment and comment['author_id'] == user_id and comment['type'] == 'text':
+            # Guard against users accidentally pasting our own "copy the text below"
+            # instruction along with the content they meant to edit.
+            cleaned_text, was_cleaned = sanitize_pasted_edit(text)
+
+            if was_cleaned:
+                # Don't save silently — let the user confirm what actually got cleaned up.
+                del context.user_data['editing_comment']
+                context.user_data['pending_comment_edit'] = {
+                    'comment_id': comment_id,
+                    'content': cleaned_text,
+                    'timestamp': time.time()
+                }
+                await update.message.reply_text(
+                    "🧹 Looks like our copy instructions got pasted in too — here's your comment with those trimmed out:\n\n"
+                    f"<pre>{html.escape(cleaned_text)}</pre>\n\n"
+                    "Save this?",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✅ Save", callback_data='confirm_comment_edit'),
+                         InlineKeyboardButton("✏️ Edit Again", callback_data='redo_comment_edit')],
+                        [InlineKeyboardButton("❌ Cancel", callback_data='cancel_input')]
+                    ])
+                )
+                return
+
             # Update the comment
             db_execute(
                 "UPDATE comments SET content = %s WHERE comment_id = %s",
-                (text, comment_id)
+                (cleaned_text, comment_id)
             )
             
             # Clean up
@@ -7258,8 +7396,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text in main_menu_buttons: return
         pending_post = context.user_data.get('pending_post')
         if pending_post:
+            # Guard against users accidentally pasting our own "copy the text below"
+            # instruction along with the content they meant to edit.
+            cleaned_text, was_cleaned = sanitize_pasted_edit(text)
+            if was_cleaned:
+                await update.message.reply_text(
+                    "🧹 Looks like our copy instructions got pasted in too — I've trimmed those out. "
+                    "Check the preview below before submitting."
+                )
+
             # Update the pending post content
-            pending_post['content'] = text
+            pending_post['content'] = cleaned_text
             pending_post['timestamp'] = time.time()  # Reset edit timer
             context.user_data['pending_post'] = pending_post
             
