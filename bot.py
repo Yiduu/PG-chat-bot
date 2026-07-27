@@ -1897,12 +1897,23 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
         [
             InlineKeyboardButton("✏️ Edit Text", callback_data='edit_post'),
             InlineKeyboardButton("🏷️ Edit Categories", callback_data='edit_categories')
-        ],
-        [
-            InlineKeyboardButton("❌ Cancel", callback_data='cancel_post'),
-            InlineKeyboardButton("✅ Submit", callback_data='confirm_post')
         ]
     ]
+
+    if thread_from_post_id:
+        keyboard.append([
+            InlineKeyboardButton("🧵 Change Thread", callback_data='select_thread_post'),
+            InlineKeyboardButton("🚫 Remove Thread", callback_data='clear_thread_post')
+        ])
+    else:
+        keyboard.append([
+            InlineKeyboardButton("🧵 Thread to Previous Post", callback_data='select_thread_post')
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton("❌ Cancel", callback_data='cancel_post'),
+        InlineKeyboardButton("✅ Submit", callback_data='confirm_post')
+    ])
     
     thread_text = ""
     if thread_from_post_id:
@@ -6546,6 +6557,137 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🏷️ *Update categories* (you can choose multiple):\n\nYour post text is kept as is.",
                 reply_markup=build_multi_category_keyboard(selected),
                 parse_mode=ParseMode.MARKDOWN
+            )
+            return
+
+        elif query.data == 'select_thread_post':
+            pending_post = context.user_data.get('pending_post')
+            if not pending_post:
+                await query.answer("❌ Post data not found. Please start over.", show_alert=True)
+                return
+
+            if time.time() - pending_post.get('timestamp', 0) > 300:
+                try:
+                    await query.message.edit_text("❌ Edit time expired. Please start a new post.")
+                except BadRequest:
+                    await query.message.edit_caption("❌ Edit time expired. Please start a new post.")
+                del context.user_data['pending_post']
+                await query.answer()
+                return
+
+            await query.answer()
+
+            # Pull the user's most recent approved posts to thread from
+            recent_posts = db_fetch_all(
+                "SELECT post_id, content, vent_number FROM posts "
+                "WHERE author_id = %s AND approved = TRUE AND deleted = FALSE "
+                "ORDER BY timestamp DESC LIMIT 6",
+                (user_id,)
+            )
+
+            try:
+                await query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+            if not recent_posts:
+                await query.message.reply_text(
+                    "🧵 You don't have any previous posts yet to thread from.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⬅️ Back to Preview", callback_data='thread_pick_cancel')]
+                    ])
+                )
+                return
+
+            thread_kb = []
+            for p in recent_posts:
+                label = p['content'][:40] + ('…' if len(p['content']) > 40 else '')
+                num = p.get('vent_number')
+                prefix = f"Vent-{num:03d}: " if num else ""
+                thread_kb.append([InlineKeyboardButton(f"🧵 {prefix}{label}", callback_data=f"thread_pick_{p['post_id']}")])
+
+            thread_kb.append([InlineKeyboardButton("🚫 No Thread (Standalone)", callback_data="thread_pick_none")])
+            thread_kb.append([InlineKeyboardButton("⬅️ Back to Preview", callback_data="thread_pick_cancel")])
+
+            await query.message.reply_text(
+                "🧵 *Thread to Previous Post*\n\nPick one of your recent posts to continue as a thread, "
+                "or keep this post standalone:",
+                reply_markup=InlineKeyboardMarkup(thread_kb),
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+
+        elif query.data == 'clear_thread_post':
+            pending_post = context.user_data.get('pending_post')
+            if not pending_post:
+                await query.answer("❌ Post data not found. Please start over.", show_alert=True)
+                return
+
+            await query.answer("🚫 Thread removed")
+            pending_post['thread_from_post_id'] = None
+            context.user_data['pending_post'] = pending_post
+
+            fake_update = SimpleNamespace(
+                callback_query=None,
+                message=query.message,
+                effective_user=update.effective_user,
+                effective_chat=update.effective_chat
+            )
+            await send_post_confirmation(
+                fake_update, context,
+                pending_post['content'], pending_post['category'],
+                pending_post.get('media_type', 'text'), pending_post.get('media_id'),
+                thread_from_post_id=None,
+                explicit=pending_post.get('explicit', False)
+            )
+            return
+
+        elif query.data.startswith('thread_pick_'):
+            pending_post = context.user_data.get('pending_post')
+            if not pending_post:
+                await query.answer("❌ Post data not found. Please start over.", show_alert=True)
+                return
+
+            choice = query.data[len('thread_pick_'):]
+            await query.answer()
+
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+
+            new_thread_id = None
+            if choice == 'cancel':
+                new_thread_id = pending_post.get('thread_from_post_id')
+            elif choice == 'none':
+                new_thread_id = None
+            elif choice.isdigit():
+                candidate_id = int(choice)
+                owned_post = db_fetch_one(
+                    "SELECT post_id FROM posts WHERE post_id = %s AND author_id = %s AND approved = TRUE AND deleted = FALSE",
+                    (candidate_id, user_id)
+                )
+                if owned_post:
+                    new_thread_id = candidate_id
+                else:
+                    await query.message.reply_text("❌ That post is no longer available to thread from.")
+                    new_thread_id = pending_post.get('thread_from_post_id')
+
+            pending_post['thread_from_post_id'] = new_thread_id
+            context.user_data['pending_post'] = pending_post
+
+            fake_update = SimpleNamespace(
+                callback_query=None,
+                message=query.message,
+                effective_user=update.effective_user,
+                effective_chat=update.effective_chat
+            )
+            await send_post_confirmation(
+                fake_update, context,
+                pending_post['content'], pending_post['category'],
+                pending_post.get('media_type', 'text'), pending_post.get('media_id'),
+                thread_from_post_id=new_thread_id,
+                explicit=pending_post.get('explicit', False)
             )
             return
 
