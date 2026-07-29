@@ -32,6 +32,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# How long a "reporting" state (waiting for the user to type a report reason)
+# stays valid before it's treated as stale and cleared automatically.
+REPORTING_TIMEOUT_SECONDS = 300  # 5 minutes
+
 # Load environment variables first
 load_dotenv()
 
@@ -5563,6 +5567,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         elif query.data == 'menu':
+            # Navigating away cancels any in-progress report
+            if 'reporting' in context.user_data:
+                del context.user_data['reporting']
             await query.answer("📱 Opening Menu...", show_alert=False)
             await query.message.reply_text(
                 "📱 Main Menu\nUse the buttons below:",
@@ -5596,6 +5603,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif query.data == 'profile':
+            # Navigating away cancels any in-progress report
+            if 'reporting' in context.user_data:
+                del context.user_data['reporting']
             await query.answer("👤 Loading Profile...", show_alert=False)
             await send_updated_profile(user_id, query.message.chat.id, context)
 
@@ -5605,6 +5615,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_leaderboard(update, context)
 
         elif query.data == 'settings':
+            # Navigating away cancels any in-progress report
+            if 'reporting' in context.user_data:
+                del context.user_data['reporting']
             await query.answer("⚙️ Loading Settings...", show_alert=False)
             await show_settings(update, context)
 
@@ -7107,7 +7120,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not post:
                     await query.answer("❌ Post not found.", show_alert=True)
                     return
-                context.user_data['reporting'] = {'type': 'post', 'id': post_id}
+                context.user_data['reporting'] = {'type': 'post', 'id': post_id, 'timestamp': time.time()}
                 await query.answer()
                 await query.message.reply_text(
                     "🚨 *Report Post*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap ❌ Cancel to go back.",
@@ -7125,7 +7138,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not comment:
                     await query.answer("❌ Comment not found.", show_alert=True)
                     return
-                context.user_data['reporting'] = {'type': 'comment', 'id': comment_id}
+                context.user_data['reporting'] = {'type': 'comment', 'id': comment_id, 'timestamp': time.time()}
                 await query.answer()
                 await query.message.reply_text(
                     "🚨 *Report Comment*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap ❌ Cancel to go back.",
@@ -7429,47 +7442,68 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     # NEW: Handle report reason capture from user
-    if context.user_data.get('reporting'):
+    # IMPORTANT: comment flow always wins. If the user is mid-comment
+    # (waiting_for_comment is TRUE in the DB) a lingering 'reporting' state
+    # must NOT hijack their message — fall through and let the
+    # waiting_for_comment branch further down handle it instead.
+    if context.user_data.get('reporting') and not (user and user['waiting_for_comment']):
         if text in main_menu_buttons: return
         reporting = context.user_data.get('reporting')
-        reason = text.strip() if text else ""
 
-        if not reason:
-            await update.message.reply_text("❌ Please provide a reason (at least 1 character).")
-            return
-
-        if len(reason) > 200:
-            await update.message.reply_text(
-                "❌ Reason is too long (max 200 characters). Please shorten it and try again."
-            )
-            return
-
-        target_type = reporting['type']
-        target_id = reporting['id']
-
-        report_id = create_report(user_id, target_type, target_id, reason)
-
-        if report_id is None:
-            await update.message.reply_text(
-                "⚠️ You have already reported this content. An admin will review it.",
-                reply_markup=get_main_menu(user_id)
-            )
-        elif report_id == -1:
-            await update.message.reply_text(
-                "⚠️ You've reached the daily report limit (5 per day). Please try again tomorrow.",
-                reply_markup=get_main_menu(user_id)
-            )
-        else:
-            await update.message.reply_text(
-                "✅ Thank you. An admin will review your report.",
-                reply_markup=get_main_menu(user_id)
-            )
-            # Notify admin of new report
-            await notify_admin_of_new_report(context, report_id, user_id, target_type, reason)
-
-        # Clear reporting state regardless of outcome
-        if 'reporting' in context.user_data:
+        # Expire stale reporting state so it can never linger indefinitely
+        started_at = reporting.get('timestamp', 0)
+        if time.time() - started_at > REPORTING_TIMEOUT_SECONDS:
             del context.user_data['reporting']
+            await update.message.reply_text(
+                "⌛ Your report request timed out after 5 minutes. Tap 🚨 Report again if you still want to report this.",
+                reply_markup=get_main_menu(user_id)
+            )
+            return
+
+        try:
+            reason = text.strip() if text else ""
+
+            if not reason:
+                await update.message.reply_text(
+                    "❌ Please provide a reason (at least 1 character). Tap 🚨 Report again to retry.",
+                    reply_markup=get_main_menu(user_id)
+                )
+                return
+
+            if len(reason) > 200:
+                await update.message.reply_text(
+                    "❌ Reason is too long (max 200 characters). Tap 🚨 Report again to retry.",
+                    reply_markup=get_main_menu(user_id)
+                )
+                return
+
+            target_type = reporting['type']
+            target_id = reporting['id']
+
+            report_id = create_report(user_id, target_type, target_id, reason)
+
+            if report_id is None:
+                await update.message.reply_text(
+                    "⚠️ You have already reported this content. An admin will review it.",
+                    reply_markup=get_main_menu(user_id)
+                )
+            elif report_id == -1:
+                await update.message.reply_text(
+                    "⚠️ You've reached the daily report limit (5 per day). Please try again tomorrow.",
+                    reply_markup=get_main_menu(user_id)
+                )
+            else:
+                await update.message.reply_text(
+                    "✅ Thank you. An admin will review your report.",
+                    reply_markup=get_main_menu(user_id)
+                )
+                # Notify admin of new report
+                await notify_admin_of_new_report(context, report_id, user_id, target_type, reason)
+        finally:
+            # ALWAYS clear reporting state here — success, failure, or
+            # invalid input — so it can never linger into the next message.
+            if 'reporting' in context.user_data:
+                del context.user_data['reporting']
         return
 
     
