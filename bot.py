@@ -1604,11 +1604,30 @@ def get_user_rank(user_id):
             return rank
     return None
 
+def build_channel_post_keyboard(post_id: int, comment_count: int, explicit: bool = False):
+    """Inline keyboard attached to a post in the channel.
+
+    Explicit posts get an extra "View Post" button since their content is
+    hidden in the channel message itself — otherwise there'd be no direct
+    way to see the post without first tapping into the comments flow.
+    """
+    comments_button = InlineKeyboardButton(
+        f"Add/View Comments ({comment_count})",
+        url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}"
+    )
+    if explicit:
+        view_button = InlineKeyboardButton(
+            "View Post",
+            url=f"https://t.me/{BOT_USERNAME}?start=viewpost_{post_id}"
+        )
+        return InlineKeyboardMarkup([[view_button, comments_button]])
+    return InlineKeyboardMarkup([[comments_button]])
+
 async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, post_id: int):
     """Update the comment count on the channel post"""
     try:
         # Get the post details
-        post = db_fetch_one("SELECT channel_message_id, comment_count FROM posts WHERE post_id = %s", (post_id,))
+        post = db_fetch_one("SELECT channel_message_id, comment_count, explicit FROM posts WHERE post_id = %s", (post_id,))
         if not post or not post['channel_message_id']:
             return
         
@@ -1619,9 +1638,7 @@ async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, 
         db_execute("UPDATE posts SET comment_count = %s WHERE post_id = %s", (total_comments, post_id))
         
         # Update the channel message button
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"💬 Add/view Comments ({total_comments})", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
-        ])
+        keyboard = build_channel_post_keyboard(post_id, total_comments, post.get('explicit', False))
         
         # Try to edit the message in the channel
         await context.bot.edit_message_reply_markup(
@@ -2983,10 +3000,8 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             f"[Telegram](https://t.me/christianvent)| [Bot](https://t.me/{BOT_USERNAME})"
         )
         
-        # Create the comments button
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 Add/View Comments (0)", url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
-        ])
+        # Create the channel keyboard (View Post + Comments for explicit posts, Comments only otherwise)
+        kb = build_channel_post_keyboard(post_id, 0, post.get('explicit', False))
         
         # Check if this is a thread continuation
         reply_to_message_id = None
@@ -3002,8 +3017,8 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         # Send post to channel based on media type
         if post.get('explicit'):
             body_html = (
-                "⚠️ This post contains explicit content that may not be suitable for all members.\n"
-                "Click the \"View Comments\" button below if you still wish to view it."
+                "This post is marked as explicit content and may not be suitable for all members.\n"
+                "Tap \"View Post\" below if you'd like to read it."
             )
         else:
             body_html = html.escape(post['content'])
@@ -3262,6 +3277,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if post_id_str.isdigit():
                 post_id = int(post_id_str)
                 await show_comments_menu(update, context, post_id, page=1)
+            return
+
+        elif arg.startswith("viewpost_"):
+            post_id_str = arg.split("_", 1)[1]
+            if post_id_str.isdigit():
+                post_id = int(post_id_str)
+                await show_comments_menu(update, context, post_id, page=1, force_reveal=True)
             return
 
         elif arg.startswith("viewcomments_"):
@@ -3996,7 +4018,7 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
     if not post:
         if hasattr(update, 'message') and update.message:
             viewer_id = str(update.effective_user.id) if update.effective_user else None
-            await update.message.reply_text("❌ Post not found.", reply_markup=get_main_menu(viewer_id) if viewer_id else None)
+            await update.message.reply_text("Post not found.", reply_markup=get_main_menu(viewer_id) if viewer_id else None)
         return
 
     viewer_id = str(update.effective_user.id) if update.effective_user else None
@@ -4015,12 +4037,12 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
     if post.get('explicit') and not post.get('deleted') and not is_owner and not is_admin_viewer and not force_reveal:
         comment_count = count_all_comments(post_id)
         reveal_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔓 View Post & Comments", callback_data=f"revealexplicit_{post_id}_{page}")]
+            [InlineKeyboardButton("View Post & Comments", callback_data=f"revealexplicit_{post_id}_{page}")]
         ])
         warning_text = (
-            "🔞 *Explicit Content Warning*\n\n"
+            "*Explicit Content Warning*\n\n"
             "This post contains explicit or sexual content that may not be suitable for all members\\.\n\n"
-            f"💬 {comment_count} comment\\(s\\)\n\n"
+            f"{comment_count} comment\\(s\\)\n\n"
             "Tap below if you still wish to view it\\."
         )
         if target_message:
@@ -4029,7 +4051,7 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
 
     # Build the post header
     if post.get('deleted'):
-        post_text = "⚠️ This content has been deleted by the author."
+        post_text = "This content has been deleted by the author."
     else:
         post_text = post['content']
     escaped_text = escape_markdown(post_text, version=2)
@@ -4043,22 +4065,22 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
         vent_display = f"Post #{post_id}"
     escaped_vent = escape_markdown(vent_display, version=2)
 
-    explicit_tag = "🔞 _Explicit content_\n" if post.get('explicit') else ""
+    explicit_tag = "_Explicit content_\n" if post.get('explicit') else ""
 
     header_text = (
-        f"📌 *{escaped_vent}*\n"
+        f"*{escaped_vent}*\n"
         f"{explicit_tag}"
-        f"🏷 {escaped_categories}\n\n"
+        f"{escaped_categories}\n\n"
         f"{escaped_text}"
     )
 
     comment_count = count_all_comments(post_id)
     header_kb = [
-        [InlineKeyboardButton(f"👁 View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_1")],
-        [InlineKeyboardButton("✍️ Write Comment", callback_data=f"writecomment_{post_id}")]
+        [InlineKeyboardButton(f"View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_1")],
+        [InlineKeyboardButton("Write Comment", callback_data=f"writecomment_{post_id}")]
     ]
     if not post.get('deleted'):
-        header_kb.append([InlineKeyboardButton("🚨 Report Post", callback_data=f"report_post_{post_id}")])
+        header_kb.append([InlineKeyboardButton("Report Post", callback_data=f"report_post_{post_id}")])
 
     if target_message:
         await target_message.reply_text(
@@ -4314,10 +4336,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     loading_msg = None
     if page == 1:
         try:
-            if hasattr(update, 'callback_query') and update.callback_query:
-                loading_msg = await update.callback_query.message.edit_text("💬 Loading comments...")
-            elif hasattr(update, 'message') and update.message:
-                loading_msg = await context.bot.send_message(chat_id, "💬 Loading comments...")
+            loading_msg = await context.bot.send_message(chat_id, "Loading comments...")
         except:
             pass
 
@@ -4326,7 +4345,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         if loading_msg:
             try: await loading_msg.delete()
             except: pass
-        await context.bot.send_message(chat_id, "❌ Post not found.")
+        await context.bot.send_message(chat_id, "Post not found.")
         return
 
     post_author_id = post['author_id'] if not post.get('deleted') else None
@@ -4357,7 +4376,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             try: await loading_msg.delete()
             except: pass
         first_comment_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✍️ Be the first to comment", callback_data=f"writecomment_{post_id}")]
+            [InlineKeyboardButton("Be the first to comment", callback_data=f"writecomment_{post_id}")]
         ])
         await context.bot.send_message(
             chat_id,
@@ -5866,10 +5885,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await show_comments_menu(update, context, post_id, page=page, force_reveal=True)
             except Exception as e:
                 logger.error(f"RevealExplicit error: {e}")
-                await query.answer("❌ Error loading post", show_alert=True)
+                await query.answer("Error loading post", show_alert=True)
 
         elif query.data.startswith('viewcomments_'):
-            await query.answer("🔄 Loading comments...", show_alert=False)
+            await query.answer("Loading comments...", show_alert=False)
             try:
                 parts = query.data.split('_')
                 if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
@@ -5878,10 +5897,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await show_comments_page(update, context, post_id, page)
             except Exception as e:
                 logger.error(f"ViewComments error: {e}")
-                await query.answer("❌ Error loading comments")
+                await query.answer("Error loading comments")
   
         elif query.data.startswith('writecomment_'):
-            await query.answer("✍️ Opening Writer...", show_alert=False)
+            await query.answer("Opening writer...", show_alert=False)
             post_id_str = query.data.split('_', 1)[1]
             if post_id_str.isdigit():
                 post_id = int(post_id_str)
@@ -5891,7 +5910,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 await query.message.reply_text(
-                    "✍️ Please type your comment or send a voice message, GIF, or sticker:\n\nTap ❌ Cancel to return to menu.",
+                    "Type your comment, or send a voice message, GIF, or sticker.\n\nTap Cancel to return to the menu.",
                     reply_markup=cancel_menu,
                     parse_mode=ParseMode.HTML
                 )
@@ -9751,20 +9770,23 @@ def notify_admin_of_new_post_sync(post_id):
 def update_channel_post_comment_count_sync(post_id):
     """Sync version of update_channel_post_comment_count for the mini app"""
     try:
-        post = db_fetch_one("SELECT channel_message_id FROM posts WHERE post_id = %s", (post_id,))
+        post = db_fetch_one("SELECT channel_message_id, explicit FROM posts WHERE post_id = %s", (post_id,))
         if not post or not post['channel_message_id']:
             return
             
         total_comments = count_all_comments(post_id)
         
+        buttons = []
+        if post.get('explicit'):
+            buttons.append({"text": "View Post", "url": f"https://t.me/{BOT_USERNAME}?start=viewpost_{post_id}"})
+        buttons.append({"text": f"Add/View Comments ({total_comments})", "url": f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}"})
+
         url = f"https://api.telegram.org/bot{TOKEN}/editMessageReplyMarkup"
         payload = {
             "chat_id": CHANNEL_ID,
             "message_id": post['channel_message_id'],
             "reply_markup": {
-                "inline_keyboard": [
-                    [{"text": f"💬 Add/view Comments ({total_comments})", "url": f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}"}]
-                ]
+                "inline_keyboard": [buttons]
             }
         }
         requests.post(url, json=payload, timeout=5)
