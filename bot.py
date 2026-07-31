@@ -2132,10 +2132,12 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
         ]
     ])
     
+    explicit_line = "🔞 Marked as explicit\n\n" if post.get('explicit') else ""
+    
     try:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"🆕 New post awaiting approval from {author_name}:\n\n{post_preview}",
+            text=f"🆕 New post awaiting approval from {author_name}:\n\n{explicit_line}{post_preview}",
             reply_markup=keyboard
         )
     except Exception as e:
@@ -2863,13 +2865,13 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Get pending posts (simplified - no JOIN with pending_notifications)
     posts = db_fetch_all("""
-        SELECT p.post_id, p.content, u.anonymous_name, p.media_type, p.media_id,
+        SELECT p.post_id, p.content, u.anonymous_name, p.media_type, p.media_id, p.explicit,
                STRING_AGG(pc.category_code, ', ') as categories
         FROM posts p
         JOIN users u ON p.author_id = u.user_id
         LEFT JOIN post_categories pc ON p.post_id = pc.post_id
         WHERE p.approved = FALSE
-        GROUP BY p.post_id, u.anonymous_name, p.media_type, p.media_id, p.content, p.timestamp
+        GROUP BY p.post_id, u.anonymous_name, p.media_type, p.media_id, p.content, p.timestamp, p.explicit
         ORDER BY p.timestamp
     """)
     
@@ -2894,8 +2896,9 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         safe_preview = html.escape(preview)
         safe_name = html.escape(post['anonymous_name'] or "Anonymous")
         safe_cats = html.escape(post['categories'] or 'Other')
+        explicit_line = "🔞 <b>Marked as explicit</b>\n\n" if post.get('explicit') else ""
         
-        text = f"📝 <b>Pending Post</b> [{safe_cats}]\n\n{safe_preview}\n\n👤 <b>{safe_name}</b>"
+        text = f"📝 <b>Pending Post</b> [{safe_cats}]\n\n{explicit_line}{safe_preview}\n\n👤 <b>{safe_name}</b>"
         
         try:
             if post['media_type'] == 'text':
@@ -7698,13 +7701,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             explicit_kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("✅ Yes", callback_data='post_explicit_yes'),
-                    InlineKeyboardButton("🚫 No", callback_data='post_explicit_no')
+                    InlineKeyboardButton("✅ No, safe for everyone", callback_data='post_explicit_no'),
+                    InlineKeyboardButton("🔞 Yes, explicit", callback_data='post_explicit_yes')
                 ]
             ])
             await update.message.reply_text(
                 "🔞 Does this post contain explicit or sexual content?\n\n"
-                "This helps us show a content warning to other members before they view it.",
+                "This means sexual content, graphic descriptions, or explicit profanity — "
+                "not just a sensitive topic. It helps us show a content warning to other "
+                "members before they view it.",
                 reply_markup=explicit_kb
             )
             
@@ -10892,6 +10897,7 @@ def mini_app_admin_pending_posts():
                 p.content,
                 p.timestamp,
                 p.media_type,
+                p.explicit,
                 u.anonymous_name as author_name,
                 u.sex as author_sex,
                 STRING_AGG(pc.category_code, ',') as categories
@@ -10899,7 +10905,7 @@ def mini_app_admin_pending_posts():
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.approved = FALSE
-            GROUP BY p.post_id, u.anonymous_name, u.sex, p.content, p.timestamp, p.media_type
+            GROUP BY p.post_id, u.anonymous_name, u.sex, p.content, p.timestamp, p.media_type, p.explicit
             ORDER BY p.timestamp
         ''')
         
