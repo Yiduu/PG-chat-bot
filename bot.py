@@ -1620,7 +1620,7 @@ def build_channel_post_keyboard(post_id: int, comment_count: int, explicit: bool
             "View Post",
             url=f"https://t.me/{BOT_USERNAME}?start=viewpost_{post_id}"
         )
-        return InlineKeyboardMarkup([[view_button, comments_button]])
+        return InlineKeyboardMarkup([[view_button], [comments_button]])
     return InlineKeyboardMarkup([[comments_button]])
 
 async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, post_id: int):
@@ -2129,6 +2129,12 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
         [
             InlineKeyboardButton("✅ Approve", callback_data=f"approve_post_{post_id}"),
             InlineKeyboardButton("❌ Reject", callback_data=f"reject_post_{post_id}")
+        ],
+        [
+            InlineKeyboardButton(
+                "✅ Unmark Explicit" if post.get('explicit') else "🔞 Mark Explicit",
+                callback_data=f"toggle_explicit_{post_id}"
+            )
         ]
     ])
     
@@ -2888,6 +2894,12 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
             [
                 InlineKeyboardButton("✅ Approve", callback_data=f"approve_post_{post['post_id']}"),
                 InlineKeyboardButton("❌ Reject", callback_data=f"reject_post_{post['post_id']}")
+            ],
+            [
+                InlineKeyboardButton(
+                    "✅ Unmark Explicit" if post.get('explicit') else "🔞 Mark Explicit",
+                    callback_data=f"toggle_explicit_{post['post_id']}"
+                )
             ]
         ])
         
@@ -2959,6 +2971,89 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     reply_markup=keyboard,
                     parse_mode=ParseMode.HTML
                 )
+
+async def toggle_post_explicit(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
+    """Admin flags or unflags a post as explicit — works for posts still pending
+    review as well as posts already published to the channel (in which case the
+    live channel message content and keyboard are updated too)."""
+    query = update.callback_query
+    user_id = str(update.effective_user.id)
+
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']:
+        await query.answer("❌ You don't have permission to do this.", show_alert=True)
+        return
+
+    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    if not post:
+        await query.answer("❌ Post not found.", show_alert=True)
+        return
+
+    new_explicit = not post.get('explicit')
+    db_execute("UPDATE posts SET explicit = %s WHERE post_id = %s", (new_explicit, post_id))
+
+    # If already live in the channel, update the channel message content + keyboard too
+    if post.get('approved') and post.get('channel_message_id'):
+        try:
+            cats_row = db_fetch_all("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,))
+            categories = [row['category_code'] for row in cats_row]
+            hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
+            safe_hashtags = html.escape(hashtags)
+            vent_display = f"Vent - {post['vent_number']:03d}" if post.get('vent_number') else f"Post #{post_id}"
+
+            if new_explicit:
+                body_html = (
+                    "This post is marked as explicit content and may not be suitable for all members.\n"
+                    "Tap \"View Post\" below if you'd like to read it."
+                )
+            else:
+                body_html = html.escape(post['content'])
+
+            channel_text = (
+                f"<code>{vent_display}</code>\n\n"
+                f"{body_html}\n\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"{safe_hashtags}\n"
+                f"<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
+            )
+
+            new_kb = build_channel_post_keyboard(post_id, post.get('comment_count', 0) or 0, new_explicit)
+
+            if post['media_type'] == 'text':
+                await context.bot.edit_message_text(
+                    chat_id=CHANNEL_ID,
+                    message_id=post['channel_message_id'],
+                    text=channel_text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=new_kb,
+                    disable_web_page_preview=True
+                )
+            else:
+                await context.bot.edit_message_caption(
+                    chat_id=CHANNEL_ID,
+                    message_id=post['channel_message_id'],
+                    caption=channel_text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=new_kb
+                )
+        except Exception as e:
+            logger.error(f"Error updating channel message explicit state for post {post_id}: {e}")
+
+    # Refresh the toggle button label on whichever admin message this was pressed from
+    try:
+        new_buttons = list(query.message.reply_markup.inline_keyboard)
+        for row in new_buttons:
+            for i, btn in enumerate(row):
+                if btn.callback_data == f"toggle_explicit_{post_id}":
+                    row[i] = InlineKeyboardButton(
+                        "✅ Unmark Explicit" if new_explicit else "🔞 Mark Explicit",
+                        callback_data=f"toggle_explicit_{post_id}"
+                    )
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_buttons))
+    except Exception as e:
+        logger.error(f"Error updating admin keyboard after explicit toggle: {e}")
+
+    await query.answer("🔞 Marked as explicit" if new_explicit else "✅ Unmarked as explicit")
 
 async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
     query = update.callback_query
@@ -6897,6 +6992,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Error in approve_post handler: {e}")
                 await query.answer("❌ Error approving post", show_alert=True)
+
+        elif query.data.startswith('toggle_explicit_'):
+            try:
+                post_id = int(query.data.split('_')[-1])
+                logger.info(f"Admin {user_id} toggling explicit flag on post {post_id}")
+                await toggle_post_explicit(update, context, post_id)
+            except ValueError:
+                await query.answer("❌ Invalid post ID", show_alert=True)
+            except Exception as e:
+                logger.error(f"Error in toggle_post_explicit handler: {e}")
+                await query.answer("❌ Error toggling explicit flag", show_alert=True)
         # Admin broadcast handlers
         elif query.data == 'admin_broadcast':
             await start_broadcast(update, context)
