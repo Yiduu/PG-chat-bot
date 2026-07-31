@@ -8568,18 +8568,29 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   transition:background 0.15s, transform 0.15s;
   -webkit-tap-highlight-color:transparent;
 }
+.voice-record-btn:disabled{cursor:not-allowed;opacity:0.4}
 .voice-record-btn.recording{background:#e74c3c;border-color:#e74c3c;transform:scale(1.1)}
 .voice-record-btn.recording svg{stroke:#fff}
 .voice-record-timer{
   position:fixed;bottom:calc(var(--nav-h) + 100px);left:50%;transform:translateX(-50%);
-  background:rgba(0,0,0,0.8);color:#fff;padding:8px 20px;border-radius:40px;
-  font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;
+  background:rgba(0,0,0,0.85);color:#fff;padding:8px 10px 8px 16px;border-radius:40px;
+  font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;
   display:none;z-index:999;backdrop-filter:blur(8px);
+  transition:background 0.15s;
 }
+.voice-record-timer.active{display:flex;align-items:center;gap:10px}
+.voice-record-timer.past-cancel{background:rgba(231,76,60,0.95)}
+.voice-rec-dot{width:8px;height:8px;border-radius:50%;background:#e74c3c;flex-shrink:0;animation:voice-pulse 1s infinite}
+@keyframes voice-pulse{0%,100%{opacity:1}50%{opacity:0.25}}
 .voice-record-timer .cancel-hint{
-  font-size:11px;font-weight:400;opacity:0.7;margin-left:12px;
+  font-size:11px;font-weight:400;opacity:0.75;margin-left:2px;white-space:nowrap;
 }
-.voice-record-timer.active{display:flex;align-items:center;gap:12px}
+.voice-cancel-btn{
+  background:rgba(255,255,255,0.15);border:0;color:#fff;font-size:12px;font-weight:600;
+  padding:6px 12px;border-radius:20px;cursor:pointer;-webkit-tap-highlight-color:transparent;
+  flex-shrink:0;
+}
+.voice-cancel-btn:active{background:rgba(255,255,255,0.32)}
 
 /* ----- Direct reaction buttons ----- */
 .reaction-buttons{
@@ -8846,7 +8857,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 
 <div id="profileModal" class="modal-mask" onclick="closeProfileModal(event)"><div class="modal-container" onclick="event.stopPropagation()"><span class="modal-close" onclick="closeProfileModal()">&times;</span><div id="modalContent">Loading...</div></div></div>
 <div id="toast"></div>
-<div id="voice-timer" class="voice-record-timer"><span id="voice-time">0:00</span><span class="cancel-hint">⬆️ swipe up to cancel</span></div>
+<div id="voice-timer" class="voice-record-timer"><span class="voice-rec-dot"></span><span id="voice-time">0:00</span><span class="cancel-hint" id="voice-cancel-hint">Slide up to cancel</span><button type="button" id="voice-cancel-btn" class="voice-cancel-btn">Cancel</button></div>
 
 <script>
 'use strict';
@@ -8910,86 +8921,181 @@ function renderMedia(mediaType,mediaId){
 let mediaRecorder = null;
 let recordedChunks = [];
 let recordingTimer = null;
+let recordingMaxTimer = null;
 let recordingStartTime = 0;
 let currentVoiceTarget = null; // 'vent' | 'comment' | 'chat'
 let voiceCancel = false;
+let voiceStartY = 0;
+let voicePastCancelThreshold = false;
+
+const VOICE_MIN_MS = 800;      // releases shorter than this are treated as an accidental tap
+const VOICE_MAX_MS = 120000;   // auto-stop and send at 2 minutes, so files stay well under the upload cap
+const VOICE_CANCEL_PX = 80;    // slide-up distance that arms cancel
+
+const voiceSupported = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+const voiceIsTouchDevice = navigator.maxTouchPoints > 0;
 
 function setupVoiceButton(btnId, target) {
   const btn = document.getElementById(btnId);
   if (!btn) return;
+
+  if (!voiceSupported) {
+    btn.disabled = true;
+    btn.title = 'Voice messages are not supported in this browser';
+    return;
+  }
+
   let pressTimer = null;
   let isPressed = false;
-  let startY = 0;
+
+  const timerEl = document.getElementById('voice-timer');
+  const hintEl = document.getElementById('voice-cancel-hint');
+
+  const handleSwipeMove = (e) => {
+    if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
+    const y = e.type === 'touchmove' ? e.touches[0].clientY : e.clientY;
+    const past = (voiceStartY - y) > VOICE_CANCEL_PX;
+    if (past !== voicePastCancelThreshold) {
+      voicePastCancelThreshold = past;
+      timerEl.classList.toggle('past-cancel', past);
+      hintEl.textContent = past ? 'Release to cancel' : 'Slide up to cancel';
+    }
+  };
+
+  const teardownRecordingListeners = () => {
+    document.removeEventListener('mousemove', handleSwipeMove);
+    document.removeEventListener('touchmove', handleSwipeMove);
+  };
 
   const startRecording = (e) => {
     e.preventDefault();
     if (mediaRecorder && mediaRecorder.state === 'recording') return;
     voiceCancel = false;
+    voicePastCancelThreshold = false;
     currentVoiceTarget = target;
     isPressed = true;
-    startY = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
-    // Start recording after a short hold (like Telegram)
+    voiceStartY = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
+
+    // A single document-level mouseup covers "released before the hold
+    // threshold" AND "released after recording started, even if the
+    // pointer drifted off the button" — both are normal releases, not cancels.
+    if (e.type === 'mousedown') {
+      document.addEventListener('mouseup', stopRecording, { once: true });
+    }
+
+    // Start recording after a short hold, so a plain tap does nothing
     pressTimer = setTimeout(() => {
-      if (isPressed) {
-        btn.classList.add('recording');
-        document.getElementById('voice-timer').classList.add('active');
-        navigator.mediaDevices.getUserMedia({ audio: true })
-          .then(stream => {
+      if (!isPressed) return;
+      btn.classList.add('recording');
+      timerEl.classList.remove('past-cancel');
+      hintEl.textContent = voiceIsTouchDevice ? 'Slide up to cancel' : 'Release or tap Cancel';
+      timerEl.classList.add('active');
+
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => {
+          if (!isPressed) {
+            // Released while the permission prompt was open
+            stream.getTracks().forEach(t => t.stop());
+            btn.classList.remove('recording');
+            timerEl.classList.remove('active');
+            return;
+          }
+          recordedChunks = [];
+          mediaRecorder = new MediaRecorder(stream);
+          mediaRecorder.ondataavailable = ev => { if (ev.data.size > 0) recordedChunks.push(ev.data); };
+          mediaRecorder.onerror = () => {
+            voiceCancel = true;
+            toast('Recording error — please try again');
+            try { mediaRecorder.stop(); } catch (_) {}
+          };
+          mediaRecorder.onstop = () => {
+            stream.getTracks().forEach(t => t.stop());
+            btn.classList.remove('recording');
+            timerEl.classList.remove('active', 'past-cancel');
+            clearInterval(recordingTimer);
+            clearTimeout(recordingMaxTimer);
+            teardownRecordingListeners();
+
+            const elapsed = Date.now() - recordingStartTime;
+            if (voiceCancel) {
+              toast('Recording cancelled');
+            } else if (elapsed < VOICE_MIN_MS) {
+              toast('Hold the mic button to record a voice message');
+            } else if (recordedChunks.length) {
+              const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+              const file = new File([blob], 'voice.webm', { type: 'audio/webm' });
+              handleVoiceFile(file, target);
+            }
             recordedChunks = [];
-            mediaRecorder = new MediaRecorder(stream);
-            mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
-            mediaRecorder.onstop = () => {
-              stream.getTracks().forEach(t => t.stop());
-              btn.classList.remove('recording');
-              document.getElementById('voice-timer').classList.remove('active');
-              clearInterval(recordingTimer);
-              if (!voiceCancel && recordedChunks.length) {
-                const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-                const file = new File([blob], 'voice.webm', { type: 'audio/webm' });
-                handleVoiceFile(file, target);
-              }
-              recordedChunks = [];
-            };
-            mediaRecorder.start();
-            recordingStartTime = Date.now();
-            recordingTimer = setInterval(updateVoiceTimer, 200);
-          })
-          .catch(err => { toast('Microphone access denied'); });
-      }
+          };
+          mediaRecorder.start();
+          recordingStartTime = Date.now();
+          recordingTimer = setInterval(updateVoiceTimer, 200);
+          recordingMaxTimer = setTimeout(() => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+              toast('Maximum length reached');
+              mediaRecorder.stop();
+            }
+          }, VOICE_MAX_MS);
+
+          document.addEventListener('mousemove', handleSwipeMove);
+          document.addEventListener('touchmove', handleSwipeMove, { passive: true });
+        })
+        .catch(err => {
+          isPressed = false;
+          btn.classList.remove('recording');
+          timerEl.classList.remove('active');
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            toast('Microphone access denied — enable it in your browser settings');
+          } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+            toast('No microphone found on this device');
+          } else if (err.name === 'NotReadableError') {
+            toast('Microphone is already in use by another app');
+          } else {
+            toast('Could not access the microphone');
+          }
+        });
     }, 300);
   };
 
   const stopRecording = (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     clearTimeout(pressTimer);
+    isPressed = false;
     if (mediaRecorder && mediaRecorder.state === 'recording') {
-      // Check if swipe up to cancel (distance > 80px)
-      const endY = e.type === 'touchend' ? e.changedTouches[0].clientY : e.clientY;
-      if (startY - endY > 80) {
-        voiceCancel = true;
-        toast('Cancelled');
-      }
+      if (voicePastCancelThreshold) voiceCancel = true;
       mediaRecorder.stop();
     }
-    isPressed = false;
   };
 
-  const cancelRecording = (e) => {
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-      voiceCancel = true;
-      mediaRecorder.stop();
-    }
+  const cancelRecording = () => {
     clearTimeout(pressTimer);
     isPressed = false;
+    voiceCancel = true;
+    if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
   };
 
   btn.addEventListener('mousedown', startRecording);
-  btn.addEventListener('mouseup', stopRecording);
-  btn.addEventListener('mouseleave', cancelRecording);
   btn.addEventListener('touchstart', startRecording, { passive: false });
   btn.addEventListener('touchend', stopRecording, { passive: false });
   btn.addEventListener('touchcancel', cancelRecording, { passive: false });
+
+  // One shared Cancel button serves whichever recording is currently active
+  const cancelBtn = document.getElementById('voice-cancel-btn');
+  if (cancelBtn && !cancelBtn._wired) {
+    cancelBtn._wired = true;
+    cancelBtn.addEventListener('click', cancelRecording);
+  }
 }
+
+// Backgrounding the mini app mid-recording (switching chats in Telegram,
+// locking the phone) should cancel cleanly rather than leave the mic open.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && mediaRecorder && mediaRecorder.state === 'recording') {
+    voiceCancel = true;
+    mediaRecorder.stop();
+  }
+});
 
 function updateVoiceTimer() {
   const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
