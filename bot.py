@@ -679,6 +679,85 @@ def db_fetch_one(query, params=()):
 
 def db_fetch_all(query, params=()):
     return db_execute(query, params, fetch=True)
+def get_admin_conversations(limit=20, offset=0, search=None):
+    """List distinct conversation pairs, most recently active first."""
+    where_extra = ""
+    params = []
+    if search:
+        where_extra = "WHERE ua.anonymous_name ILIKE %s OR ub.anonymous_name ILIKE %s OR p.user_a = %s OR p.user_b = %s"
+        like = f"%{search}%"
+        params = [like, like, search, search]
+
+    query = f"""
+        WITH pairs AS (
+            SELECT LEAST(sender_id, receiver_id) AS user_a,
+                   GREATEST(sender_id, receiver_id) AS user_b,
+                   MAX(timestamp) AS last_ts,
+                   COUNT(*) AS msg_count
+            FROM private_messages
+            GROUP BY LEAST(sender_id, receiver_id), GREATEST(sender_id, receiver_id)
+        )
+        SELECT p.user_a, p.user_b, p.last_ts, p.msg_count,
+               ua.anonymous_name AS name_a, ua.sex AS sex_a, ua.avatar_emoji AS avatar_a,
+               ub.anonymous_name AS name_b, ub.sex AS sex_b, ub.avatar_emoji AS avatar_b,
+               lm.content AS last_content, lm.sender_id AS last_sender_id, lm.media_type AS last_media_type
+        FROM pairs p
+        JOIN users ua ON ua.user_id = p.user_a
+        JOIN users ub ON ub.user_id = p.user_b
+        JOIN LATERAL (
+            SELECT content, sender_id, media_type
+            FROM private_messages m
+            WHERE (m.sender_id = p.user_a AND m.receiver_id = p.user_b)
+               OR (m.sender_id = p.user_b AND m.receiver_id = p.user_a)
+            ORDER BY m.timestamp DESC LIMIT 1
+        ) lm ON true
+        {where_extra}
+        ORDER BY p.last_ts DESC
+        LIMIT %s OFFSET %s
+    """
+    params.extend([limit, offset])
+    return db_fetch_all(query, tuple(params))
+
+
+def get_admin_conversations_count(search=None):
+    where_extra = ""
+    params = []
+    if search:
+        where_extra = "WHERE ua.anonymous_name ILIKE %s OR ub.anonymous_name ILIKE %s OR p.user_a = %s OR p.user_b = %s"
+        like = f"%{search}%"
+        params = [like, like, search, search]
+
+    query = f"""
+        WITH pairs AS (
+            SELECT LEAST(sender_id, receiver_id) AS user_a, GREATEST(sender_id, receiver_id) AS user_b
+            FROM private_messages
+            GROUP BY LEAST(sender_id, receiver_id), GREATEST(sender_id, receiver_id)
+        )
+        SELECT COUNT(*) as cnt
+        FROM pairs p
+        JOIN users ua ON ua.user_id = p.user_a
+        JOIN users ub ON ub.user_id = p.user_b
+        {where_extra}
+    """
+    row = db_fetch_one(query, tuple(params))
+    return row['cnt'] if row else 0
+
+
+def get_admin_conversation_transcript(user_a, user_b, limit=50):
+    """Most recent `limit` messages between two users, returned oldest-first."""
+    return db_fetch_all("""
+        SELECT * FROM (
+            SELECT pm.*, u.anonymous_name as sender_name
+            FROM private_messages pm
+            JOIN users u ON pm.sender_id = u.user_id
+            WHERE (pm.sender_id = %s AND pm.receiver_id = %s)
+               OR (pm.sender_id = %s AND pm.receiver_id = %s)
+            ORDER BY pm.timestamp DESC
+            LIMIT %s
+        ) sub
+        ORDER BY timestamp ASC
+    """, (user_a, user_b, user_b, user_a, limit))
+
 async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: ContextTypes.DEFAULT_TYPE = None):
     """Reset all waiting states for a user and optionally restore main menu"""
     # Reset database states
@@ -2461,6 +2540,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📢 Send Broadcast", callback_data='admin_broadcast')],
         [InlineKeyboardButton("📊 Weekly Tools", callback_data='admin_weekly_tools')],
         [InlineKeyboardButton("📋 Pending Reports", callback_data='admin_reports')],
+        [InlineKeyboardButton("🔍 Monitor Chats", callback_data='admin_chats_1')],
         [InlineKeyboardButton("🔙 Back to Menu", callback_data='menu')]
     ]
     
@@ -5444,6 +5524,178 @@ def resolve_report(report_id: int, admin_id: str, status: str, action_taken: str
     )
 
 
+# Tracks running live-monitor jobs so a second admin (or the same one re-opening
+# a stale message) doesn't stack duplicate repeating jobs on the same message.
+LIVE_MONITOR_JOBS = {}
+
+
+async def show_admin_chats_list(update, context, page=1):
+    query = update.callback_query
+    admin_id = str(update.effective_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (admin_id,))
+    if not user or not user['is_admin']:
+        if query:
+            await query.answer("❌ No permission.", show_alert=True)
+        return
+
+    per_page = 8
+    offset = (page - 1) * per_page
+    convos = get_admin_conversations(limit=per_page, offset=offset)
+    total = get_admin_conversations_count()
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    kb = []
+    if not convos:
+        text = "🔍 *Chat Monitor*\n\nNo private conversations yet\\."
+    else:
+        lines = [f"🔍 *Chat Monitor* \\(Page {page}/{total_pages}\\)\n"]
+        for c in convos:
+            name_a = c['name_a'] or 'Anon'
+            name_b = c['name_b'] or 'Anon'
+            preview = (c['last_content'] or f"[{c['last_media_type'] or 'media'}]")[:40]
+            lines.append(
+                f"👤 {escape_markdown(name_a, version=2)} ↔ {escape_markdown(name_b, version=2)}\n"
+                f"💬 {c['msg_count']} msgs — _{escape_markdown(preview, version=2)}_\n"
+            )
+            kb.append([InlineKeyboardButton(
+                f"👁 {name_a} ↔ {name_b}",
+                callback_data=f"admin_chat_view_{c['user_a']}_{c['user_b']}_1"
+            )])
+        text = "\n".join(lines)
+
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"admin_chats_{page-1}"))
+    nav.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"admin_chats_{page+1}"))
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("🔙 Admin Panel", callback_data='admin_panel')])
+
+    try:
+        if query:
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN_V2)
+        else:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN_V2)
+    except Exception as e:
+        logger.error(f"Error showing admin chats: {e}")
+
+
+def _format_transcript_text(user_a, user_b, live=False):
+    msgs = get_admin_conversation_transcript(user_a, user_b, limit=40)
+    name_a_row = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_a,))
+    name_b_row = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_b,))
+    name_a = name_a_row['anonymous_name'] if name_a_row else 'Anon'
+    name_b = name_b_row['anonymous_name'] if name_b_row else 'Anon'
+
+    header = "🔴 *LIVE*" if live else "🔍 *Transcript*"
+    lines = [f"{header}: {escape_markdown(name_a, version=2)} ↔ {escape_markdown(name_b, version=2)}\n"]
+    if live:
+        lines.append("_auto\\-refreshing every 8s_\n")
+    if not msgs:
+        lines.append("_No messages yet\\._")
+    else:
+        for m in msgs:
+            sender_label = name_a if str(m['sender_id']) == str(user_a) else name_b
+            content = m['content'] or f"[{m.get('media_type') or 'media'}]"
+            ts = m['timestamp']
+            ts_str = ts[11:16] if isinstance(ts, str) else ts.strftime('%H:%M')
+            lines.append(
+                f"*{escape_markdown(sender_label, version=2)}* `{ts_str}`\n"
+                f"{escape_markdown(content[:300], version=2)}\n"
+            )
+    text = "\n".join(lines)
+    return text[-4000:] if len(text) > 4000 else text
+
+
+async def show_admin_chat_transcript(update, context, user_a, user_b, page=1, live=False):
+    query = update.callback_query
+    admin_id = str(update.effective_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (admin_id,))
+    if not user or not user['is_admin']:
+        if query:
+            await query.answer("❌ No permission.", show_alert=True)
+        return
+
+    text = _format_transcript_text(user_a, user_b, live=live)
+    live_label = "⏹ Stop Live" if live else "🔴 Go Live"
+    live_cb = f"admin_chat_stoplive_{user_a}_{user_b}" if live else f"admin_chat_golive_{user_a}_{user_b}"
+    kb = [
+        [InlineKeyboardButton("🔄 Refresh", callback_data=f"admin_chat_view_{user_a}_{user_b}_{page}"),
+         InlineKeyboardButton(live_label, callback_data=live_cb)],
+        [InlineKeyboardButton("🔙 Chat List", callback_data='admin_chats_1')]
+    ]
+    try:
+        if query:
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN_V2)
+        else:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN_V2)
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            logger.error(f"Error rendering transcript: {e}")
+
+
+async def _live_monitor_tick(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    d = job.data
+    text = _format_transcript_text(d['user_a'], d['user_b'], live=True)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏹ Stop Live", callback_data=f"admin_chat_stoplive_{d['user_a']}_{d['user_b']}")],
+        [InlineKeyboardButton("🔙 Chat List", callback_data='admin_chats_1')]
+    ])
+    try:
+        await context.bot.edit_message_text(
+            chat_id=d['chat_id'], message_id=d['message_id'], text=text,
+            reply_markup=kb, parse_mode=ParseMode.MARKDOWN_V2
+        )
+    except BadRequest as e:
+        msg = str(e).lower()
+        if "not modified" in msg:
+            pass
+        elif "not found" in msg or "can't be edited" in msg:
+            job.schedule_removal()
+            LIVE_MONITOR_JOBS.pop((d['chat_id'], d['message_id']), None)
+        else:
+            logger.error(f"Live monitor tick error: {e}")
+    except Exception as e:
+        logger.error(f"Live monitor tick error: {e}")
+
+
+async def start_live_monitor(update, context, user_a, user_b):
+    query = update.callback_query
+    admin_id = str(update.effective_user.id)
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (admin_id,))
+    if not user or not user['is_admin']:
+        await query.answer("❌ No permission.", show_alert=True)
+        return
+
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
+    key = (chat_id, message_id)
+
+    if key in LIVE_MONITOR_JOBS:
+        LIVE_MONITOR_JOBS[key].schedule_removal()
+        del LIVE_MONITOR_JOBS[key]
+
+    job = context.application.job_queue.run_repeating(
+        _live_monitor_tick, interval=8, first=0,
+        data={'chat_id': chat_id, 'message_id': message_id, 'user_a': user_a, 'user_b': user_b},
+        name=f"live_monitor_{chat_id}_{message_id}"
+    )
+    LIVE_MONITOR_JOBS[key] = job
+    await query.answer("🔴 Live monitoring started")
+
+
+async def stop_live_monitor(update, context, user_a, user_b):
+    query = update.callback_query
+    key = (query.message.chat_id, query.message.message_id)
+    if key in LIVE_MONITOR_JOBS:
+        LIVE_MONITOR_JOBS[key].schedule_removal()
+        del LIVE_MONITOR_JOBS[key]
+    await query.answer("⏹ Live monitoring stopped")
+    await show_admin_chat_transcript(update, context, user_a, user_b, live=False)
+
 async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
     """Show paginated pending reports to admin."""
     query = update.callback_query
@@ -7317,6 +7569,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Error in report_comment handler: {e}")
                 await query.answer("❌ Error processing request", show_alert=True)
+
+        elif query.data.startswith('admin_chats_'):
+            try:
+                page = int(query.data.split('_')[2])
+            except (IndexError, ValueError):
+                page = 1
+            await show_admin_chats_list(update, context, page)
+
+        elif query.data.startswith('admin_chat_view_'):
+            parts = query.data.split('_')
+            user_a, user_b, page = parts[3], parts[4], int(parts[5])
+            await show_admin_chat_transcript(update, context, user_a, user_b, page=page)
+
+        elif query.data.startswith('admin_chat_golive_'):
+            parts = query.data.split('_')
+            await start_live_monitor(update, context, parts[3], parts[4])
+
+        elif query.data.startswith('admin_chat_stoplive_'):
+            parts = query.data.split('_')
+            await stop_live_monitor(update, context, parts[3], parts[4])
 
         elif query.data == 'admin_reports':
             await query.answer("📋 Loading reports...", show_alert=False)
@@ -9719,6 +9991,94 @@ async function saveSettings(){
   }catch(e){toast(e.message)}finally{btn.disabled=false}
 }
 
+let isAdminUser = false;
+let adminMonitorPoll = null;
+let adminViewingPair = null;
+
+async function checkAdminStatus(){
+  try{
+    const d = await api(`/api/mini-app/profile/${UID}?viewer_id=${UID}`);
+    isAdminUser = !!d.data.is_admin;
+    if(!isAdminUser) return;
+
+    document.getElementById('nav').insertAdjacentHTML('beforeend',
+      `<button class="nav-item" data-page="admin-monitor" onclick="go('admin-monitor',this)">
+        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Monitor
+      </button>`);
+
+    document.getElementById('pages').insertAdjacentHTML('beforeend', `
+      <div class="page" id="page-admin-monitor">
+        <div class="page-head-wrap"><div class="page-head" style="padding-top:24px">
+          <div><h1>Chat Monitor</h1><div class="page-head-sub">Admin oversight — live</div></div>
+        </div></div>
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
+          <input id="admin-search-inp" type="text" placeholder="Search by name or user ID…">
+        </div>
+        <div id="admin-chats-list"></div>
+      </div>`);
+
+    let st;
+    document.getElementById('admin-search-inp').addEventListener('input', e=>{
+      clearTimeout(st);
+      st = setTimeout(()=>loadAdminChats(e.target.value.trim()), 400);
+    });
+  }catch(e){}
+}
+
+async function loadAdminChats(search=''){
+  const list = document.getElementById('admin-chats-list');
+  try{
+    const q = search ? `&search=${encodeURIComponent(search)}` : '';
+    const d = await api(`/api/mini-app/admin/chats?admin_id=${UID}&page=1${q}`);
+    const convos = d.data || [];
+    if(!convos.length){
+      list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No conversations found</div>';
+      return;
+    }
+    list.innerHTML = convos.map(c => `
+      <div class="chat-item" onclick="openAdminTranscript('${c.user_a}','${c.user_b}','${esc(c.name_a)}','${esc(c.name_b)}')">
+        <div class="ava" style="width:44px;height:44px;font-size:14px">${esc(c.avatar_a)}${esc(c.avatar_b)}</div>
+        <div class="chat-item-right">
+          <div class="chat-item-top">
+            <span class="chat-item-name">${esc(c.name_a)} ↔ ${esc(c.name_b)}</span>
+            <span class="chat-item-time">${c.msg_count} msgs</span>
+          </div>
+          <div class="chat-item-preview">${esc(c.last_content || ('[' + (c.last_media_type || 'media') + ']'))}</div>
+        </div>
+      </div>`).join('');
+  }catch(e){
+    list.innerHTML = '<div style="padding:20px;color:var(--text3)">Failed to load</div>';
+  }
+}
+
+function openAdminTranscript(userA, userB, nameA, nameB){
+  adminViewingPair = [userA, userB];
+  document.getElementById('cr-name').textContent = `🔴 ${nameA} ↔ ${nameB}`;
+  document.getElementById('cr-ava').textContent = '🛡';
+  document.getElementById('chat-room').classList.add('open');
+  document.querySelector('.cr-input').style.display = 'none'; // admins observe, don't send
+  fetchAdminTranscript(true);
+  clearInterval(adminMonitorPoll);
+  adminMonitorPoll = setInterval(fetchAdminTranscript, 4000);
+}
+
+async function fetchAdminTranscript(scroll=false){
+  if(!adminViewingPair) return;
+  const [a, b] = adminViewingPair;
+  try{
+    const d = await api(`/api/mini-app/admin/chats/${a}/${b}?admin_id=${UID}&limit=100`);
+    const box = document.getElementById('cr-msgs');
+    const wasBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 80;
+    box.innerHTML = (d.data || []).map(m => `
+      <div class="msg-row ${String(m.sender_id)===String(a) ? 'them' : 'me'}">
+        <div class="msg-bubble">${esc(m.content||'')}${m.media_id ? renderMedia(m.media_type, m.media_id) : ''}</div>
+        <div class="msg-time">${esc(m.time_display||'')}</div>
+      </div>`).join('');
+    if(scroll || wasBottom) box.scrollTop = box.scrollHeight;
+  }catch(e){}
+}
+
 async function loadChats(){
   const list=document.getElementById('chats-list');list.innerHTML=skelChats();
   try{
@@ -11295,6 +11655,7 @@ def mini_app_profile(user_id):
                 'weekly_badge': user['weekly_badge'] or "",
                 'rating': rating_display,
                 'aura': aura_display,
+                'is_admin': bool(user.get('is_admin')),
 
 
                 'stats': {
@@ -11308,6 +11669,67 @@ def mini_app_profile(user_id):
     except Exception as e:
         logger.error(f"Error in mini-app profile: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+def _require_admin(user_id):
+    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(user_id),))
+    return bool(user and user.get('is_admin'))
+
+
+@flask_app.route('/api/mini-app/admin/chats', methods=['GET'])
+def mini_app_admin_chats():
+    admin_id = request.args.get('admin_id')
+    if not admin_id or not _require_admin(admin_id):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    page = int(request.args.get('page', 1))
+    search = (request.args.get('search') or '').strip() or None
+    per_page = 20
+    offset = (page - 1) * per_page
+
+    convos = get_admin_conversations(limit=per_page, offset=offset, search=search)
+    total = get_admin_conversations_count(search=search)
+
+    data = []
+    for c in convos:
+        last_ts = c['last_ts']
+        data.append({
+            'user_a': c['user_a'], 'user_b': c['user_b'],
+            'name_a': c['name_a'] or 'Anonymous', 'name_b': c['name_b'] or 'Anonymous',
+            'avatar_a': c.get('avatar_a') or c.get('sex_a') or '👤',
+            'avatar_b': c.get('avatar_b') or c.get('sex_b') or '👤',
+            'msg_count': c['msg_count'],
+            'last_content': c['last_content'],
+            'last_media_type': c.get('last_media_type'),
+            'last_sender_id': c['last_sender_id'],
+            'last_ts': last_ts.isoformat() if hasattr(last_ts, 'isoformat') else str(last_ts)
+        })
+
+    return jsonify({'success': True, 'data': data, 'page': page, 'has_more': len(convos) == per_page, 'total': total})
+
+
+@flask_app.route('/api/mini-app/admin/chats/<user_a>/<user_b>', methods=['GET'])
+def mini_app_admin_chat_transcript(user_a, user_b):
+    admin_id = request.args.get('admin_id')
+    if not admin_id or not _require_admin(admin_id):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    limit = int(request.args.get('limit', 100))
+    msgs = get_admin_conversation_transcript(user_a, user_b, limit=limit)
+
+    data = []
+    for m in msgs:
+        ts = m['timestamp']
+        data.append({
+            'id': m['message_id'],
+            'sender_id': m['sender_id'],
+            'receiver_id': m['receiver_id'],
+            'content': m['content'],
+            'media_type': m.get('media_type', 'text'),
+            'media_id': m.get('media_id'),
+            'time_display': format_ethiopian_time(ts)
+        })
+
+    return jsonify({'success': True, 'data': data})
 
 @flask_app.route('/api/mini-app/admin/pending-posts', methods=['GET'])
 def mini_app_admin_pending_posts():
