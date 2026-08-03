@@ -2152,43 +2152,76 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
 # Update the submit vent endpoint to use this
 async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sender_id: str, receiver_id: str, message_content: str, message_id: int):
     try:
-        # Check if receiver has blocked the sender
         is_blocked = db_fetch_one(
             "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
             (receiver_id, sender_id)
         )
         if is_blocked:
-            return  # Don't notify if blocked
-        
+            return
+
         receiver = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (receiver_id,))
         if not receiver or not receiver['notifications_enabled']:
             return
-        
+
         sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
         sender_name = get_display_name(sender)
-        
-        # Truncate long messages for the notification
-        preview_content = message_content[:100] + '...' if len(message_content) > 100 else message_content
-        
         safe_sender_name = escape_markdown(sender_name, version=2)
-        safe_preview_content = escape_markdown(preview_content, version=2)
 
-        notification_text = (
-            f"📩 *New Private Message*\n\n"
-            f"👤 From: {safe_sender_name}\n\n"
-            f"💬 {safe_preview_content}\n\n"
-            f"💭 _Use /inbox to view all messages_"
-        )
+        # Look up whether this message has an attachment
+        media_type, media_id = 'text', None
+        if message_id:
+            media_row = db_fetch_one(
+                "SELECT media_type, media_id FROM private_messages WHERE message_id = %s",
+                (message_id,)
+            )
+            if media_row:
+                media_type = media_row.get('media_type') or 'text'
+                media_id = media_row.get('media_id')
 
-        
-        # Create inline keyboard with reply and block buttons
+        preview_content = message_content[:200] + '...' if message_content and len(message_content) > 200 else (message_content or "")
+        safe_preview_content = escape_markdown(preview_content, version=2) if preview_content else ""
+
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("💬 Reply", callback_data=f"reply_msg_{sender_id}"),
                 InlineKeyboardButton("⛔ Block", callback_data=f"block_user_{sender_id}")
             ]
         ])
-        
+
+        header = f"📩 *New Private Message*
+
+👤 From: {safe_sender_name}
+
+"
+
+        if media_id and media_type != 'text':
+            caption = header + safe_preview_content + "
+
+💭 _Use /inbox to view all messages_"
+            if len(caption) > 1000:  # Telegram caption hard-limit is 1024
+                caption = caption[:997] + "..."
+            try:
+                if media_type == 'photo':
+                    await context.bot.send_photo(chat_id=receiver_id, photo=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                elif media_type == 'voice':
+                    await context.bot.send_voice(chat_id=receiver_id, voice=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                elif media_type == 'video':
+                    await context.bot.send_video(chat_id=receiver_id, video=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                elif media_type == 'document':
+                    await context.bot.send_document(chat_id=receiver_id, document=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                elif media_type == 'gif':
+                    await context.bot.send_animation(chat_id=receiver_id, animation=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                else:
+                    raise ValueError(f"Unhandled media_type: {media_type}")
+                return
+            except Exception as media_err:
+                logger.error(f"Failed to deliver media private message, falling back to text notice: {media_err}")
+                # fall through to text-only notice below
+
+        fallback_body = safe_preview_content if safe_preview_content else "_\[attachment\]_"
+        notification_text = header + fallback_body + "
+
+💭 _Use /inbox to view all messages_"
         await context.bot.send_message(
             chat_id=receiver_id,
             text=notification_text,
@@ -3809,23 +3842,20 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("❌ Error loading inbox. Please try again.")
 async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, from_page=1):
-    """View an individual private message with clean, natural UI"""
+    """View an individual private message with clean, natural UI — now renders attachments too"""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = str(query.from_user.id)
-    
-    # Show minimal loading
     await typing_animation(context, query.message.chat_id, 0.3)
-    
-    # Get message details
+
     message = db_fetch_one('''
         SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex, u.user_id as sender_id
         FROM private_messages pm
         JOIN users u ON pm.sender_id = u.user_id
         WHERE pm.message_id = %s AND pm.receiver_id = %s
     ''', (message_id, user_id))
-    
+
     if not message:
         try:
             await query.message.edit_text(
@@ -3835,54 +3865,55 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
         except:
             await query.message.reply_text("❌ Message not found.")
         return
-    
-    # Mark message as read
-    db_execute(
-        "UPDATE private_messages SET is_read = TRUE WHERE message_id = %s",
-        (message_id,)
-    )
-    
-    # Format timestamp naturally
+
+    db_execute("UPDATE private_messages SET is_read = TRUE WHERE message_id = %s", (message_id,))
+
     if isinstance(message['timestamp'], str):
         timestamp = datetime.strptime(message['timestamp'], '%Y-%m-%d %H:%M:%S')
     else:
         timestamp = message['timestamp']
-    
+
     now = datetime.now()
     time_diff = now - timestamp
-    
     if time_diff.days == 0:
         if time_diff.seconds < 60:
             time_ago = "just now"
         elif time_diff.seconds < 3600:
-            minutes = time_diff.seconds // 60
-            time_ago = f"{minutes}m ago"
+            time_ago = f"{time_diff.seconds // 60}m ago"
         else:
-            hours = time_diff.seconds // 3600
-            time_ago = f"{hours}h ago"
+            time_ago = f"{time_diff.seconds // 3600}h ago"
     elif time_diff.days == 1:
         time_ago = "yesterday"
     elif time_diff.days < 7:
         time_ago = timestamp.strftime('%A')
     elif time_diff.days < 30:
-        weeks = time_diff.days // 7
-        time_ago = f"{weeks}w ago"
+        time_ago = f"{time_diff.days // 7}w ago"
     else:
         time_ago = timestamp.strftime('%b %d')
-    
-    # Build clean message display
-    text = (
-        f"💬 *Message from {message['sender_name']}*\n"
-        f"_{time_ago}_\n\n"
-        f"{escape_markdown(message['content'], version=2)}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━"
-    )
-    
-    # Check if blocked for toggle
-    is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (user_id, message['sender_id']))
-    block_btn = InlineKeyboardButton("🔓 Unblock", callback_data=f"unblock_user_{message['sender_id']}") if is_blocked else InlineKeyboardButton("⛔ Block", callback_data=f"block_user_{message['sender_id']}")
 
-    # Create clean action buttons (like WhatsApp/Telegram)
+    media_type = message.get('media_type') or 'text'
+    media_id = message.get('media_id')
+
+    body_text = escape_markdown(message['content'], version=2) if message['content'] else ""
+    text = (
+        f"💬 *Message from {escape_markdown(message['sender_name'], version=2)}*
+"
+        f"_{escape_markdown(time_ago, version=2)}_
+
+"
+        f"{body_text}"
+    )
+
+    is_blocked = db_fetch_one(
+        "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
+        (user_id, message['sender_id'])
+    )
+    block_btn = (
+        InlineKeyboardButton("🔓 Unblock", callback_data=f"unblock_user_{message['sender_id']}")
+        if is_blocked else
+        InlineKeyboardButton("⛔ Block", callback_data=f"block_user_{message['sender_id']}")
+    )
+
     keyboard = [
         [
             InlineKeyboardButton("💬 Reply", callback_data=f"reply_msg_{message['sender_id']}"),
@@ -3897,21 +3928,43 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
             InlineKeyboardButton("📱 Menu", callback_data='menu')
         ]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     try:
-        await query.message.edit_text(
-            text,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
+        if media_id and media_type != 'text':
+            # Media can't be shown by editing a text message — send it fresh and drop the old bubble.
+            try:
+                await query.message.delete()
+            except:
+                pass
+
+            caption = text[:1000] if len(text) > 1000 else text
+            send_kwargs = dict(chat_id=query.message.chat_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=reply_markup)
+
+            if media_type == 'photo':
+                await context.bot.send_photo(photo=media_id, **send_kwargs)
+            elif media_type == 'voice':
+                await context.bot.send_voice(voice=media_id, **send_kwargs)
+            elif media_type == 'video':
+                await context.bot.send_video(video=media_id, **send_kwargs)
+            elif media_type == 'document':
+                await context.bot.send_document(document=media_id, **send_kwargs)
+            elif media_type == 'gif':
+                await context.bot.send_animation(animation=media_id, **send_kwargs)
+            else:
+                await context.bot.send_message(chat_id=query.message.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=reply_markup)
+        else:
+            await query.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception as e:
         logger.error(f"Error viewing message: {e}")
         try:
             await query.message.reply_text(
-                f"💬 Message from {message['sender_name']}:\n\n"
-                f"{message['content']}\n\n"
+                f"💬 Message from {message['sender_name']}:
+
+"
+                f"{message['content'] or '[attachment]'}
+
+"
                 f"_{time_ago}_",
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.MARKDOWN
