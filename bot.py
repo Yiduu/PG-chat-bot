@@ -8711,13 +8711,6 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 }
 .post-media .doc-link svg{width:20px;height:20px;stroke:var(--gold);fill:none;stroke-width:2;flex-shrink:0}
 .post-media img.sticker-media, .comment-media img.sticker-media{width:100px;border-radius:0}
-/* ----- Compact voice player ----- */
-.voice-player{display:flex;align-items:center;gap:8px;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:6px 10px;max-width:220px;margin:8px 0}
-.voice-player-btn{width:28px;height:28px;border-radius:50%;background:var(--gold);border:none;flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.voice-player-btn svg{width:13px;height:13px;fill:#0c0b09;stroke:#0c0b09}
-.voice-player-track{flex:1;height:3px;background:var(--border);border-radius:2px;position:relative;cursor:pointer}
-.voice-player-progress{position:absolute;left:0;top:0;height:100%;width:0%;background:var(--gold);border-radius:2px}
-.voice-player-time{font-size:10px;color:var(--text3);flex-shrink:0;min-width:30px;text-align:right;font-variant-numeric:tabular-nums}
 
 /* ----- Voice recording button & UI ----- */
 .voice-record-btn{
@@ -9048,15 +9041,20 @@ async function uploadMedia(file, intent){
 }
 
 function renderMediaPreview(container,media,onRemove){
-  if(!media){container.style.display='none';container.innerHTML='';container.classList.remove('media-preview');return;}
+  if(!media){
+    container.style.display='none';
+    container.innerHTML='';
+    container.classList.remove('media-preview');
+    return;
+  }
   container.classList.add('media-preview');
   container.style.display='flex';
   const isImageLike = media.media_type==='photo'||media.media_type==='sticker'||media.media_type==='gif';
   const isVoice = media.media_type==='voice'||media.media_type==='audio';
-  const thumb = isImageLike ? `<img src="${media.previewUrl}">`
+  const thumb = isImageLike
+    ? `<img src="${media.previewUrl}">`
     : `<span style="width:36px;height:36px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex-shrink:0">${isVoice?'🎤':'📎'}</span>`;
-  const label = isVoice ? `Voice message${media.duration?` · ${media.duration}`:''}` : media.name;
-  container.innerHTML=`${thumb}<span class="mp-name">${esc(label)}</span><button class="mp-remove" type="button">✕</button>`;
+  container.innerHTML=`${thumb}<span class="mp-name">${esc(media.name)}</span><button class="mp-remove" type="button">✕</button>`;
   container.querySelector('.mp-remove').onclick=onRemove;
 }
 
@@ -9067,20 +9065,8 @@ function renderMedia(mediaType,mediaId){
   if(mediaType==='gif')return `<div class="post-media"><video src="${src}" autoplay loop muted playsinline></video></div>`;
   if(mediaType==='sticker')return `<div class="post-media"><img class="sticker-media" src="${src}"></div>`;
   if(mediaType==='video')return `<div class="post-media"><video src="${src}" controls playsinline></video></div>`;
-  if(mediaType==='voice'||mediaType==='audio')return renderCompactAudioPlayer(src);
+  if(mediaType==='voice'||mediaType==='audio')return `<div class="post-media"><audio src="${src}" controls></audio></div>`;
   return `<div class="post-media"><a class="doc-link" href="${src}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Download attachment</a></div>`;
-}
-
-function renderCompactAudioPlayer(src){
-  return `<div class="voice-player">
-    <audio class="voice-player-audio" src="${src}" preload="metadata"></audio>
-    <button type="button" class="voice-player-btn" aria-label="Play voice message">
-      <svg class="icon-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg>
-      <svg class="icon-pause" viewBox="0 0 24 24" style="display:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-    </button>
-    <div class="voice-player-track"><div class="voice-player-progress"></div></div>
-    <span class="voice-player-time">0:00</span>
-  </div>`;
 }
 
 // ========== VOICE RECORDING (Telegram-style hold-to-record) ==========
@@ -9304,44 +9290,7 @@ function toggleCat(el,c){
   else{selCats.add(c);el.classList.add('on')}
 }
 
-document.addEventListener('DOMContentLoaded',()=>
-  document.addEventListener('click', function(e){
-    const btn = e.target.closest('.voice-player-btn');
-    if(btn){
-      const audio = btn.closest('.voice-player').querySelector('.voice-player-audio');
-      document.querySelectorAll('.voice-player-audio').forEach(a=>{ if(a!==audio) a.pause(); });
-      document.querySelectorAll('.voice-player-btn').forEach(b=>{
-        if(b!==btn){ b.querySelector('.icon-play').style.display='inline-block'; b.querySelector('.icon-pause').style.display='none'; }
-      });
-      if(audio.paused){ audio.play(); btn.querySelector('.icon-play').style.display='none'; btn.querySelector('.icon-pause').style.display='inline-block'; }
-      else { audio.pause(); btn.querySelector('.icon-play').style.display='inline-block'; btn.querySelector('.icon-pause').style.display='none'; }
-      return;
-    }
-    const track = e.target.closest('.voice-player-track');
-    if(track){
-      const audio = track.closest('.voice-player').querySelector('.voice-player-audio');
-      const rect = track.getBoundingClientRect();
-      const pct = Math.min(1, Math.max(0, (e.clientX-rect.left)/rect.width));
-      if(audio.duration) audio.currentTime = pct*audio.duration;
-    }
-  });
-  document.addEventListener('timeupdate', function(e){
-    if(!e.target.classList?.contains('voice-player-audio')) return;
-    const player = e.target.closest('.voice-player');
-    if(!e.target.duration) return;
-    player.querySelector('.voice-player-progress').style.width = (e.target.currentTime/e.target.duration*100)+'%';
-    const remaining = e.target.duration - e.target.currentTime;
-    const m = Math.floor(remaining/60), s = Math.floor(remaining%60);
-    player.querySelector('.voice-player-time').textContent = `${m}:${String(s).padStart(2,'0')}`;
-  }, true);
-  document.addEventListener('ended', function(e){
-    if(!e.target.classList?.contains('voice-player-audio')) return;
-    const player = e.target.closest('.voice-player');
-    player.querySelector('.icon-play').style.display='inline-block';
-    player.querySelector('.icon-pause').style.display='none';
-    player.querySelector('.voice-player-progress').style.width='0%';
-  }, true);
-{
+document.addEventListener('DOMContentLoaded',()=>{
   const txt=document.getElementById('vent-txt');
   if(txt)txt.addEventListener('input',()=>{document.getElementById('vent-cnt').textContent=txt.value.length});
   document.getElementById('submit-vent').addEventListener('click',submitVent);
@@ -10274,14 +10223,14 @@ def mini_app_upload_media():
         else:
             media_type, tg_method, tg_field = _detect_mini_app_media_type(upload.filename, upload.mimetype)
 
-        storage_chat_id = CHANNEL_ID or ADMIN_ID
+        storage_chat_id = ADMIN_ID or CHANNEL_ID
         if not storage_chat_id:
             return jsonify({'success': False, 'error': 'Media storage is not configured'}), 500
 
         def _send(method, field):
             upload.stream.seek(0)
             files = {field: (upload.filename, upload.stream, upload.mimetype or 'application/octet-stream')}
-            data = {'chat_id': storage_chat_id, 'disable_notification': True}
+            data = {'chat_id': storage_chat_id}
             resp = requests.post(f"https://api.telegram.org/bot{TOKEN}/{method}", data=data, files=files, timeout=30)
             return resp.json()
 
