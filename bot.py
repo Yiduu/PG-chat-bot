@@ -8917,6 +8917,11 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   -webkit-tap-highlight-color:transparent;
 }
 .back-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2}
+/* In light mode the gold-on-cream contrast is too weak for the icon stroke;
+   darken it slightly and give the chat room its own explicit override so it
+   isn't relying on the ambient --gold var alone. */
+body.light .back-btn{color:#8a6d1f}
+body.light .back-btn svg{stroke:#8a6d1f}
 .comment-item{display:flex;gap:10px;margin-bottom:14px}
 .comment-item.reply{margin-left:32px}
 .comment-body{flex:1;background:var(--bg2);border:0.5px solid var(--border);
@@ -8991,6 +8996,19 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .voice-player-progress{position:absolute;left:0;top:0;height:100%;width:0%;background:var(--gold);border-radius:2px}
 .voice-player-time{font-size:10px;color:var(--text3);flex-shrink:0;min-width:30px;text-align:right;font-variant-numeric:tabular-nums}
 
+.lightbox{
+  position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:2000;
+  display:none;align-items:center;justify-content:center;
+  -webkit-tap-highlight-color:transparent;
+}
+.lightbox.active{display:flex}
+.lightbox img{max-width:94vw;max-height:88vh;object-fit:contain;border-radius:8px}
+.lightbox-close{
+  position:absolute;top:calc(env(safe-area-inset-top,0) + 16px);right:16px;
+  width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.12);
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;
+  cursor:pointer;
+}
 /* ----- Voice recording button & UI ----- */
 .voice-record-btn{
   width:36px;height:36px;border-radius:50%;flex-shrink:0;
@@ -9060,6 +9078,8 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   -webkit-tap-highlight-color:transparent;
 }
 .cr-head button svg{width:22px;height:22px;stroke:var(--text);fill:none;stroke-width:2}
+body.light .cr-head{background:rgba(245,243,240,0.97)}
+body.light .cr-head button svg{stroke:#1a1a1a}
 .cr-name{font-size:16px;font-weight:700}
 .cr-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
 .cr-msgs::-webkit-scrollbar{display:none}
@@ -9201,9 +9221,9 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
       <div style="padding:0 16px;margin-top:14px;display:flex;gap:10px;align-items:center">
         <button type="button" class="media-attach-btn" id="vent-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
         <input type="file" id="vent-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
+        <button type="button" class="voice-record-btn" id="vent-voice-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
         <button class="btn-gold" id="submit-vent" style="flex:1">Post Anonymously</button>
       </div>
-      <div style="padding:0 16px;margin-top:8px"><button id="vent-voice-btn" class="voice-record-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button></div>
     </div>
     <div class="page" id="page-feed">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Community</h1><div class="page-head-sub">Read, reflect, respond</div></div></div></div>
@@ -9268,8 +9288,8 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
     <div style="display:flex;align-items:center;gap:8px">
       <button type="button" class="media-attach-btn" id="chat-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
       <input type="file" id="chat-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
-      <button type="button" class="voice-record-btn" id="chat-voice-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
       <textarea id="cr-txt" placeholder="Message…" rows="1" style="flex:1;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:10px 16px;color:var(--text);font-family:'Inter',sans-serif;font-size:14px;outline:none;resize:none;min-height:40px;max-height:100px;"></textarea>
+      <button type="button" class="voice-record-btn" id="chat-voice-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
       <button class="cr-send" onclick="crSend()"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
     </div>
   </div>
@@ -9277,6 +9297,10 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 
 <div id="profileModal" class="modal-mask" onclick="closeProfileModal(event)"><div class="modal-container" onclick="event.stopPropagation()"><span class="modal-close" onclick="closeProfileModal()">&times;</span><div id="modalContent">Loading...</div></div></div>
 <div id="toast"></div>
+<div id="lightbox" class="lightbox" onclick="closeLightbox(event)">
+  <div class="lightbox-close" onclick="closeLightbox(event)">&times;</div>
+  <img id="lightbox-img" src="" alt="">
+</div>
 <div id="voice-timer" class="voice-record-timer"><span id="voice-time">0:00</span><span class="cancel-hint">⬆️ swipe up to cancel</span></div>
 
 <script>
@@ -9335,7 +9359,7 @@ function renderMediaPreview(container,media,onRemove){
 function renderMedia(mediaType,mediaId){
   if(!mediaId||!mediaType||mediaType==='text')return '';
   const src=`/api/mini-app/file/${encodeURIComponent(mediaId)}`;
-  if(mediaType==='photo')return `<div class="post-media"><img src="${src}" loading="lazy"></div>`;
+  if(mediaType==='photo')return `<div class="post-media"><img src="${src}" loading="lazy" onclick="event.stopPropagation();openLightbox('${src}')" style="cursor:zoom-in"></div>`;
   if(mediaType==='gif')return `<div class="post-media"><video src="${src}" autoplay loop muted playsinline></video></div>`;
   if(mediaType==='sticker')return `<div class="post-media"><img class="sticker-media" src="${src}"></div>`;
   if(mediaType==='video')return `<div class="post-media"><video src="${src}" controls playsinline></video></div>`;
@@ -9343,9 +9367,20 @@ function renderMedia(mediaType,mediaId){
   return `<div class="post-media"><a class="doc-link" href="${src}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Download attachment</a></div>`;
 }
 
+function openLightbox(src){
+  document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox').classList.add('active');
+}
+function closeLightbox(e){
+  if(e) e.stopPropagation();
+  document.getElementById('lightbox').classList.remove('active');
+  document.getElementById('lightbox-img').src = '';
+}
+
 function renderCompactAudioPlayer(src){
+  const uid = 'v'+Math.random().toString(36).slice(2,9);
   return `<div class="voice-player">
-    <audio class="voice-player-audio" src="${src}" preload="metadata"></audio>
+    <audio class="voice-player-audio" id="${uid}" src="${src}" preload="metadata" playsinline></audio>
     <button type="button" class="voice-player-btn" aria-label="Play voice message">
       <svg class="icon-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg>
       <svg class="icon-pause" viewBox="0 0 24 24" style="display:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
@@ -9559,6 +9594,7 @@ function go(name,btn){
   if(name==='profile')loadProfile();
   if(name==='settings')loadSettings();
   if(name==='chats')loadChats();
+  if(name==='admin-monitor')loadAdminChats();
   document.getElementById('pages').scrollTop=0;
   // Show/hide fixed comment bar
   const bar=document.getElementById('commentBar');
@@ -9585,8 +9621,20 @@ document.addEventListener('DOMContentLoaded',()=>{
       document.querySelectorAll('.voice-player-btn').forEach(b=>{
         if(b!==btn){ b.querySelector('.icon-play').style.display='inline-block'; b.querySelector('.icon-pause').style.display='none'; }
       });
-      if(audio.paused){ audio.play(); btn.querySelector('.icon-play').style.display='none'; btn.querySelector('.icon-pause').style.display='inline-block'; }
-      else { audio.pause(); btn.querySelector('.icon-play').style.display='inline-block'; btn.querySelector('.icon-pause').style.display='none'; }
+      if(audio.paused){
+        // Ensure metadata is loaded before playing so duration/currentTime work reliably
+        const doPlay = ()=>{
+          audio.play().catch(err=>console.error('Playback failed:', err));
+          btn.querySelector('.icon-play').style.display='none';
+          btn.querySelector('.icon-pause').style.display='inline-block';
+        };
+        if(audio.readyState >= 1){ doPlay(); }
+        else { audio.addEventListener('loadedmetadata', doPlay, {once:true}); audio.load(); }
+      } else {
+        audio.pause();
+        btn.querySelector('.icon-play').style.display='inline-block';
+        btn.querySelector('.icon-pause').style.display='none';
+      }
       return;
     }
     const track = e.target.closest('.voice-player-track');
@@ -9612,6 +9660,12 @@ document.addEventListener('DOMContentLoaded',()=>{
     player.querySelector('.icon-play').style.display='inline-block';
     player.querySelector('.icon-pause').style.display='none';
     player.querySelector('.voice-player-progress').style.width='0%';
+    e.target.currentTime = 0;
+  }, true);
+  document.addEventListener('error', function(e){
+    if(!e.target.classList?.contains('voice-player-audio')) return;
+    const player = e.target.closest('.voice-player');
+    player.querySelector('.voice-player-time').textContent = 'Error';
   }, true);
 
   const txt=document.getElementById('vent-txt');
@@ -9726,19 +9780,33 @@ async function loadFeed(append=false){
   if(feedLoading)return;feedLoading=true;
   const list=document.getElementById('feed-list');
   const more=document.getElementById('feed-more');
-  if(!append){list.innerHTML=skelPosts(3);more.style.display='none'}
+  if(!append){
+    list.innerHTML=skelPosts(3);more.style.display='none';
+  } else {
+    const loadBtn=document.getElementById('load-more-btn');
+    loadBtn.disabled=true;loadBtn.textContent='Loading…';
+    list.insertAdjacentHTML('beforeend', `<div id="feed-load-skel">${skelPosts(2)}</div>`);
+  }
   try{
     let url=`/api/mini-app/get-posts?page=${feedPage}&user_id=${UID}`;
     if(searchQ)url=`/api/mini-app/search?q=${encodeURIComponent(searchQ)}&page=${feedPage}&user_id=${UID}`;
     const d=await api(url);
     const posts=d.data||[];feedHasMore=d.has_more;
-    if(!append)list.innerHTML='';
+    if(!append){list.innerHTML='';}
+    else{const sk=document.getElementById('feed-load-skel');if(sk)sk.remove();}
     if(!posts.length&&!append){list.innerHTML='<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:14px">Nothing here yet</div>';return}
     posts.forEach(p=>list.insertAdjacentHTML('beforeend',renderPost(p)));
     more.style.display=feedHasMore?'block':'none';
     if(feedHasMore)feedPage++;
-  }catch(e){if(!append)list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>'}
-  finally{feedLoading=false}
+  }catch(e){
+    const sk=document.getElementById('feed-load-skel');if(sk)sk.remove();
+    if(!append)list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>'
+  }
+  finally{
+    feedLoading=false;
+    const loadBtn=document.getElementById('load-more-btn');
+    loadBtn.disabled=false;loadBtn.textContent='Load more';
+  }
 }
 
 function renderPost(p){
@@ -9768,7 +9836,7 @@ function renderPost(p){
 async function openPost(id, reveal){
   currentPostId=id;go('detail',null);
   document.getElementById('detail-post').innerHTML=skelPosts(1);
-  document.getElementById('detail-comments').innerHTML='';
+  document.getElementById('detail-comments').innerHTML=skelComments(3);
   try{
     const revealParam = reveal ? '&reveal=1' : '';
     const d=await api(`/api/mini-app/post/${id}?viewer_id=${UID}${revealParam}`);
@@ -10001,10 +10069,13 @@ async function checkAdminStatus(){
     isAdminUser = !!d.data.is_admin;
     if(!isAdminUser) return;
 
+    // Insert before nav-ink shifts break — recompute ink width for 6 items
     document.getElementById('nav').insertAdjacentHTML('beforeend',
       `<button class="nav-item" data-page="admin-monitor" onclick="go('admin-monitor',this)">
         <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Monitor
       </button>`);
+    document.querySelectorAll('.nav-item').forEach(b=>{ b.style.fontSize='9px'; });
+    document.getElementById('nav-ink').style.width='16.66%';
 
     document.getElementById('pages').insertAdjacentHTML('beforeend', `
       <div class="page" id="page-admin-monitor">
@@ -10221,6 +10292,18 @@ function closeProfileModal(e){
 function skelPosts(n){return Array(n).fill(`<div class="post-card" style="cursor:default"><div style="display:flex;gap:10px;margin-bottom:12px"><div class="skel" style="width:34px;height:34px;border-radius:50%"></div><div style="flex:1"><div class="skel" style="height:12px;width:60%;margin-bottom:6px"></div><div class="skel" style="height:10px;width:30%"></div></div></div><div class="skel" style="height:13px;margin-bottom:6px"></div><div class="skel" style="height:13px;width:80%;margin-bottom:6px"></div><div class="skel" style="height:13px;width:60%"></div></div>`).join('')}
 function skelLB(){return `<div style="margin:20px 16px 0"><div class="skel" style="height:180px;border-radius:20px;margin-bottom:12px"></div><div class="skel" style="height:14px;margin-bottom:8px"></div><div class="skel" style="height:14px;width:70%"></div></div>`}
 function skelProfile(){return `<div style="margin:20px 16px 0"><div class="skel" style="height:200px;border-radius:20px"></div></div>`}
+function skelComments(n){
+  return Array(n).fill(`
+    <div class="comment-item">
+      <div class="skel" style="width:28px;height:28px;border-radius:50%;flex-shrink:0"></div>
+      <div class="comment-body" style="background:var(--bg2)">
+        <div class="skel" style="height:10px;width:40%;margin-bottom:8px"></div>
+        <div class="skel" style="height:12px;margin-bottom:4px"></div>
+        <div class="skel" style="height:12px;width:70%"></div>
+      </div>
+    </div>
+  `).join('');
+}
 function skelChats(){return Array(4).fill(`<div style="display:flex;gap:12px;padding:14px 16px;border-bottom:0.5px solid var(--border)"><div class="skel" style="width:44px;height:44px;border-radius:50%;flex-shrink:0"></div><div style="flex:1"><div class="skel" style="height:13px;width:50%;margin-bottom:6px"></div><div class="skel" style="height:11px;width:80%"></div></div></div>`).join('')}
 
 async function init(){
@@ -10634,7 +10717,7 @@ def mini_app_upload_media():
         else:
             media_type, tg_method, tg_field = _detect_mini_app_media_type(upload.filename, upload.mimetype)
 
-        storage_chat_id = CHANNEL_ID or ADMIN_ID
+        storage_chat_id = ADMIN_ID or CHANNEL_ID
         if not storage_chat_id:
             return jsonify({'success': False, 'error': 'Media storage is not configured'}), 500
 
