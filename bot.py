@@ -2188,11 +2188,11 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         ])
 
         header_lines = ["📩 *New Private Message*", "", "👤 From: " + safe_sender_name, ""]
-        header = "\\n".join(header_lines)
+        header = "\n".join(header_lines)
 
         if media_id and media_type != 'text':
             caption_lines = [header, safe_preview_content, "", "💭 _Use /inbox to view all messages_"]
-            caption = "\\n".join(caption_lines)
+            caption = "\n".join(caption_lines)
             if len(caption) > 1000:
                 caption = caption[:997] + "..."
             try:
@@ -2214,7 +2214,7 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
 
         fallback_body = safe_preview_content if safe_preview_content else "_\\\\[attachment\\\\]_"
         notification_lines = [header, fallback_body, "", "💭 _Use /inbox to view all messages_"]
-        notification_text = "\\n".join(notification_lines)
+        notification_text = "\n".join(notification_lines)
         await context.bot.send_message(
             chat_id=receiver_id,
             text=notification_text,
@@ -3894,7 +3894,7 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
         "",
         body_text
     ]
-    text = "\\n".join(text_lines)
+    text = "\n".join(text_lines)
 
     is_blocked = db_fetch_one(
         "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
@@ -3951,8 +3951,8 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
         logger.error(f"Error viewing message: {e}")
         try:
             await query.message.reply_text(
-                f"💬 Message from {message['sender_name']}:\\n\\n"
-                f"{message['content'] or '[attachment]'}\\n\\n"
+                f"💬 Message from {message['sender_name']}:\n\n"
+                f"{message['content'] or '[attachment]'}\n\n"
                 f"_{time_ago}_",
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.MARKDOWN
