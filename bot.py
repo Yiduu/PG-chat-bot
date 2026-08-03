@@ -9576,7 +9576,7 @@ function toggleCat(el,c){
   else{selCats.add(c);el.classList.add('on')}
 }
 
-document.addEventListener('DOMContentLoaded',()=>
+document.addEventListener('DOMContentLoaded',()=>{
   document.addEventListener('click', function(e){
     const btn = e.target.closest('.voice-player-btn');
     if(btn){
