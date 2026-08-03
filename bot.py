@@ -2167,7 +2167,6 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         sender_name = get_display_name(sender)
         safe_sender_name = escape_markdown(sender_name, version=2)
 
-        # Look up whether this message has an attachment
         media_type, media_id = 'text', None
         if message_id:
             media_row = db_fetch_one(
@@ -2188,17 +2187,15 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
             ]
         ])
 
-        header = f"📩 *New Private Message*
-
-👤 From: {safe_sender_name}
-
-"
+        header_lines = ["📩 *New Private Message*", "", "👤 From: " + safe_sender_name, ""]
+        header = "
+".join(header_lines)
 
         if media_id and media_type != 'text':
-            caption = header + safe_preview_content + "
-
-💭 _Use /inbox to view all messages_"
-            if len(caption) > 1000:  # Telegram caption hard-limit is 1024
+            caption_lines = [header, safe_preview_content, "", "💭 _Use /inbox to view all messages_"]
+            caption = "
+".join(caption_lines)
+            if len(caption) > 1000:
                 caption = caption[:997] + "..."
             try:
                 if media_type == 'photo':
@@ -2212,16 +2209,15 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
                 elif media_type == 'gif':
                     await context.bot.send_animation(chat_id=receiver_id, animation=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 else:
-                    raise ValueError(f"Unhandled media_type: {media_type}")
+                    raise ValueError("Unhandled media_type: " + str(media_type))
                 return
             except Exception as media_err:
-                logger.error(f"Failed to deliver media private message, falling back to text notice: {media_err}")
-                # fall through to text-only notice below
+                logger.error("Failed to deliver media private message, falling back to text notice: " + str(media_err))
 
         fallback_body = safe_preview_content if safe_preview_content else "_\[attachment\]_"
-        notification_text = header + fallback_body + "
-
-💭 _Use /inbox to view all messages_"
+        notification_lines = [header, fallback_body, "", "💭 _Use /inbox to view all messages_"]
+        notification_text = "
+".join(notification_lines)
         await context.bot.send_message(
             chat_id=receiver_id,
             text=notification_text,
@@ -2229,7 +2225,7 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
             reply_markup=keyboard
         )
     except Exception as e:
-        logger.error(f"Error sending private message notification: {e}")
+        logger.error("Error sending private message notification: " + str(e))
 
 
 
@@ -3895,14 +3891,14 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
     media_id = message.get('media_id')
 
     body_text = escape_markdown(message['content'], version=2) if message['content'] else ""
-    text = (
-        f"💬 *Message from {escape_markdown(message['sender_name'], version=2)}*
-"
-        f"_{escape_markdown(time_ago, version=2)}_
-
-"
-        f"{body_text}"
-    )
+    text_lines = [
+        "💬 *Message from " + escape_markdown(message['sender_name'], version=2) + "*",
+        "_" + escape_markdown(time_ago, version=2) + "_",
+        "",
+        body_text
+    ]
+    text = "
+".join(text_lines)
 
     is_blocked = db_fetch_one(
         "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
