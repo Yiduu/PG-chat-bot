@@ -9027,10 +9027,13 @@ async function api(path,opts={}){
 }
 
 const MAX_MEDIA_BYTES=20*1024*1024;
-async function uploadMedia(file){
+async function uploadMedia(file, intent){
   if(!file)return null;
   if(file.size>MAX_MEDIA_BYTES)throw new Error('File too large (max 20MB)');
-  const fd=new FormData();fd.append('file',file);fd.append('user_id',UID);
+  const fd=new FormData();
+  fd.append('file',file);
+  fd.append('user_id',UID);
+  if(intent) fd.append('intent', intent);
   const r=await fetch(API+'/api/mini-app/upload-media',{method:'POST',body:fd});
   const d=await r.json();
   if(!r.ok||!d.success)throw new Error(d.error||'Upload failed');
@@ -9038,11 +9041,19 @@ async function uploadMedia(file){
 }
 
 function renderMediaPreview(container,media,onRemove){
-  if(!media){container.style.display='none';container.innerHTML='';return}
+  if(!media){
+    container.style.display='none';
+    container.innerHTML='';
+    container.classList.remove('media-preview');
+    return;
+  }
+  container.classList.add('media-preview');
   container.style.display='flex';
-  const thumb=media.media_type==='photo'||media.media_type==='sticker'||media.media_type==='gif'
-    ?`<img src="${media.previewUrl}">`
-    :`<span style="width:36px;height:36px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex-shrink:0">📎</span>`;
+  const isImageLike = media.media_type==='photo'||media.media_type==='sticker'||media.media_type==='gif';
+  const isVoice = media.media_type==='voice'||media.media_type==='audio';
+  const thumb = isImageLike
+    ? `<img src="${media.previewUrl}">`
+    : `<span style="width:36px;height:36px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex-shrink:0">${isVoice?'🎤':'📎'}</span>`;
   container.innerHTML=`${thumb}<span class="mp-name">${esc(media.name)}</span><button class="mp-remove" type="button">✕</button>`;
   container.querySelector('.mp-remove').onclick=onRemove;
 }
@@ -9066,6 +9077,15 @@ let recordingStartTime = 0;
 let currentVoiceTarget = null; // 'vent' | 'comment' | 'chat'
 let voiceCancel = false;
 
+function getPreferredVoiceMimeType() {
+  const candidates = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'];
+  for (const type of candidates) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(type)) {
+      return type;
+    }
+  }
+  return '';
+}
 function setupVoiceButton(btnId, target) {
   const btn = document.getElementById(btnId);
   if (!btn) return;
@@ -9086,27 +9106,35 @@ function setupVoiceButton(btnId, target) {
         btn.classList.add('recording');
         document.getElementById('voice-timer').classList.add('active');
         navigator.mediaDevices.getUserMedia({ audio: true })
-          .then(stream => {
-            recordedChunks = [];
-            mediaRecorder = new MediaRecorder(stream);
-            mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
-            mediaRecorder.onstop = () => {
-              stream.getTracks().forEach(t => t.stop());
-              btn.classList.remove('recording');
-              document.getElementById('voice-timer').classList.remove('active');
-              clearInterval(recordingTimer);
-              if (!voiceCancel && recordedChunks.length) {
-                const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-                const file = new File([blob], 'voice.webm', { type: 'audio/webm' });
-                handleVoiceFile(file, target);
-              }
-              recordedChunks = [];
-            };
-            mediaRecorder.start();
-            recordingStartTime = Date.now();
-            recordingTimer = setInterval(updateVoiceTimer, 200);
-          })
-          .catch(err => { toast('Microphone access denied'); });
+  .then(stream => {
+    recordedChunks = [];
+    const preferredType = getPreferredVoiceMimeType();
+    mediaRecorder = preferredType
+      ? new MediaRecorder(stream, { mimeType: preferredType })
+      : new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      btn.classList.remove('recording');
+      document.getElementById('voice-timer').classList.remove('active');
+      clearInterval(recordingTimer);
+      const elapsed = Date.now() - recordingStartTime;
+      if (!voiceCancel && elapsed >= 400 && recordedChunks.length) {
+        const mimeType = mediaRecorder.mimeType || 'audio/webm';
+        const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
+        const blob = new Blob(recordedChunks, { type: mimeType });
+        const file = new File([blob], `voice.${ext}`, { type: mimeType });
+        handleVoiceFile(file, target);
+      } else if (!voiceCancel && elapsed < 400) {
+        toast('Recording too short');
+      }
+      recordedChunks = [];
+    };
+    mediaRecorder.start();
+    recordingStartTime = Date.now();
+    recordingTimer = setInterval(updateVoiceTimer, 200);
+  })
+  .catch(err => { toast('Microphone access denied'); });
       }
     }, 300);
   };
@@ -9152,7 +9180,7 @@ function updateVoiceTimer() {
 
 async function handleVoiceFile(file, target) {
   try {
-    const media = await uploadMedia(file);
+    const media = await uploadMedia(file, 'voice');
     if (target === 'vent') {
       pendingMedia = media;
       const preview = document.getElementById('vent-media-preview');
@@ -9919,6 +9947,209 @@ def notify_admin_of_new_post_sync(post_id):
     except Exception as e:
         logger.error(f"Error in sync admin notification: {e}")
 
+def _telegram_media_method(media_type):
+    """Map our internal media_type to (telegram_api_method, field_name)."""
+    return {
+        'photo': ('sendPhoto', 'photo'),
+        'video': ('sendVideo', 'video'),
+        'voice': ('sendVoice', 'voice'),
+        'audio': ('sendAudio', 'audio'),
+        'document': ('sendDocument', 'document'),
+        'gif': ('sendAnimation', 'animation'),
+        'sticker': ('sendSticker', 'sticker'),
+    }.get(media_type, ('sendDocument', 'document'))
+
+
+def send_telegram_message_sync(chat_id, text, parse_mode='HTML', reply_markup=None):
+    """Send a plain text message synchronously via requests (no context.bot needed)."""
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        payload = {"chat_id": chat_id, "text": text}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        resp = requests.post(url, json=payload, timeout=10)
+        return resp.json()
+    except Exception as e:
+        logger.error(f"send_telegram_message_sync failed: {e}")
+        return None
+
+
+def send_telegram_media_sync(chat_id, media_type, media_id, caption=None, parse_mode='HTML', reply_markup=None):
+    """
+    Send a real media message (photo/voice/video/document/gif/sticker) synchronously,
+    using a file_id already stored on Telegram. Falls back to a text message if the
+    media type is missing/unsupported, or if the media send itself fails.
+    """
+    if not media_id or not media_type or media_type == 'text':
+        if caption:
+            return send_telegram_message_sync(chat_id, caption, parse_mode=parse_mode, reply_markup=reply_markup)
+        return None
+
+    method, field = _telegram_media_method(media_type)
+    url = f"https://api.telegram.org/bot{TOKEN}/{method}"
+    payload = {"chat_id": chat_id, field: media_id}
+
+    # sendSticker does not accept a caption param at all — send it as a follow-up message instead
+    if caption and media_type != 'sticker':
+        payload["caption"] = caption[:1024]  # Telegram's caption hard limit
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
+    try:
+        resp = requests.post(url, json=payload, timeout=15)
+        result = resp.json()
+        if result.get('ok'):
+            if caption and media_type == 'sticker':
+                send_telegram_message_sync(chat_id, caption, parse_mode=parse_mode, reply_markup=reply_markup)
+            return result
+        logger.error(f"send_telegram_media_sync failed ({method}): {result}")
+    except Exception as e:
+        logger.error(f"send_telegram_media_sync request error: {e}")
+
+    # Media send failed entirely — still let the person know something arrived
+    if caption:
+        return send_telegram_message_sync(chat_id, caption, parse_mode=parse_mode, reply_markup=reply_markup)
+    return None
+
+
+def notify_user_of_private_message_sync(sender_id, receiver_id, message_content, media_type='text', media_id=None):
+    """Sync replacement for notify_user_of_private_message — actually delivers the media file."""
+    try:
+        is_blocked = db_fetch_one(
+            "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
+            (receiver_id, sender_id)
+        )
+        if is_blocked:
+            return
+
+        receiver = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (receiver_id,))
+        if not receiver or not receiver.get('notifications_enabled'):
+            return
+
+        sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
+        sender_name = get_display_name(sender)
+        safe_sender_name = html.escape(sender_name)
+
+        preview_content = (message_content or "")[:200]
+        if message_content and len(message_content) > 200:
+            preview_content += '...'
+        safe_preview = html.escape(preview_content) if preview_content else ""
+
+        keyboard = {
+            "inline_keyboard": [[
+                {"text": "💬 Reply", "callback_data": f"reply_msg_{sender_id}"},
+                {"text": "⛔ Block", "callback_data": f"block_user_{sender_id}"}
+            ]]
+        }
+
+        header = f"📩 <b>New Private Message</b>\n\n👤 From: <b>{safe_sender_name}</b>\n\n"
+        footer = "\n\n💭 <i>Use /inbox to view all messages</i>"
+
+        if media_id and media_type and media_type != 'text':
+            caption = header + safe_preview + footer
+            result = send_telegram_media_sync(
+                chat_id=receiver_id, media_type=media_type, media_id=media_id,
+                caption=caption, parse_mode='HTML', reply_markup=keyboard
+            )
+            if result and result.get('ok'):
+                return
+            # if media send failed outright, fall through to plain text below
+
+        fallback_body = safe_preview if safe_preview else "<i>[attachment]</i>"
+        notification_text = header + fallback_body + footer
+        send_telegram_message_sync(receiver_id, notification_text, parse_mode='HTML', reply_markup=keyboard)
+
+    except Exception as e:
+        logger.error(f"notify_user_of_private_message_sync failed: {e}")
+
+
+def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_content=None, media_type='text', media_id=None):
+    """Sync replacement for notify_vent_author_of_comment, for use from Flask routes."""
+    try:
+        post = db_fetch_one("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,))
+        if not post:
+            return
+        author_id = post['author_id']
+        if str(author_id) == str(commenter_id):
+            return
+
+        author = db_fetch_one("SELECT user_id, notifications_enabled FROM users WHERE user_id = %s", (author_id,))
+        if not author or not author.get('notifications_enabled'):
+            return
+
+        commenter = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (commenter_id,))
+        commenter_name = get_display_name(commenter)
+
+        post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
+        safe_commenter = html.escape(commenter_name)
+        safe_post_preview = html.escape(post_preview)
+        safe_comment = html.escape((comment_content or '')[:150]) if comment_content else ""
+
+        lines = ["💬 <b>New comment on your vent!</b>", "", f"👤 {safe_commenter} commented:"]
+        if safe_comment:
+            lines.append(f"\n📝 {safe_comment}")
+        lines.append(f"\n📝 <b>Your vent:</b> {safe_post_preview}")
+        lines.append(f"\n🔗 <a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>")
+        notification_text = "\n".join(lines)
+
+        if media_id and media_type and media_type != 'text':
+            result = send_telegram_media_sync(author_id, media_type, media_id, caption=notification_text, parse_mode='HTML')
+            if result and result.get('ok'):
+                return
+
+        send_telegram_message_sync(author_id, notification_text, parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"notify_vent_author_of_comment_sync failed: {e}")
+
+
+def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, comment_content=None, media_type='text', media_id=None):
+    """Sync replacement for notify_user_of_reply, for use from Flask routes."""
+    try:
+        parent_comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (parent_comment_id,))
+        if not parent_comment:
+            return
+
+        original_author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (parent_comment['author_id'],))
+        if not original_author or not original_author.get('notifications_enabled'):
+            return
+        if str(original_author['user_id']) == str(replier_id):
+            return  # don't notify yourself
+
+        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+        if not post:
+            return
+
+        if str(replier_id) == str(post['author_id']):
+            safe_replier_name = "Vent author"
+        else:
+            replier = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (replier_id,))
+            safe_replier_name = html.escape(get_display_name(replier))
+
+        post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
+        safe_post_preview = html.escape(post_preview)
+        safe_parent_preview = html.escape((parent_comment['content'] or '[media]')[:100])
+        safe_comment = html.escape((comment_content or '')[:150]) if comment_content else ""
+
+        lines = [f"💬 {safe_replier_name} replied to your comment:", "", f"🗨 {safe_parent_preview}"]
+        if safe_comment:
+            lines.append(f"\n↩️ {safe_comment}")
+        lines.append(f"\n📝 Post: {safe_post_preview}")
+        lines.append(f"\n<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>")
+        notification_text = "\n".join(lines)
+
+        if media_id and media_type and media_type != 'text':
+            result = send_telegram_media_sync(original_author['user_id'], media_type, media_id, caption=notification_text, parse_mode='HTML')
+            if result and result.get('ok'):
+                return
+
+        send_telegram_message_sync(original_author['user_id'], notification_text, parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"notify_user_of_reply_sync failed: {e}")
+
 def update_channel_post_comment_count_sync(post_id):
     """Sync version of update_channel_post_comment_count for the mini app"""
     try:
@@ -9968,8 +10199,6 @@ def _detect_mini_app_media_type(filename, mimetype):
 
 @flask_app.route('/api/mini-app/upload-media', methods=['POST'])
 def mini_app_upload_media():
-    """Uploads a file straight to Telegram's servers (no local disk storage) and
-    returns the resulting file_id + media_type, ready to attach to a post/comment."""
     try:
         if 'file' not in request.files:
             return jsonify({'success': False, 'error': 'No file provided'}), 400
@@ -9986,7 +10215,13 @@ def mini_app_upload_media():
         if size > MINI_APP_MAX_UPLOAD_BYTES:
             return jsonify({'success': False, 'error': 'File too large (max 20MB)'}), 400
 
-        media_type, tg_method, tg_field = _detect_mini_app_media_type(upload.filename, upload.mimetype)
+        intent = (request.form.get('intent') or '').lower()
+
+        if intent == 'voice':
+            # Force voice regardless of detected mimetype (webm/opus from MediaRecorder etc.)
+            media_type, tg_method, tg_field = 'voice', 'sendVoice', 'voice'
+        else:
+            media_type, tg_method, tg_field = _detect_mini_app_media_type(upload.filename, upload.mimetype)
 
         storage_chat_id = ADMIN_ID or CHANNEL_ID
         if not storage_chat_id:
@@ -10001,7 +10236,12 @@ def mini_app_upload_media():
 
         result = _send(tg_method, tg_field)
 
-        # Fall back to sendDocument if Telegram rejects the specialized type (e.g. bad sticker format)
+        # If a forced voice-note send fails (codec Telegram won't accept as voice),
+        # retry as a regular audio file before finally falling back to a document.
+        if not result.get('ok') and intent == 'voice':
+            result = _send('sendAudio', 'audio')
+            media_type = 'audio'
+
         if not result.get('ok') and tg_method != 'sendDocument':
             result = _send('sendDocument', 'document')
             media_type = 'document'
@@ -10483,8 +10723,20 @@ def mini_app_submit_comment(post_id):
             (post_id,)
         )
 
-        # Update Channel Message Inline Keyboard immediately
         update_channel_post_comment_count_sync(post_id)
+        calculate_user_rating.cache_clear()
+
+        # Notify the right person: parent-comment author for a reply, otherwise the vent author
+        if parent_comment_id and parent_comment_id != 0:
+            notify_user_of_reply_sync(
+                post_id, parent_comment_id, user_id,
+                comment_content=content, media_type=media_type, media_id=file_id
+            )
+        else:
+            notify_vent_author_of_comment_sync(
+                post_id, user_id,
+                comment_content=content, media_type=media_type, media_id=file_id
+            )
 
         return jsonify({'success': True, 'message': 'Reply posted successfully!'})
     except Exception as e:
@@ -10755,59 +11007,34 @@ def mini_app_send_message():
         content = data.get('content', '').strip()
         media_type = data.get('media_type', 'text')
         media_id = data.get('media_id')
-        
+
         if not sender_id or not receiver_id:
             return jsonify({'success': False, 'error': 'Missing sender/receiver'}), 400
         if not content and not media_id:
             return jsonify({'success': False, 'error': 'Empty message'}), 400
-            
-        # Block check
-        block_check = db_fetch_one("""
-            SELECT 1 FROM blocks 
-            WHERE (blocker_id = %s AND blocked_id = %s)
-        """, (receiver_id, sender_id))
+
+        block_check = db_fetch_one(
+            "SELECT 1 FROM blocks WHERE (blocker_id = %s AND blocked_id = %s)",
+            (receiver_id, sender_id)
+        )
         if block_check:
             return jsonify({'success': False, 'error': 'You are blocked by this user.'}), 403
-            
-        # Save message
+
         res = db_execute("""
-            INSERT INTO private_messages (sender_id, receiver_id, content, media_type, media_id) 
-            VALUES (%s, %s, %s, %s, %s) 
+            INSERT INTO private_messages (sender_id, receiver_id, content, media_type, media_id)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING message_id, timestamp
         """, (sender_id, receiver_id, content, media_type, media_id), fetchone=True)
-        
-        # Try sending background Telegram Bot notification
-        try:
-            sender = db_fetch_one("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (sender_id,))
-            sender_name = sender['anonymous_name'] if sender else 'Anonymous'
-            sender_icon = sender['avatar_emoji'] or sender['sex'] or '👤'
-            
-            url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-            
-            notif_text = content
-            if media_id and media_type != 'text':
-                notif_text = f"[{media_type.capitalize()} attachment] " + notif_text
-                
-            payload = {
-                "chat_id": int(receiver_id),
-                "text": f"📩 *New Private Message*\n\n👤 From: *{sender_icon} {sender_name}*\n\n💬 _{notif_text}_\n\n💭 _Use /inbox or the Christian Vent App to view all messages_",
-                "parse_mode": "Markdown",
-                "reply_markup": {
-                    "inline_keyboard": [
-                        [
-                            {"text": "💬 Reply", "callback_data": f"reply_msg_{sender_id}"},
-                            {"text": "⛔ Block", "callback_data": f"block_user_{sender_id}"}
-                        ],
-                        [
-                            {"text": "👤 View Profile", "url": f"https://t.me/{BOT_USERNAME}?start=profileid_{sender_id}"}
-                        ]
-                    ]
-                }
-            }
-            requests.post(url, json=payload, timeout=5)
-        except Exception as alert_err:
-            logger.error(f"Failed to dispatch Telegram chat push alert: {alert_err}")
-            
+
+        # Deliver a real notification — including the actual media file if present
+        notify_user_of_private_message_sync(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            message_content=content,
+            media_type=media_type,
+            media_id=media_id
+        )
+
         msg_time = res['timestamp'] if (res and 'timestamp' in res) else datetime.now()
         return jsonify({
             'success': True,
