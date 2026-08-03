@@ -9613,7 +9613,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     player.querySelector('.icon-pause').style.display='none';
     player.querySelector('.voice-player-progress').style.width='0%';
   }, true);
-{
+
   const txt=document.getElementById('vent-txt');
   if(txt)txt.addEventListener('input',()=>{document.getElementById('vent-cnt').textContent=txt.value.length});
   document.getElementById('submit-vent').addEventListener('click',submitVent);
