@@ -10094,7 +10094,7 @@ async function checkAdminStatus(){
       clearTimeout(st);
       st = setTimeout(()=>loadAdminChats(e.target.value.trim()), 400);
     });
-  }catch(e){}
+  }catch(e){console.error('checkAdminStatus failed:', e);}
 }
 
 async function loadAdminChats(search=''){
@@ -10317,7 +10317,7 @@ async function init(){
   }
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='flex';
-  if(UID){loadFeed();}
+  if(UID){loadFeed(); checkAdminStatus();}
   else{document.getElementById('feed-list').innerHTML='<div style="text-align:center;padding:60px 20px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">🔒</div><div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div><div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';}
 
   // Setup voice buttons after DOM ready
