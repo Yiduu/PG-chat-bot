@@ -3221,8 +3221,8 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         # Send post to channel based on media type
         if post.get('explicit'):
             body_html = (
-                "This post is marked as explicit content and may not be suitable for all members.\n"
-                "Tap \"View Post\" below if you'd like to read it."
+                "የዚህ post ይዘት ለሁሉም አባላት ተገቢ አይደለም። በራስዎ ሃላፊነት  ይህንን ፖስት ማንበብ ከፈለጉ፣ ከታች ያለውን\n"
+                "\"View Post\" የሚለውን ይጫኑ።"
             )
         else:
             body_html = html.escape(post['content'])
