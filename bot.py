@@ -8625,6 +8625,7 @@ def mini_app_page():
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fix-webm-duration@1.0.5/fix-webm-duration.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -9443,9 +9444,18 @@ function setupVoiceButton(btnId, target) {
       if (!voiceCancel && elapsed >= 400 && recordedChunks.length) {
         const mimeType = mediaRecorder.mimeType || 'audio/webm';
         const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
-        const blob = new Blob(recordedChunks, { type: mimeType });
-        const file = new File([blob], `voice.${ext}`, { type: mimeType });
-        handleVoiceFile(file, target);
+        const rawBlob = new Blob(recordedChunks, { type: mimeType });
+        const finalizeVoice = (blob) => {
+          const file = new File([blob], `voice.${ext}`, { type: mimeType });
+          handleVoiceFile(file, target);
+        };
+        if (mimeType.includes('webm') && window.ysFixWebmDuration) {
+          ysFixWebmDuration(rawBlob, elapsed, { logger: false })
+            .then(finalizeVoice)
+            .catch(() => finalizeVoice(rawBlob));
+        } else {
+          finalizeVoice(rawBlob);
+        }
       } else if (!voiceCancel && elapsed < 400) {
         toast('Recording too short');
       }
