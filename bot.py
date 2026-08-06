@@ -6734,7 +6734,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             db_execute("UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s", (target_id, user_id))
             target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
-            await query.message.reply_text(f"↩️ *Replying to {target_user['anonymous_name']}*\n\nPlease type your message:", parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_menu)
+            await query.message.reply_text(f"↩️ *Replying to {target_user['anonymous_name']}*\n\nPlease send your text,voice or picturemessage:", parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_menu)
 
         elif query.data.startswith("reply_"):
             parts = query.data.split("_")
