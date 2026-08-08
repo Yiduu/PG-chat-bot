@@ -3699,9 +3699,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
-    """Show user's inbox with clean, modern UI"""
+    """Show the user's inbox grouped by conversation partner, so they can pick who to open
+    instead of scrolling through every message in one flat list."""
     user_id = str(update.effective_user.id)
-    
+
     # Show loading
     loading_msg = None
     try:
@@ -3711,45 +3712,51 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
             loading_msg = await update.message.reply_text("📬 Checking inbox...")
     except:
         pass
-    
+
     # Animate loading
     if loading_msg:
         await animated_loading(loading_msg, "Loading", 1)
-    
-    # Get unread messages count
+
+    # Get unread messages count (across all conversations)
     unread_count_row = db_fetch_one(
         "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = %s AND is_read = FALSE",
         (user_id,)
     )
     unread_count = unread_count_row['count'] if unread_count_row else 0
-    
-    # Pagination settings
-    per_page = 7  # Show 7 messages per page
+
+    # Pagination settings — one row per conversation partner
+    per_page = 7
     offset = (page - 1) * per_page
-    
-    # Get messages with pagination
-    messages = db_fetch_all('''
-        SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex
+
+    # Group messages by sender so each row represents one person, not one message
+    conversations = db_fetch_all('''
+        SELECT pm.sender_id,
+               u.anonymous_name AS sender_name,
+               u.sex AS sender_sex,
+               MAX(pm.timestamp) AS last_timestamp,
+               COUNT(*) AS message_count,
+               SUM(CASE WHEN pm.is_read = FALSE THEN 1 ELSE 0 END) AS unread_in_convo
         FROM private_messages pm
         JOIN users u ON pm.sender_id = u.user_id
         WHERE pm.receiver_id = %s
-        ORDER BY pm.timestamp DESC
+        GROUP BY pm.sender_id, u.anonymous_name, u.sex
+        ORDER BY last_timestamp DESC
         LIMIT %s OFFSET %s
     ''', (user_id, per_page, offset))
-    
-    total_messages_row = db_fetch_one(
-        "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = %s",
+
+    total_conv_row = db_fetch_one(
+        "SELECT COUNT(DISTINCT sender_id) as count FROM private_messages WHERE receiver_id = %s",
         (user_id,)
     )
-    total_messages = total_messages_row['count'] if total_messages_row else 0
-    total_pages = (total_messages + per_page - 1) // per_page
-    
-    if not messages:
+    total_conversations = total_conv_row['count'] if total_conv_row else 0
+    total_pages = max(1, (total_conversations + per_page - 1) // per_page)
+
+    if not conversations:
         # No messages - clean empty state
         if loading_msg:
             await replace_with_success(loading_msg, "No messages")
             await asyncio.sleep(0.5)
-        
+
         text = (
             "📭 *Your Inbox is Empty*\n\n"
             "No messages yet. When someone sends you a message, "
@@ -3757,14 +3764,14 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
             "You can message other users by viewing their profile "
             "and clicking 'Send Message'."
         )
-        
+
         keyboard = [
             [InlineKeyboardButton("🔍 View Leaderboard", callback_data='leaderboard')],
             [InlineKeyboardButton("📱 Main Menu", callback_data='menu')]
         ]
-        
+
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         try:
             if loading_msg:
                 await loading_msg.edit_text(
@@ -3788,41 +3795,31 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
         except Exception as e:
             logger.error(f"Error showing empty inbox: {e}")
         return
-    
+
     # Build clean inbox header
     text = "📬 *Messages*\n"
     if unread_count > 0:
         text += f"🔴 {unread_count} unread\n\n"
     else:
         text += "\n"
-    
-    # Build keyboard with message previews
+
+    # Build keyboard — one button per conversation partner
     keyboard = []
-    
-    for idx, msg in enumerate(messages, start=1):
-        # Calculate message number
-        _ = (page - 1) * per_page + idx  # position index (unused display var)
-        
-        # Determine read status icon
-        status_icon = "🔴" if not msg['is_read'] else "⚪"
-        
-        # Format sender info (truncate if needed)
-        sender_name = msg['sender_name'][:12] if len(msg['sender_name']) > 12 else msg['sender_name']
-        
+
+    for convo in conversations:
+        unread_in_convo = convo['unread_in_convo'] or 0
+        status_icon = "🔴" if unread_in_convo > 0 else "⚪"
+
+        sender_name = convo['sender_name'][:14] if len(convo['sender_name']) > 14 else convo['sender_name']
+
         # Format timestamp nicely
-        if isinstance(msg['timestamp'], str):
-            timestamp = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S')
-        else:
-            timestamp = msg['timestamp']
-        
-        # Calculate time difference
-        now = datetime.now()
+        timestamp = convo['last_timestamp']
         if isinstance(timestamp, str):
             timestamp = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
-        
+
+        now = datetime.now()
         time_diff = now - timestamp
         if time_diff.days == 0:
-            # Same day - show time
             time_str = timestamp.strftime('%I:%M %p').lstrip('0')
         elif time_diff.days == 1:
             time_str = "Yesterday"
@@ -3830,63 +3827,56 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
             time_str = timestamp.strftime('%a')
         else:
             time_str = timestamp.strftime('%b %d')
-        
-        # Create message preview (short and clean)
-        preview = msg['content']
-        if len(preview) > 25:
-            preview = preview[:22] + '...'
-        
-        # Clean preview (remove markdown for button)
-        clean_preview = preview.replace('*', '').replace('_', '').replace('`', '').strip()
-        
-        # Create button text
-        button_text = f"{status_icon} {sender_name}: {clean_preview} • {time_str}"
-        
-        # Ensure button text isn't too long
+
+        count_label = f" ({convo['message_count']})" if convo['message_count'] > 1 else ""
+        unread_label = f" • {unread_in_convo} new" if unread_in_convo > 0 else ""
+
+        button_text = f"{status_icon} {sender_name}{count_label}{unread_label} • {time_str}"
         if len(button_text) > 40:
             button_text = button_text[:37] + "..."
-        
-        # Add button for each message
+
+        # Selecting a conversation opens that person's thread (open_conv_<sender_id>_<list_page>)
         keyboard.append([
-            InlineKeyboardButton(button_text, callback_data=f"view_message_{msg['message_id']}_{page}")
+            InlineKeyboardButton(button_text, callback_data=f"open_conv_{convo['sender_id']}_{page}")
         ])
-    
+
     # Add pagination if needed
     if total_pages > 1:
         pagination_row = []
-        
+
         if page > 1:
             pagination_row.append(InlineKeyboardButton("◀️", callback_data=f"inbox_page_{page-1}"))
         else:
             pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
-        
+
         pagination_row.append(InlineKeyboardButton(f"Page {page}/{total_pages}", callback_data="noop"))
-        
+
         if page < total_pages:
             pagination_row.append(InlineKeyboardButton("▶️", callback_data=f"inbox_page_{page+1}"))
         else:
             pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
-        
+
         keyboard.append(pagination_row)
-    
+
     # Add action buttons at bottom
     action_row = []
     if unread_count > 0:
         action_row.append(InlineKeyboardButton("✓ Mark All Read", callback_data="mark_all_read"))
-    
+
     action_row.append(InlineKeyboardButton("🔄 Refresh", callback_data=f"inbox_page_{page}"))
     keyboard.append(action_row)
-    
+
     keyboard.append([
         InlineKeyboardButton("📱 Menu", callback_data='menu'),
         InlineKeyboardButton("👤 Profile", callback_data='profile')
     ])
-    
+
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     # Add footer text
-    text += f"_Showing {len(messages)} of {total_messages} messages_"
-    
+    convo_word = "conversation" if total_conversations == 1 else "conversations"
+    text += f"_Showing {len(conversations)} of {total_conversations} {convo_word}_"
+
     # Replace loading message with content
     try:
         if loading_msg:
@@ -3914,7 +3904,135 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
         logger.error(f"Error showing inbox: {e}")
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("❌ Error loading inbox. Please try again.")
-async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, from_page=1):
+
+
+async def show_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE, sender_id: str, page=1, list_page=1):
+    """Show every message from one specific person (a single thread), so the user can
+    browse a conversation without it being mixed in with everyone else's messages."""
+    query = update.callback_query
+    if query:
+        await query.answer()
+
+    user_id = str(update.effective_user.id)
+
+    sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
+    sender_name = get_display_name(sender) if sender else "Unknown User"
+
+    per_page = 6
+    offset = (page - 1) * per_page
+
+    messages = db_fetch_all('''
+        SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex
+        FROM private_messages pm
+        JOIN users u ON pm.sender_id = u.user_id
+        WHERE pm.receiver_id = %s AND pm.sender_id = %s
+        ORDER BY pm.timestamp DESC
+        LIMIT %s OFFSET %s
+    ''', (user_id, sender_id, per_page, offset))
+
+    total_row = db_fetch_one(
+        "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = %s AND sender_id = %s",
+        (user_id, sender_id)
+    )
+    total_messages = total_row['count'] if total_row else 0
+    total_pages = max(1, (total_messages + per_page - 1) // per_page)
+
+    safe_name = escape_markdown(sender_name, version=2)
+
+    if not messages:
+        text = f"📭 *No messages from {safe_name}*\n\nThey may have been deleted\\."
+        keyboard = [[InlineKeyboardButton("◀️ Back to Inbox", callback_data="inbox_page_1")]]
+        try:
+            if query:
+                await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN_V2)
+            elif hasattr(update, 'message') and update.message:
+                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN_V2)
+        except Exception as e:
+            logger.error(f"Error showing empty conversation: {e}")
+        return
+
+    is_blocked = db_fetch_one(
+        "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
+        (user_id, sender_id)
+    )
+
+    text = f"💬 *Conversation with {safe_name}*\n"
+    text += f"_{total_messages} message{'s' if total_messages != 1 else ''}_\n\n"
+
+    keyboard = []
+    for msg in messages:
+        status_icon = "🔴" if not msg['is_read'] else "⚪"
+
+        timestamp = msg['timestamp']
+        if isinstance(timestamp, str):
+            timestamp = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+
+        now = datetime.now()
+        time_diff = now - timestamp
+        if time_diff.days == 0:
+            time_str = timestamp.strftime('%I:%M %p').lstrip('0')
+        elif time_diff.days == 1:
+            time_str = "Yesterday"
+        elif time_diff.days < 7:
+            time_str = timestamp.strftime('%a')
+        else:
+            time_str = timestamp.strftime('%b %d')
+
+        preview = msg['content'] or '[attachment]'
+        if len(preview) > 26:
+            preview = preview[:23] + '...'
+        clean_preview = preview.replace('*', '').replace('_', '').replace('`', '').strip()
+
+        button_text = f"{status_icon} {clean_preview} • {time_str}"
+        if len(button_text) > 40:
+            button_text = button_text[:37] + "..."
+
+        # from_page (page) here doubles as "which thread page to return to after viewing"
+        keyboard.append([
+            InlineKeyboardButton(button_text, callback_data=f"view_message_{msg['message_id']}_{sender_id}_{page}")
+        ])
+
+    # Pagination within this one thread
+    if total_pages > 1:
+        pagination_row = []
+        if page > 1:
+            pagination_row.append(InlineKeyboardButton("◀️", callback_data=f"open_conv_{sender_id}_{list_page}_{page-1}"))
+        else:
+            pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
+
+        pagination_row.append(InlineKeyboardButton(f"Page {page}/{total_pages}", callback_data="noop"))
+
+        if page < total_pages:
+            pagination_row.append(InlineKeyboardButton("▶️", callback_data=f"open_conv_{sender_id}_{list_page}_{page+1}"))
+        else:
+            pagination_row.append(InlineKeyboardButton("•", callback_data="noop"))
+
+        keyboard.append(pagination_row)
+
+    # Quick actions for this person
+    action_row = [InlineKeyboardButton("💬 Reply", callback_data=f"reply_msg_{sender_id}")]
+    if is_blocked:
+        action_row.append(InlineKeyboardButton("🔓 Unblock", callback_data=f"unblock_user_{sender_id}"))
+    else:
+        action_row.append(InlineKeyboardButton("⛔ Block", callback_data=f"block_user_{sender_id}"))
+    keyboard.append(action_row)
+
+    keyboard.append([InlineKeyboardButton("◀️ Back to Inbox", callback_data=f"inbox_page_{list_page}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    try:
+        if query:
+            await query.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
+        elif hasattr(update, 'message') and update.message:
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
+    except Exception as e:
+        logger.error(f"Error showing conversation: {e}")
+        if query:
+            await query.message.reply_text("❌ Error loading conversation. Please try again.")
+
+
+async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, sender_id: str, from_page=1, list_page=1):
     """View an individual private message with clean, natural UI — now renders attachments too"""
     query = update.callback_query
     await query.answer()
@@ -3992,11 +4110,11 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
             InlineKeyboardButton("👤 View Profile", url=f"https://t.me/{context.bot.username}?start=profileid_{message['sender_id']}")
         ],
         [
-            InlineKeyboardButton("🗑 Delete", callback_data=f"delete_message_{message_id}_{from_page}"),
+            InlineKeyboardButton("🗑 Delete", callback_data=f"delete_message_{message_id}_{sender_id}_{from_page}_{list_page}"),
             block_btn
         ],
         [
-            InlineKeyboardButton("◀️ Back to Inbox", callback_data=f"inbox_page_{from_page}"),
+            InlineKeyboardButton("◀️ Back to Conversation", callback_data=f"open_conv_{sender_id}_{list_page}_{from_page}"),
             InlineKeyboardButton("📱 Menu", callback_data='menu')
         ]
     ]
@@ -4039,13 +4157,13 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
             )
         except:
             await query.message.reply_text("❌ Error loading message.")
-async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, from_page=1):
+async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, sender_id: str, from_page=1, list_page=1):
     """Show clean delete confirmation"""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = str(query.from_user.id)
-    
+
     # Get message preview for confirmation
     message = db_fetch_one('''
         SELECT pm.content, u.anonymous_name as sender_name
@@ -4053,58 +4171,58 @@ async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
         JOIN users u ON pm.sender_id = u.user_id
         WHERE pm.message_id = %s AND pm.receiver_id = %s
     ''', (message_id, user_id))
-    
+
     if not message:
         await query.answer("❌ Message not found", show_alert=True)
         return
-    
+
     # Create clean preview
-    preview = message['content'][:50] + '...' if len(message['content']) > 50 else message['content']
-    
+    preview = message['content'][:50] + '...' if message['content'] and len(message['content']) > 50 else message['content']
+
     text = (
         f"🗑 *Delete Message?*\n\n"
         f"From: {message['sender_name']}\n"
         f"Preview: {preview}\n\n"
         f"This action cannot be undone."
     )
-    
+
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✅ Delete", callback_data=f"confirm_delete_message_{message_id}_{from_page}"),
-            InlineKeyboardButton("❌ Keep", callback_data=f"cancel_delete_message_{message_id}_{from_page}")
+            InlineKeyboardButton("✅ Delete", callback_data=f"confirm_delete_message_{message_id}_{sender_id}_{from_page}_{list_page}"),
+            InlineKeyboardButton("❌ Keep", callback_data=f"cancel_delete_message_{message_id}_{sender_id}_{from_page}_{list_page}")
         ]
     ])
-    
+
     await query.message.edit_text(
         text,
         reply_markup=keyboard,
         parse_mode=ParseMode.MARKDOWN
     )
-async def confirm_delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, from_page=1):
+async def confirm_delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, sender_id: str, from_page=1, list_page=1):
     """Confirm and delete message with clean feedback"""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = str(query.from_user.id)
-    
+
     # Show processing
     await query.message.edit_text("🗑 Deleting message...")
     await asyncio.sleep(0.5)
-    
+
     # Delete the message
     success = db_execute(
         "DELETE FROM private_messages WHERE message_id = %s AND receiver_id = %s",
         (message_id, user_id)
     )
-    
+
     if success:
-        # Show success and return to inbox
+        # Show success and return to the conversation thread this message belonged to
         await query.message.edit_text(
             "✅ Message deleted successfully.",
             parse_mode=ParseMode.MARKDOWN
         )
         await asyncio.sleep(0.7)
-        await show_inbox(update, context, from_page)
+        await show_conversation(update, context, sender_id, from_page, list_page)
     else:
         await query.answer("❌ Error deleting message", show_alert=True)
         await query.message.edit_text(
@@ -4116,15 +4234,15 @@ async def mark_all_read(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mark all messages as read"""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = str(query.from_user.id)
-    
+
     # Mark all as read
     db_execute(
         "UPDATE private_messages SET is_read = TRUE WHERE receiver_id = %s",
         (user_id,)
     )
-    
+
     await query.answer("✅ All messages marked as read")
     await show_inbox(update, context, 1)  # Refresh inbox
 async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
@@ -7382,14 +7500,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await show_inbox(update, context, page)
             except (IndexError, ValueError):
                 await show_inbox(update, context, 1)
-                
+
+        elif query.data.startswith('open_conv_'):
+            # open_conv_<sender_id>_<list_page>              -> open that person's thread at page 1
+            # open_conv_<sender_id>_<list_page>_<thread_page> -> open a specific page of that thread
+            try:
+                parts = query.data.split('_')
+                sender_id = parts[2]
+                list_page = int(parts[3]) if len(parts) > 3 else 1
+                thread_page = int(parts[4]) if len(parts) > 4 else 1
+                await show_conversation(update, context, sender_id, thread_page, list_page)
+            except (IndexError, ValueError) as e:
+                logger.error(f"Error parsing open_conv: {e}")
+                await show_inbox(update, context, 1)
+
         elif query.data.startswith('view_message_'):
             try:
                 parts = query.data.split('_')
-                if len(parts) >= 3:
+                if len(parts) >= 5:
                     message_id = int(parts[2])
-                    from_page = int(parts[3]) if len(parts) > 3 else 1
-                    await view_individual_message(update, context, message_id, from_page)
+                    sender_id = parts[3]
+                    from_page = int(parts[4])
+                    await view_individual_message(update, context, message_id, sender_id, from_page)
             except (IndexError, ValueError) as e:
                 logger.error(f"Error parsing view_message: {e}")
                 await query.answer("❌ Error loading message", show_alert=True)
@@ -7400,10 +7532,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('delete_message_'):
             try:
                 parts = query.data.split('_')
-                if len(parts) >= 3:
+                if len(parts) >= 4:
                     message_id = int(parts[2])
-                    from_page = int(parts[3]) if len(parts) > 3 else 1
-                    await delete_message(update, context, message_id, from_page)
+                    sender_id = parts[3]
+                    from_page = int(parts[4]) if len(parts) > 4 else 1
+                    list_page = int(parts[5]) if len(parts) > 5 else 1
+                    await delete_message(update, context, message_id, sender_id, from_page, list_page)
             except (IndexError, ValueError) as e:
                 logger.error(f"Error parsing delete_message: {e}")
                 await query.answer("❌ Error", show_alert=True)
@@ -7411,10 +7545,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('confirm_delete_message_'):
             try:
                 parts = query.data.split('_')
-                if len(parts) >= 4:
+                if len(parts) >= 5:
                     message_id = int(parts[3])
-                    from_page = int(parts[4]) if len(parts) > 4 else 1
-                    await confirm_delete_message(update, context, message_id, from_page)
+                    sender_id = parts[4]
+                    from_page = int(parts[5]) if len(parts) > 5 else 1
+                    list_page = int(parts[6]) if len(parts) > 6 else 1
+                    await confirm_delete_message(update, context, message_id, sender_id, from_page, list_page)
             except (IndexError, ValueError) as e:
                 logger.error(f"Error parsing confirm_delete: {e}")
                 await query.answer("❌ Error", show_alert=True)
@@ -7422,10 +7558,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('cancel_delete_message_'):
             try:
                 parts = query.data.split('_')
-                if len(parts) >= 4:
-                    message_id = int(parts[3])
-                    from_page = int(parts[4]) if len(parts) > 4 else 1
-                    await view_individual_message(update, context, message_id, from_page)
+                if len(parts) >= 5:
+                    sender_id = parts[4]
+                    from_page = int(parts[5]) if len(parts) > 5 else 1
+                    list_page = int(parts[6]) if len(parts) > 6 else 1
+                    await show_conversation(update, context, sender_id, from_page, list_page)
+                else:
+                    await show_inbox(update, context, 1)
             except (IndexError, ValueError):
                 await show_inbox(update, context, 1)
             
@@ -7515,7 +7654,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data.startswith('block_user_'):
             target_id = query.data.split('_', 2)[2]
-            
+
+            # Don't block silently — ask for confirmation first
+            target_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (target_id,))
+            target_name = get_display_name(target_user) if target_user else "this user"
+            safe_name = escape_markdown(target_name, version=2)
+
+            text = (
+                f"⛔ *Block {safe_name}?*\n\n"
+                f"They won't be able to send you messages anymore\\. "
+                f"You can unblock them later from Settings\\."
+            )
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Yes, Block", callback_data=f"confirm_block_user_{target_id}"),
+                    InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_block_user_{target_id}")
+                ]
+            ])
+            await query.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN_V2)
+
+        elif query.data.startswith('confirm_block_user_'):
+            target_id = query.data.split('_', 3)[3]
+
             # Add to blocks table
             try:
                 db_execute(
@@ -7526,11 +7686,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Clear Aura Cache for real-time accuracy
                 calculate_user_rating.cache_clear()
                 format_aura.cache_clear()
-                
-                await query.message.reply_text("✅ User has been blocked. They can no longer send you messages.")
+
+                await query.answer("✅ User blocked", show_alert=False)
+                await query.message.edit_text("✅ User has been blocked. They can no longer send you messages.")
 
             except psycopg2.IntegrityError:
-                await query.message.reply_text("❌ User is already blocked.")
+                await query.answer("Already blocked", show_alert=False)
+                await query.message.edit_text("❌ User is already blocked.")
+
+        elif query.data.startswith('cancel_block_user_'):
+            await query.answer("Cancelled", show_alert=False)
+            await query.message.edit_text("👍 No changes made — that user hasn't been blocked.")
 
         # ==================== REPORTING CALLBACKS ====================
 
