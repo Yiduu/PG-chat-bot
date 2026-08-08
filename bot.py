@@ -2279,6 +2279,8 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
                     await context.bot.send_photo(chat_id=receiver_id, photo=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 elif media_type == 'voice':
                     await context.bot.send_voice(chat_id=receiver_id, voice=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                elif media_type == 'audio':
+                    await context.bot.send_audio(chat_id=receiver_id, audio=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 elif media_type == 'video':
                     await context.bot.send_video(chat_id=receiver_id, video=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 elif media_type == 'document':
@@ -3062,6 +3064,21 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         reply_markup=keyboard,
                         parse_mode=ParseMode.HTML
                     )
+            elif post['media_type'] == 'audio':
+                if update.callback_query:
+                    await update.callback_query.message.reply_audio(
+                        audio=post['media_id'],
+                        caption=text,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.HTML
+                    )
+                else:
+                    await update.message.reply_audio(
+                        audio=post['media_id'],
+                        caption=text,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.HTML
+                    )
         except Exception as e:
             logger.error(f"Error sending pending post {post['post_id']}: {e}")
             # Send as text if media fails
@@ -3257,6 +3274,15 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             msg = await context.bot.send_voice(
                 chat_id=CHANNEL_ID,
                 voice=post['media_id'],
+                caption=channel_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb,
+                reply_to_message_id=reply_to_message_id
+            )
+        elif post['media_type'] == 'audio':
+            msg = await context.bot.send_audio(
+                chat_id=CHANNEL_ID,
+                audio=post['media_id'],
                 caption=channel_text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb,
@@ -8265,8 +8291,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_id = voice.file_id
                 media_type = 'voice'
                 post_content = update.message.caption or ""
+            elif update.message.audio:
+                audio = update.message.audio
+                media_id = audio.file_id
+                media_type = 'audio'
+                post_content = update.message.caption or ""
             else:
                 # Handle other media types or show error
+                await update.message.reply_text(
+                    "❌ That file type isn't supported for vents yet. "
+                    "You can share text, a photo, a voice note, or a music/audio file.",
+                    reply_markup=get_main_menu(user_id)
+                )
                 return
 
             
@@ -8415,6 +8451,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif update.message.voice:
             media_type = 'voice'
             media_id = update.message.voice.file_id
+        elif update.message.audio:
+            media_type = 'audio'
+            media_id = update.message.audio.file_id
         elif update.message.video:
             media_type = 'video'
             media_id = update.message.video.file_id
