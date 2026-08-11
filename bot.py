@@ -938,9 +938,9 @@ def build_multi_category_keyboard(selected_codes):
     row = []
     for display, code in CATEGORIES:
         if code in selected_codes:
-            button_text = f"{display}"
+            button_text = f"✅ {display}"
         else:
-            button_text = display
+            button_text = f"⬜ {display}"
             
         row.append(InlineKeyboardButton(button_text, callback_data=f"cat_toggle_{code}"))
         if len(row) == 2:
@@ -1778,7 +1778,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leaderboard_text = "*Christian Vent Leaderboard*\n\n"
     
     # Define medal emojis for top 3
-    medal_emojis = {1: "", 2: "", 3: ""}
+    medal_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
     
     # Format each user
     for idx, user in enumerate(top_users, start=1):
@@ -4546,8 +4546,8 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
         )
         dislikes = dislikes_row['cnt'] if dislikes_row else 0
 
-    like_emoji = "" if user_reaction_type == 'like' else ""
-    dislike_emoji = "" if user_reaction_type == 'dislike' else ""
+    like_emoji = "👍"
+    dislike_emoji = "👎"
 
     # Build keyboard
     kb_buttons = [
@@ -5989,7 +5989,7 @@ async def send_reaction_notification(context: ContextTypes.DEFAULT_TYPE, comment
         # Content formatting
         post_preview = post['content'][:50] + '...' if post and len(post['content']) > 50 else (post['content'] if post else "")
         reaction_label = "liked" if reaction_type == 'like' else "disliked"
-        reaction_icon = "" if reaction_type == 'like' else ""
+        reaction_icon = "👍" if reaction_type == 'like' else "👎"
         
         notification_text = (
             f"{reaction_icon} *New Interaction\\!*\n\n"
@@ -6052,7 +6052,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_markup = build_multi_category_keyboard(selected)
             
             # Edit the reply markup of the original message
-            await query.message.edit_reply_markup(reply_markup=new_markup)
+            try:
+                await query.message.edit_reply_markup(reply_markup=new_markup)
+            except BadRequest as e:
+                # Telegram raises this if the markup happens to be identical
+                # to what's already shown (e.g. rapid double-taps) - safe to ignore
+                if "not modified" not in str(e).lower():
+                    raise
             
             # Answer callback to remove loading state
             await query.answer()
@@ -6061,7 +6067,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data == "cat_reset":
             context.user_data['selected_categories'] = set()
             new_markup = build_multi_category_keyboard(set())
-            await query.message.edit_reply_markup(reply_markup=new_markup)
+            try:
+                await query.message.edit_reply_markup(reply_markup=new_markup)
+            except BadRequest as e:
+                if "not modified" not in str(e).lower():
+                    raise
             await query.answer("Selection reset", show_alert=False)
 
         elif query.data == "cat_done":
@@ -6528,8 +6538,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (comment_id, user_id)
                 )
 
-                like_emoji = "" if user_reaction and user_reaction['type'] == 'like' else ""
-                dislike_emoji = "" if user_reaction and user_reaction['type'] == 'dislike' else ""
+                like_emoji = "👍"
+                dislike_emoji = "👎"
 
                 if parent_comment_id == 0:
                     # Build keyboard with edit/delete buttons for author
