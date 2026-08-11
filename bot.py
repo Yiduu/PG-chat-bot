@@ -951,11 +951,11 @@ def build_multi_category_keyboard(selected_codes):
     
     # Action row
     keyboard.append([
-        InlineKeyboardButton("Done", callback_data="cat_done"),
-        InlineKeyboardButton("Reset", callback_data="cat_reset")
+        InlineKeyboardButton("✅ Done", callback_data="cat_done"),
+        InlineKeyboardButton("🔄 Reset", callback_data="cat_reset")
     ])
     keyboard.append([
-        InlineKeyboardButton("Cancel", callback_data="cancel_input")
+        InlineKeyboardButton("❌ Cancel", callback_data="cancel_input")
     ])
     return InlineKeyboardMarkup(keyboard)
 
@@ -1397,7 +1397,7 @@ main_menu = ReplyKeyboardMarkup(
 # Cancel-only menu for input states
 cancel_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("Cancel")]
+        [KeyboardButton("❌ Cancel")]
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
@@ -1634,7 +1634,7 @@ def get_cancel_reply_keyboard():
     """Create cancel button for reply keyboard (text) - ONLY for input states"""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("Cancel")]
+            [KeyboardButton("❌ Cancel")]
         ],
         resize_keyboard=True,
         one_time_keyboard=True,  # Set to True so it disappears after use
@@ -1657,6 +1657,34 @@ def get_display_sex(user_data):
         if user_data['sex'] in ('👨', '👩'):
             return user_data['sex']
     return ""
+
+def format_time_ago(timestamp):
+    """Human-friendly relative time string, e.g. '5m ago', 'yesterday'."""
+    if not timestamp:
+        return ""
+    if isinstance(timestamp, str):
+        try:
+            timestamp = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            return ""
+
+    now = datetime.now()
+    time_diff = now - timestamp
+    if time_diff.days == 0:
+        if time_diff.seconds < 60:
+            return "just now"
+        elif time_diff.seconds < 3600:
+            return f"{time_diff.seconds // 60}m ago"
+        else:
+            return f"{time_diff.seconds // 3600}h ago"
+    elif time_diff.days == 1:
+        return "yesterday"
+    elif time_diff.days < 7:
+        return timestamp.strftime('%A')
+    elif time_diff.days < 30:
+        return f"{time_diff.days // 7}w ago"
+    else:
+        return timestamp.strftime('%b %d')
 
 def get_user_rank(user_id):
     users = db_fetch_all('''
@@ -1896,6 +1924,13 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         notifications_status = "ON" if user['notifications_enabled'] else "OFF"
         privacy_status = "Public" if user['privacy_public'] else "Private"
+
+        pending_requests_row = db_fetch_one(
+            "SELECT COUNT(*) as cnt FROM chat_requests WHERE receiver_id = %s AND status = 'pending'",
+            (user_id,)
+        )
+        pending_requests = pending_requests_row['cnt'] if pending_requests_row else 0
+        requests_label = f"📨 Chat Requests ({pending_requests})" if pending_requests else "📨 Chat Requests"
         
         keyboard = [
             [
@@ -1908,6 +1943,9 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             [
                 InlineKeyboardButton("Privacy Controls", callback_data='privacy_settings')
+            ],
+            [
+                InlineKeyboardButton(requests_label, callback_data='chat_requests')
             ],
             [
                 InlineKeyboardButton("Blocked Users", callback_data='list_blocked')
@@ -2011,8 +2049,8 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
         ])
 
     keyboard.append([
-        InlineKeyboardButton("Cancel", callback_data='cancel_post'),
-        InlineKeyboardButton("Submit", callback_data='confirm_post')
+        InlineKeyboardButton("❌ Cancel", callback_data='cancel_post'),
+        InlineKeyboardButton("✅ Submit", callback_data='confirm_post')
     ])
     
     thread_text = ""
@@ -3937,6 +3975,108 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
         logger.error(f"Error showing inbox: {e}")
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("Error loading inbox. Please try again.")
+
+
+async def show_chat_requests(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
+    """Show the current user's incoming pending chat requests, with Accept/Reject
+    per request and pagination. This is the persistent home for chat requests so
+    a receiver who missed the original notification can still find and act on it,
+    and a sender's request is never silently lost."""
+    query = update.callback_query
+    user_id = str(update.effective_user.id)
+
+    per_page = 5
+    if page < 1:
+        page = 1
+    offset = (page - 1) * per_page
+
+    requests = db_fetch_all(
+        """
+        SELECT cr.sender_id, cr.timestamp, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge
+        FROM chat_requests cr
+        JOIN users u ON u.user_id = cr.sender_id
+        WHERE cr.receiver_id = %s AND cr.status = 'pending'
+        ORDER BY cr.timestamp DESC
+        LIMIT %s OFFSET %s
+        """,
+        (user_id, per_page, offset)
+    )
+
+    total_row = db_fetch_one(
+        "SELECT COUNT(*) as cnt FROM chat_requests WHERE receiver_id = %s AND status = 'pending'",
+        (user_id,)
+    )
+    total = total_row['cnt'] if total_row else 0
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    # If this page is now empty (e.g. the last item on it was just accepted/rejected)
+    # but earlier pages still have items, fall back a page instead of showing a dead end.
+    if not requests and page > 1:
+        await show_chat_requests(update, context, page=page - 1)
+        return
+
+    if not requests:
+        text = "📭 *My Chat Requests*\n\nYou have no pending chat requests right now\\."
+        keyboard = [[InlineKeyboardButton("⬅️ Back to Settings", callback_data='settings')]]
+        markup = InlineKeyboardMarkup(keyboard)
+        try:
+            if query:
+                await query.edit_message_text(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN_V2)
+            elif hasattr(update, 'message') and update.message:
+                await update.message.reply_text(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN_V2)
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                logger.error(f"Error showing empty chat requests: {e}")
+        return
+
+    lines = [f"📬 *My Chat Requests* \\(Page {page}/{total_pages}\\)\n"]
+    keyboard = []
+
+    for req in requests:
+        display_name = get_display_name(req)
+        safe_name = escape_markdown(display_name, version=2)
+        safe_time = escape_markdown(format_time_ago(req['timestamp']), version=2)
+        lines.append(f"👤 *{safe_name}* wants to chat • _{safe_time}_")
+        keyboard.append([
+            InlineKeyboardButton("✅ Accept", callback_data=f"reqaccept_{req['sender_id']}_{page}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"reqreject_{req['sender_id']}_{page}"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton(
+                f"View {display_name}'s Profile",
+                url=f"https://t.me/{BOT_USERNAME}?start=profileid_{req['sender_id']}"
+            )
+        ])
+
+    # Pagination row
+    pag_row = []
+    if page > 1:
+        pag_row.append(InlineKeyboardButton("◀ Prev", callback_data=f"chat_requests_{page - 1}"))
+    pag_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        pag_row.append(InlineKeyboardButton("Next ▶", callback_data=f"chat_requests_{page + 1}"))
+    if pag_row:
+        keyboard.append(pag_row)
+
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Settings", callback_data='settings')])
+
+    text = "\n\n".join(lines)
+    markup = InlineKeyboardMarkup(keyboard)
+    try:
+        if query:
+            await query.edit_message_text(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN_V2)
+        elif hasattr(update, 'message') and update.message:
+            await update.message.reply_text(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN_V2)
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            logger.error(f"Error showing chat requests: {e}")
+    except Exception as e:
+        logger.error(f"Error showing chat requests: {e}")
+        try:
+            if query:
+                await query.message.reply_text("Error loading chat requests. Please try again.")
+        except Exception:
+            pass
 
 
 async def show_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE, sender_id: str, page=1, list_page=1):
@@ -6783,7 +6923,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Check for existing request
             existing = db_fetch_one(
-                "SELECT status FROM chat_requests WHERE sender_id = %s AND receiver_id = %s",
+                "SELECT status, timestamp FROM chat_requests WHERE sender_id = %s AND receiver_id = %s",
                 (user_id, target_id)
             )
             
@@ -6792,8 +6932,62 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.answer("Request already accepted!", show_alert=False)
                     db_execute("UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s", (target_id, user_id))
                     await query.message.reply_text("Type your message below:", reply_markup=cancel_menu)
-                else:
-                    await query.answer("Chat request is still pending...", show_alert=True)
+                    return
+
+                # Still pending. Rather than block the sender forever if the receiver
+                # simply missed the original notification, allow a one-tap reminder
+                # once enough time has passed since the last ping.
+                REQUEST_REMINDER_COOLDOWN_HOURS = 24
+                last_sent = existing.get('timestamp')
+                hours_since = None
+                if last_sent:
+                    if isinstance(last_sent, str):
+                        try:
+                            last_sent = datetime.strptime(last_sent, '%Y-%m-%d %H:%M:%S')
+                        except ValueError:
+                            last_sent = None
+                    if last_sent:
+                        hours_since = (datetime.now() - last_sent).total_seconds() / 3600
+
+                if hours_since is None or hours_since < REQUEST_REMINDER_COOLDOWN_HOURS:
+                    hours_left = REQUEST_REMINDER_COOLDOWN_HOURS - (hours_since or 0)
+                    await query.answer(
+                        f"Request already sent — still waiting on a response "
+                        f"(you can send a reminder in ~{max(1, round(hours_left))}h). "
+                        f"They can find it anytime in their Chat Requests menu.",
+                        show_alert=True
+                    )
+                    return
+
+                # Cooldown has passed — bump the timestamp and re-notify as a reminder.
+                db_execute(
+                    "UPDATE chat_requests SET timestamp = CURRENT_TIMESTAMP WHERE sender_id = %s AND receiver_id = %s",
+                    (user_id, target_id)
+                )
+                await query.answer("🔔 Reminder sent!", show_alert=False)
+
+                sender_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+                sender_name = get_display_name(sender_data)
+                reminder_text = (
+                    f"*Chat Request Reminder\\!*\n"
+                    f"_{escape_markdown(sender_name, version=2)}_ still wants to chat with you\\."
+                )
+                reminder_kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ Accept", callback_data=f'acceptchat_{user_id}'),
+                        InlineKeyboardButton("❌ Ignore", callback_data=f'declinechat_{user_id}')
+                    ],
+                    [InlineKeyboardButton("View Profile", url=f'https://t.me/{BOT_USERNAME}?start=profileid_{user_id}')]
+                ])
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_id,
+                        text=reminder_text,
+                        reply_markup=reminder_kb,
+                        parse_mode=ParseMode.MARKDOWN_V2
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send chat request reminder: {e}")
                 return
 
             # Create new request
@@ -6810,12 +7004,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 receiver_text = (
                     f"*New Chat Request\\!*\n"
-                    f"_{escape_markdown(sender_name, version=2)}_ wants to chat with you\\."
+                    f"_{escape_markdown(sender_name, version=2)}_ wants to chat with you\\.\n\n"
+                    f"_You can find this anytime under Settings ➜ 📨 Chat Requests\\._"
                 )
                 receiver_kb = InlineKeyboardMarkup([
                     [
-                        InlineKeyboardButton("Accept", callback_data=f'acceptchat_{user_id}'),
-                        InlineKeyboardButton("Ignore", callback_data=f'declinechat_{user_id}')
+                        InlineKeyboardButton("✅ Accept", callback_data=f'acceptchat_{user_id}'),
+                        InlineKeyboardButton("❌ Ignore", callback_data=f'declinechat_{user_id}')
                     ],
                     [InlineKeyboardButton("View Profile", url=f'https://t.me/{BOT_USERNAME}?start=profileid_{user_id}')]
                 ])
@@ -6842,8 +7037,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 (user_id, sender_id)
             )
             
-            await query.answer("Request accepted!", show_alert=False)
-            await query.message.edit_text("*You accepted the chat request\\!*", parse_mode=ParseMode.MARKDOWN_V2)
+            await query.answer("✅ Request accepted!", show_alert=False)
+            await query.message.edit_text("✅ *You accepted the chat request\\!*", parse_mode=ParseMode.MARKDOWN_V2)
             
             receiver_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
             receiver_name = get_display_name(receiver_data)
@@ -6859,7 +7054,65 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sender_id = query.data.split('_')[1]
             db_execute("DELETE FROM chat_requests WHERE sender_id = %s AND receiver_id = %s", (sender_id, user_id))
             await query.answer("Request ignored.", show_alert=False)
-            await query.message.edit_text("*Chat request ignored\\.*", parse_mode=ParseMode.MARKDOWN_V2)
+            await query.message.edit_text("❌ *Chat request ignored\\.*", parse_mode=ParseMode.MARKDOWN_V2)
+
+        elif query.data == 'chat_requests':
+            await query.answer()
+            await show_chat_requests(update, context, page=1)
+
+        elif query.data.startswith('chat_requests_'):
+            try:
+                page = int(query.data.split('_')[2])
+            except (IndexError, ValueError):
+                page = 1
+            await query.answer()
+            await show_chat_requests(update, context, page=page)
+
+        elif query.data.startswith('reqaccept_') or query.data.startswith('reqreject_'):
+            try:
+                parts = query.data.split('_')
+                is_accept = query.data.startswith('reqaccept_')
+                sender_id = parts[1]
+                page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 1
+
+                if sender_id == user_id:
+                    await query.answer("Invalid request.", show_alert=True)
+                    return
+
+                if is_accept:
+                    db_execute(
+                        "UPDATE chat_requests SET status = 'accepted' WHERE sender_id = %s AND receiver_id = %s",
+                        (sender_id, user_id)
+                    )
+                    # Mutual chat permission, mirroring the acceptchat_ flow
+                    db_execute(
+                        "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (%s, %s, 'accepted') ON CONFLICT DO NOTHING",
+                        (user_id, sender_id)
+                    )
+                    await query.answer("✅ Request accepted!", show_alert=False)
+
+                    receiver_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+                    receiver_name = get_display_name(receiver_data)
+                    try:
+                        await context.bot.send_message(
+                            chat_id=sender_id,
+                            text=f"*{escape_markdown(receiver_name, version=2)}* accepted your chat request\\! You can now send messages from their profile\\.",
+                            parse_mode=ParseMode.MARKDOWN_V2
+                        )
+                    except Exception:
+                        pass
+                else:
+                    db_execute(
+                        "DELETE FROM chat_requests WHERE sender_id = %s AND receiver_id = %s",
+                        (sender_id, user_id)
+                    )
+                    await query.answer("❌ Request rejected.", show_alert=False)
+
+                # Refresh the list in place so the user can keep working through it
+                await show_chat_requests(update, context, page=page)
+            except Exception as e:
+                logger.error(f"Error in reqaccept/reqreject handler: {e}")
+                await query.answer("Error processing request. Please try again.", show_alert=True)
 
         elif query.data.startswith('message_'):
             target_id = query.data.split('_')[1]
@@ -8063,9 +8316,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
 
     # Handle cancel command or main menu buttons while in an input state
-    main_menu_buttons = ["Share", "Profile", "Posts", "Top", "Settings", "Open App", "Cancel", "/cancel"]
+    main_menu_buttons = ["Share", "Profile", "Posts", "Top", "Settings", "Open App", "❌ Cancel", "/cancel"]
     
-    if text in main_menu_buttons or text.lower() == "cancel":
+    if text in main_menu_buttons or text.lower() in ("cancel", "❌ cancel"):
         # UNCONDITIONALLY reset all waiting states when a menu button is pressed
         # We pass None for chat_id to reset quietly, as we'll send the specific menu next
         await reset_user_waiting_states(user_id, None, context)
@@ -8074,7 +8327,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
         
         # Early exit for explicit cancellation
-        if text in ["Cancel", "/cancel"] or text.lower() == "cancel":
+        if text in ["❌ Cancel", "/cancel"] or text.lower() in ("cancel", "❌ cancel"):
             await update.message.reply_text(
                 "Input cancelled.",
                 reply_markup=get_main_menu(user_id)
@@ -8687,6 +8940,7 @@ async def set_bot_commands(app):
         BotCommand("help", "How to use the bot"),
         BotCommand("about", "About the bot"),
         BotCommand("inbox", "View your private messages"),
+        BotCommand("requests", "View your pending chat requests"),
     ]
     
     if ADMIN_ID:
@@ -8768,6 +9022,7 @@ def main():
     app.add_handler(CommandHandler("settings", show_settings))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("inbox", show_inbox))
+    app.add_handler(CommandHandler("requests", show_chat_requests))
     app.add_handler(CommandHandler("fixventnumbers", fix_vent_numbers))
     app.add_handler(CommandHandler("fix_missing_sex", fix_missing_sex))
     app.add_handler(CommandHandler("recount_comments", recount_comments))
@@ -10482,8 +10737,14 @@ function closeCR(){
 async function fetchCRMsgs(scroll=false){
   if(!crPartnerId)return;
   try{
-    const d=await api(`/api/mini-app/chats/${crPartnerId}?user_id=${UID}`);
     const box=document.getElementById('cr-msgs');
+    // Don't tear down the message list (and kill playback) while a voice note is
+    // actively playing in it - the innerHTML replace below recreates every <audio>
+    // element from scratch, which stops audio the instant a poll tick lands.
+    // Skip this refresh cycle; the next poll picks up new messages once playback stops.
+    const isPlayingVoice = Array.from(box.querySelectorAll('.voice-player-audio')).some(a=>!a.paused);
+    if(isPlayingVoice) return;
+    const d=await api(`/api/mini-app/chats/${crPartnerId}?user_id=${UID}`);
     const wasBottom=box.scrollHeight-box.scrollTop<=box.clientHeight+80;
     box.innerHTML=(d.data||[]).map(m=>`<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble">${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`).join('');
     if(scroll||wasBottom)box.scrollTop=box.scrollHeight;
