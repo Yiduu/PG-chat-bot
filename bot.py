@@ -1355,7 +1355,7 @@ def get_main_menu(user_id: str):
         
         return ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton("Share")],
+                [KeyboardButton("Share"), KeyboardButton("Chat Requests")],
                 [KeyboardButton("Profile"), KeyboardButton("Posts")],
                 [KeyboardButton("Top"), KeyboardButton("Settings")],
                 [KeyboardButton("Open App", web_app=WebAppInfo(url=mini_app_url))]
@@ -1370,7 +1370,7 @@ def get_main_menu(user_id: str):
         # Fallback to menu without Web App button if something fails
         return ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton("Share")],
+                [KeyboardButton("Share"), KeyboardButton("Chat Requests")],
                 [KeyboardButton("Profile"), KeyboardButton("Posts")],
                 [KeyboardButton("Top"), KeyboardButton("Settings")]
             ],
@@ -1383,7 +1383,7 @@ def get_main_menu(user_id: str):
 # Fallback for static contexts if needed (can be removed later)
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("Share")],
+        [KeyboardButton("Share"), KeyboardButton("Chat Requests")],
         [KeyboardButton("Profile"), KeyboardButton("Posts")],
         [KeyboardButton("Top"), KeyboardButton("Settings")]
     ],
@@ -8316,7 +8316,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
 
     # Handle cancel command or main menu buttons while in an input state
-    main_menu_buttons = ["Share", "Profile", "Posts", "Top", "Settings", "Open App", "❌ Cancel", "/cancel"]
+    main_menu_buttons = ["Share", "Chat Requests", "Profile", "Posts", "Top", "Settings", "Open App", "❌ Cancel", "/cancel"]
     
     if text in main_menu_buttons or text.lower() in ("cancel", "❌ cancel"):
         # UNCONDITIONALLY reset all waiting states when a menu button is pressed
@@ -8812,6 +8812,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.MARKDOWN
         )
         return 
+
+    elif text == "Chat Requests":
+        await show_chat_requests(update, context, page=1)
+        return
 
     elif text == "Profile":
         await send_updated_profile(user_id, update.message.chat.id, context)
