@@ -2152,7 +2152,36 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("Error showing confirmation. Please try again.")
         elif update.callback_query:
             await update.callback_query.message.reply_text("Error showing confirmation. Please try again.")
-async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post_id: int, commenter_id: str, comment_id: int = None):
+async def _send_notification_with_media(context: ContextTypes.DEFAULT_TYPE, chat_id, text, parse_mode, reply_markup=None, media_type=None, media_id=None):
+    """Send a notification. If real media (photo/voice/gif) is available, attach it with the
+    text as caption so the person can see/hear the actual reply, not just a label. Falls back
+    to a plain text message on any failure so a notification is never silently dropped."""
+    try:
+        if media_id and media_type and media_type != 'text':
+            caption = text[:1024]  # Telegram's caption hard limit
+            if media_type == 'photo':
+                await context.bot.send_photo(chat_id=chat_id, photo=media_id, caption=caption, parse_mode=parse_mode, reply_markup=reply_markup)
+                return
+            if media_type == 'voice':
+                await context.bot.send_voice(chat_id=chat_id, voice=media_id, caption=caption, parse_mode=parse_mode, reply_markup=reply_markup)
+                return
+            if media_type == 'gif':
+                await context.bot.send_animation(chat_id=chat_id, animation=media_id, caption=caption, parse_mode=parse_mode, reply_markup=reply_markup)
+                return
+            if media_type == 'sticker':
+                # Stickers don't support captions — send the sticker, then the text+button as a follow-up
+                await context.bot.send_sticker(chat_id=chat_id, sticker=media_id)
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+                return
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except Exception as e:
+        logger.error(f"_send_notification_with_media failed, falling back to text: {e}")
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+        except Exception as e2:
+            logger.error(f"_send_notification_with_media text fallback also failed: {e2}")
+
+async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post_id: int, commenter_id: str, comment_id: int = None, comment_content: str = None, media_type: str = 'text', media_id: str = None):
     """Notify the post author when a new top‑level comment is added."""
     try:
         post = db_fetch_one("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,))
@@ -2176,13 +2205,27 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
         import html
         safe_commenter_name = html.escape(commenter_name)
         safe_post_preview = html.escape(post_preview)
-        
-        notification_text = (
-            f"<b>New comment on your vent!</b>\n\n"
-            f"{safe_commenter_name} commented:\n\n"
-            f"<b>Your vent:</b> {safe_post_preview}\n\n"
-            f"<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>"
-        )
+
+        media_label = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🩹 Sticker', 'photo': '🖼 Photo'}.get(media_type)
+        if comment_content:
+            safe_comment_text = html.escape(comment_content[:500])
+        else:
+            safe_comment_text = media_label or ""
+
+        lines = [
+            "<b>New comment on your vent!</b>",
+            "",
+            f"<b>{safe_commenter_name}</b> wrote:",
+        ]
+        if safe_comment_text:
+            lines.append(f"“{safe_comment_text}”")
+        lines += [
+            "",
+            f"<b>Your vent:</b> {safe_post_preview}",
+            "",
+            f"<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>",
+        ]
+        notification_text = "\n".join(lines)
 
         reply_markup = None
         if comment_id:
@@ -2190,15 +2233,13 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
                 [InlineKeyboardButton("↩ Reply", callback_data=f"reply_{post_id}_{comment_id}")]
             ])
         
-        await context.bot.send_message(
-            chat_id=author_id,
-            text=notification_text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup
+        await _send_notification_with_media(
+            context, author_id, notification_text, ParseMode.HTML,
+            reply_markup=reply_markup, media_type=media_type, media_id=media_id
         )
     except Exception as e:
         logger.error(f"Error notifying vent author: {e}")
-async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str, new_comment_id: int = None):
+async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str, new_comment_id: int = None, comment_content: str = None, media_type: str = 'text', media_id: str = None):
     try:
         comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
         if not comment:
@@ -2224,14 +2265,27 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
         
         safe_post_preview = escape_markdown(post_preview, version=2)
-        safe_comment_preview = escape_markdown(comment['content'][:100], version=2)
+        safe_parent_preview = escape_markdown((comment['content'] or '[media]')[:100], version=2)
 
-        notification_text = (
-            f"{safe_replier_name} replied to your comment\\:\n\n"
-            f"{safe_comment_preview}\n\n"
-            f"Post\\: {safe_post_preview}\n\n"
-            f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
-        )
+        media_label = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🩹 Sticker', 'photo': '🖼 Photo'}.get(media_type)
+        if comment_content:
+            safe_reply_text = escape_markdown(comment_content[:500], version=2)
+        else:
+            safe_reply_text = escape_markdown(media_label, version=2) if media_label else ""
+
+        lines = [
+            f"{safe_replier_name} replied to your comment\\:",
+            f"_{safe_parent_preview}_",
+            "",
+        ]
+        if safe_reply_text:
+            lines += [f"*Their reply:*", safe_reply_text, ""]
+        lines += [
+            f"Post\\: {safe_post_preview}",
+            "",
+            f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})",
+        ]
+        notification_text = "\n".join(lines)
 
         reply_markup = None
         if new_comment_id:
@@ -2239,11 +2293,9 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
                 [InlineKeyboardButton("↩ Reply", callback_data=f"replytoreply_{post_id}_{comment_id}_{new_comment_id}")]
             ])
         
-        await context.bot.send_message(
-            chat_id=original_author['user_id'],
-            text=notification_text,
-            parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=reply_markup
+        await _send_notification_with_media(
+            context, original_author['user_id'], notification_text, ParseMode.MARKDOWN_V2,
+            reply_markup=reply_markup, media_type=media_type, media_id=media_id
         )
     except Exception as e:
         logger.error(f"Error sending reply notification: {e}")
@@ -8813,11 +8865,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Notify vent author if this is a top‑level comment
         if parent_comment_id == 0:
-            await notify_vent_author_of_comment(context, post_id, user_id, new_comment_id)
+            await notify_vent_author_of_comment(
+                context, post_id, user_id, new_comment_id,
+                comment_content=content, media_type=comment_type, media_id=file_id
+            )
         
         # Notify parent comment author if this is a reply
         if parent_comment_id != 0:
-            await notify_user_of_reply(context, post_id, parent_comment_id, user_id, new_comment_id)
+            await notify_user_of_reply(
+                context, post_id, parent_comment_id, user_id, new_comment_id,
+                comment_content=content, media_type=comment_type, media_id=file_id
+            )
         return
 
     elif user and user['waiting_for_private_message']:
@@ -11374,13 +11432,14 @@ def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_id=None, c
         post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
         safe_commenter = html.escape(commenter_name)
         safe_post_preview = html.escape(post_preview)
-        safe_comment = html.escape((comment_content or '')[:150]) if comment_content else ""
 
-        lines = ["<b>New comment on your vent!</b>", "", f"{safe_commenter} commented:"]
+        media_label = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🩹 Sticker', 'photo': '🖼 Photo'}.get(media_type)
+        safe_comment = html.escape((comment_content or '')[:500]) if comment_content else (media_label or "")
+
+        lines = ["<b>New comment on your vent!</b>", "", f"<b>{safe_commenter}</b> wrote:"]
         if safe_comment:
-            lines.append(f"\n{safe_comment}")
-        lines.append(f"\n<b>Your vent:</b> {safe_post_preview}")
-        lines.append(f"\n<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>")
+            lines.append(f"“{safe_comment}”")
+        lines += ["", f"<b>Your vent:</b> {safe_post_preview}", "", f"<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>"]
         notification_text = "\n".join(lines)
 
         reply_markup = None
@@ -11425,12 +11484,14 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_commen
         post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
         safe_post_preview = html.escape(post_preview)
         safe_parent_preview = html.escape((parent_comment['content'] or '[media]')[:100])
-        safe_comment = html.escape((comment_content or '')[:150]) if comment_content else ""
 
-        lines = [f"{safe_replier_name} replied to your comment:", "", f"{safe_parent_preview}"]
+        media_label = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🩹 Sticker', 'photo': '🖼 Photo'}.get(media_type)
+        safe_comment = html.escape((comment_content or '')[:500]) if comment_content else (media_label or "")
+
+        lines = [f"{safe_replier_name} replied to your comment:", f"<i>{safe_parent_preview}</i>", ""]
         if safe_comment:
-            lines.append(f"\n{safe_comment}")
-        lines.append(f"\nPost: {safe_post_preview}")
+            lines += ["<b>Their reply:</b>", f"“{safe_comment}”", ""]
+        lines.append(f"Post: {safe_post_preview}")
         lines.append(f"\n<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>")
         notification_text = "\n".join(lines)
 
