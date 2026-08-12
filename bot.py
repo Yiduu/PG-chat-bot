@@ -940,7 +940,7 @@ def build_multi_category_keyboard(selected_codes):
         if code in selected_codes:
             button_text = f"✅ {display}"
         else:
-            button_text = f"⬜ {display}"
+            button_text = display
             
         row.append(InlineKeyboardButton(button_text, callback_data=f"cat_toggle_{code}"))
         if len(row) == 2:
