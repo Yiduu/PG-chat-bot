@@ -1607,19 +1607,19 @@ async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
 def format_aura(rating):
     """Create aura based on weighted contribution points."""
     if rating < 0:
-        return ""  # Red aura for negative rank (Shame)
+        return "🔴"  # Red aura for negative rank (Shame)
     elif rating >= 500:
-        return ""  # Crown aura for legendary contributors (500+ points)
+        return "👑"  # Crown aura for legendary contributors (500+ points)
     elif rating >= 100:
-        return ""  # Purple aura for elite users (100-499 points)
+        return "🟣"  # Purple aura for elite users (100-499 points)
     elif rating >= 50:
-        return ""  # Blue aura for advanced users (50-99 points)
+        return "🔵"  # Blue aura for advanced users (50-99 points)
     elif rating >= 25:
-        return ""  # Green aura for intermediate users (25-49 points)
+        return "🟢"  # Green aura for intermediate users (25-49 points)
     elif rating >= 10:
-        return ""  # Yellow aura for active users (10-24 points)
+        return "🟡"  # Yellow aura for active users (10-24 points)
     else:
-        return ""  # White aura for new/neutral users (0-9 points)
+        return "⚪"  # White aura for new/neutral users (0-9 points)
 
 
 def count_all_comments(post_id):
@@ -4947,7 +4947,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         is_author = str(comment['author_id']) == str(post_author_id)
         
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{comment['author_id']}_{post_id}"
-        aura_text = f"_Aura_ {rating} {format_aura(rating)}" if not comment['is_admin'] else ""
+        aura_text = f"_Aura_ {format_aura(rating)} ⚡ {rating} pts" if not comment['is_admin'] else ""
         
         if is_author:
             # Vent author: show sex emoji + clickable "Vent author" (no custom avatar, no aura)
@@ -5009,7 +5009,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
         
     rating_reply = calculate_user_rating(reply['author_id'])
     reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply['author_id']}_{post_id}"
-    aura_text = f"_Aura_ {rating_reply} {format_aura(rating_reply)}" if not is_admin else ""
+    aura_text = f"_Aura_ {format_aura(rating_reply)} ⚡ {rating_reply} pts" if not is_admin else ""
     
     # Check if reply author is the vent author
     if str(reply['author_id']) == str(post_author_id):
@@ -5195,6 +5195,58 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_menu(str(update.effective_user.id)),
             parse_mode=ParseMode.MARKDOWN
         )
+
+
+async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/profile - shortcut to the same profile view as the 'Profile' menu button."""
+    user_id = str(update.effective_user.id)
+    await send_updated_profile(user_id, update.message.chat.id, context)
+
+
+async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ask - shortcut to the same category picker as the 'Share' menu button."""
+    context.user_data['selected_categories'] = set()
+    await update.message.reply_text(
+        "*Select categories (you can choose multiple):*",
+        reply_markup=build_multi_category_keyboard(set()),
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/help - quick guide to using the bot."""
+    help_text = (
+        "*How to use this bot*\n\n"
+        "• *Share* - post an anonymous vent, pick one or more categories, then submit.\n"
+        "• *Profile* - view your stats, aura level, and points.\n"
+        "• *Posts* - browse posts from the community.\n"
+        "• *Top* - see the leaderboard of top contributors.\n"
+        "• *Chat Requests* - see anyone who wants to chat with you, and accept or reject.\n"
+        "• *Settings* - manage notifications, privacy, and blocked users.\n"
+        "• *Open App* - the full mini app experience with feed, comments, and voice messages.\n\n"
+        "*Useful commands*\n"
+        "/ask - start a new post\n"
+        "/profile - view your profile\n"
+        "/inbox - view private messages\n"
+        "/requests - view pending chat requests\n"
+        "/leaderboard - view top contributors\n"
+        "/settings - open settings\n"
+        "/about - learn more about this bot"
+    )
+    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+
+
+async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/about - what this bot is and how anonymity works."""
+    about_text = (
+        "*About this bot*\n\n"
+        "This is a safe space to share what's on your mind anonymously, connect with others, "
+        "and support one another.\n\n"
+        "Your identity stays private unless you choose to reveal it - posts and comments are "
+        "shown under an anonymous name and avatar.\n\n"
+        "Use /help to see everything the bot can do."
+    )
+    await update.message.reply_text(about_text, parse_mode=ParseMode.MARKDOWN)
 
 
 async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE):
@@ -9027,6 +9079,10 @@ def main():
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("inbox", show_inbox))
     app.add_handler(CommandHandler("requests", show_chat_requests))
+    app.add_handler(CommandHandler("profile", profile_command))
+    app.add_handler(CommandHandler("ask", ask_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("about", about_command))
     app.add_handler(CommandHandler("fixventnumbers", fix_vent_numbers))
     app.add_handler(CommandHandler("fix_missing_sex", fix_missing_sex))
     app.add_handler(CommandHandler("recount_comments", recount_comments))
@@ -9233,6 +9289,19 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   color:var(--gold2);
 }
 .pill-sm{padding:2px 8px;font-size:10px}
+.pill-aura{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:6px 14px;border-radius:24px;
+  font-size:12.5px;font-weight:700;letter-spacing:0.2px;
+  background:linear-gradient(135deg,rgba(201,168,76,0.30) 0%,rgba(245,158,11,0.16) 55%,rgba(201,168,76,0.24) 100%);
+  border:0.5px solid rgba(245,158,11,0.4);
+  color:var(--gold3);
+  box-shadow:0 2px 10px rgba(201,168,76,0.2),inset 0 1px 0 rgba(255,255,255,0.07);
+}
+.pill-aura-badge{font-size:14px;line-height:1}
+.pill-aura .bolt-icon{width:13px;height:13px;flex-shrink:0;display:block}
+.pill-aura .bolt-icon path{fill:#ff9800}
+.pill-aura-pts{color:var(--gold3)}
 .ava{
   border-radius:50%;background:linear-gradient(135deg,var(--bg3),var(--bg2));
   border:1.5px solid var(--border2);
@@ -10659,7 +10728,7 @@ async function loadProfile(){
       <div class="profile-hero"><div style="position:absolute;top:16px;right:16px"><button class="btn-ghost" onclick="setupEdit()" style="font-size:12px;padding:6px 12px">Edit</button></div>
       <div class="profile-ava-wrap">${avaHtml(p.avatar||p.sex)}</div>
       <div class="profile-name">${esc(p.weekly_badge||'')} ${esc(p.name)}</div>
-      <div style="margin-top:6px"><span class="pill">${esc(p.aura)} ${p.rating} pts</span></div>
+      <div style="margin-top:6px"><span class="pill-aura"><span class="pill-aura-badge">${esc(p.aura)}</span><svg class="bolt-icon" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg><span class="pill-aura-pts">${p.rating} pts</span></span></div>
       <div class="profile-stats"><div class="profile-stat"><div class="profile-stat-num">${p.stats?.posts||0}</div><div class="profile-stat-lbl">Vents</div></div><div class="profile-stat"><div class="profile-stat-num">${p.stats?.followers||0}</div><div class="profile-stat-lbl">Followers</div></div><div class="profile-stat"><div class="profile-stat-num">${p.stats?.comments||0}</div><div class="profile-stat-lbl">Replies</div></div></div></div>
       ${myPosts.length?`<div class="section-label">My recent vents</div><div style="padding:0 16px">${myPosts.slice(0,3).map(p=>`<div class="post-card" onclick="openPost(${p.id})" style="margin:0 0 10px"><div class="post-body" style="-webkit-line-clamp:2">${esc(p.content)}</div><div style="font-size:11px;color:var(--text3);margin-top:6px">${esc(p.time_ago)}</div></div>`).join('')}</div>`:''}
     `;
