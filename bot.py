@@ -4947,7 +4947,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         is_author = str(comment['author_id']) == str(post_author_id)
         
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{comment['author_id']}_{post_id}"
-        aura_text = f"_Aura_ {format_aura(rating)} ⚡ {rating} pts" if not comment['is_admin'] else ""
+        aura_text = f"_Aura_ ⚡ {rating} pts" if not comment['is_admin'] else ""
         
         if is_author:
             # Vent author: show sex emoji + clickable "Vent author" (no custom avatar, no aura)
@@ -5009,7 +5009,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
         
     rating_reply = calculate_user_rating(reply['author_id'])
     reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply['author_id']}_{post_id}"
-    aura_text = f"_Aura_ {format_aura(rating_reply)} ⚡ {rating_reply} pts" if not is_admin else ""
+    aura_text = f"_Aura_ ⚡ {rating_reply} pts" if not is_admin else ""
     
     # Check if reply author is the vent author
     if str(reply['author_id']) == str(post_author_id):
