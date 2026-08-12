@@ -9486,9 +9486,11 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 }
 .cat-chip:active{transform:scale(0.97)}
 .cat-chip.on{background:rgba(201,168,76,0.1);border-color:rgba(201,168,76,0.35);color:var(--gold2)}
-.cat-check{width:16px;height:16px;border-radius:4px;border:1.5px solid currentColor;
-  display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
-.cat-chip.on .cat-check::after{content:'✓'}
+.cat-check{width:16px;height:16px;
+  display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;
+  color:transparent;transition:color 0.15s}
+.cat-chip.on .cat-check{color:var(--gold2)}
+.cat-chip.on .cat-check::after{content:'✓';font-weight:700}
 .post-card{
   margin:10px 16px 0;
   background:var(--glass);border:0.5px solid var(--border);
