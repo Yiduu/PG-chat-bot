@@ -2259,8 +2259,9 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
     author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (post['author_id'],))
     author_name = get_display_name(author)
     
-    # Increased to 4000 characters for full admin review (respects Telegram's 4096 limit)
-    post_preview = post['content'][:4000] + ('...' if len(post['content']) > 4000 else '')
+    media_type = post.get('media_type') or 'text'
+    media_id = post.get('media_id')
+    content_text = post['content'] or ''
     
     keyboard = InlineKeyboardMarkup([
         [
@@ -2276,13 +2277,34 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
     ])
     
     explicit_line = "Marked as explicit\n\n" if post.get('explicit') else ""
-    
+    media_label = {'voice': '[Voice message — no caption]', 'audio': '[Audio — no caption]', 'photo': '[Photo — no caption]'}.get(media_type, '')
+
     try:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"New post awaiting approval from {author_name}:\n\n{explicit_line}{post_preview}",
-            reply_markup=keyboard
-        )
+        if media_id and media_type != 'text':
+            # Media notifications: send the actual file so the admin can review it,
+            # with a caption capped to Telegram's 1024-char caption limit.
+            caption_body = content_text[:900] + ('...' if len(content_text) > 900 else '') if content_text else media_label
+            caption = f"New post awaiting approval from {author_name}:\n\n{explicit_line}{caption_body}"[:1024]
+            if media_type == 'photo':
+                await context.bot.send_photo(chat_id=ADMIN_ID, photo=media_id, caption=caption, reply_markup=keyboard)
+            elif media_type == 'voice':
+                await context.bot.send_voice(chat_id=ADMIN_ID, voice=media_id, caption=caption, reply_markup=keyboard)
+            elif media_type == 'audio':
+                await context.bot.send_audio(chat_id=ADMIN_ID, audio=media_id, caption=caption, reply_markup=keyboard)
+            else:
+                post_preview = content_text[:4000] + ('...' if len(content_text) > 4000 else '')
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=f"New post awaiting approval from {author_name}:\n\n{explicit_line}{post_preview}",
+                    reply_markup=keyboard
+                )
+        else:
+            post_preview = content_text[:4000] + ('...' if len(content_text) > 4000 else '')
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"New post awaiting approval from {author_name}:\n\n{explicit_line}{post_preview}",
+                reply_markup=keyboard
+            )
     except Exception as e:
         logger.error(f"Error notifying admin: {e}")
 
@@ -3023,7 +3045,9 @@ async def advanced_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN
     )
-async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+ADMIN_PENDING_PAGE_SIZE = 5
+
+async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
     user_id = str(update.effective_user.id)
     
     # Verify admin permissions
@@ -3034,8 +3058,19 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif update.callback_query:
             await update.callback_query.message.reply_text("You don't have permission to access this.")
         return
-    
-    # Get pending posts (simplified - no JOIN with pending_notifications)
+
+    if page < 1:
+        page = 1
+    per_page = ADMIN_PENDING_PAGE_SIZE
+
+    total_row = db_fetch_one("SELECT COUNT(*) as cnt FROM posts WHERE approved = FALSE")
+    total = total_row['cnt'] if total_row else 0
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    if page > total_pages:
+        page = total_pages
+    offset = (page - 1) * per_page
+
+    # Get pending posts for this page (simplified - no JOIN with pending_notifications)
     posts = db_fetch_all("""
         SELECT p.post_id, p.content, u.anonymous_name, p.media_type, p.media_id, p.explicit,
                STRING_AGG(pc.category_code, ', ') as categories
@@ -3045,7 +3080,8 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         WHERE p.approved = FALSE
         GROUP BY p.post_id, u.anonymous_name, p.media_type, p.media_id, p.content, p.timestamp, p.explicit
         ORDER BY p.timestamp
-    """)
+        LIMIT %s OFFSET %s
+    """, (per_page, offset))
     
     if not posts:
         if update.callback_query:
@@ -3054,8 +3090,8 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text("No pending posts!")
         return
     
-    # Send each pending post to admin
-    for post in posts[:10]:  # Limit to 10 posts to avoid flooding
+    # Send each pending post to admin (one page's worth at a time)
+    for post in posts:
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("Approve", callback_data=f"approve_post_{post['post_id']}"),
@@ -3069,14 +3105,21 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ]
         ])
         
-        # Use HTML for more reliable escaping. Increased to 2000 for better admin review.
-        preview = post['content'][:2000] + ('...' if len(post['content']) > 2000 else '')
+        content_text = post['content'] or ''
+        # Captions are capped harder than plain messages (Telegram limits captions to 1024
+        # chars) - use a shorter preview for media posts so the caption never silently fails.
+        max_preview = 2000 if post['media_type'] == 'text' else 800
+        preview = content_text[:max_preview] + ('...' if len(content_text) > max_preview else '')
+        if not preview and post['media_type'] != 'text':
+            preview = f"[{post['media_type']} — no caption]"
         safe_preview = html.escape(preview)
         safe_name = html.escape(post['anonymous_name'] or "Anonymous")
         safe_cats = html.escape(post['categories'] or 'Other')
         explicit_line = "<b>Marked as explicit</b>\n\n" if post.get('explicit') else ""
         
         text = f"<b>Pending Post</b> [{safe_cats}]\n\n{explicit_line}{safe_preview}\n\n<b>{safe_name}</b>"
+        if post['media_type'] != 'text':
+            text = text[:1024]
         
         try:
             if post['media_type'] == 'text':
@@ -3152,6 +3195,21 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     reply_markup=keyboard,
                     parse_mode=ParseMode.HTML
                 )
+
+    # Pagination footer so admins can reach posts beyond the first page
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("◀ Prev", callback_data=f"admin_pending_page_{page-1}"))
+    nav_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("Next ▶", callback_data=f"admin_pending_page_{page+1}"))
+    nav_markup = InlineKeyboardMarkup([nav_row, [InlineKeyboardButton("Admin Panel", callback_data='admin_panel')]])
+
+    footer_text = f"Showing {len(posts)} of {total} pending post(s) — page {page}/{total_pages}"
+    if update.callback_query:
+        await update.callback_query.message.reply_text(footer_text, reply_markup=nav_markup)
+    else:
+        await update.message.reply_text(footer_text, reply_markup=nav_markup)
 
 async def toggle_post_explicit(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
     """Admin flags or unflags a post as explicit — works for posts still pending
@@ -7787,7 +7845,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await admin_panel(update, context)
             
         elif query.data == 'admin_pending':
-            await show_pending_posts(update, context)
+            await show_pending_posts(update, context, page=1)
+
+        elif query.data.startswith('admin_pending_page_'):
+            try:
+                page = int(query.data.split('_')[-1])
+            except (IndexError, ValueError):
+                page = 1
+            await show_pending_posts(update, context, page=page)
             
         elif query.data == 'admin_stats':
             await show_admin_stats(update, context)
@@ -11213,7 +11278,9 @@ def mini_app_submit_vent():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 def notify_admin_of_new_post_sync(post_id):
-    """Sync version of notify_admin_of_new_post"""
+    """Sync version of notify_admin_of_new_post. Now sends the actual media (photo/voice/audio)
+    when present, instead of leaving the admin a blank text notification when a mini-app vent
+    has no typed caption."""
     try:
         if not ADMIN_ID:
             return
@@ -11225,24 +11292,38 @@ def notify_admin_of_new_post_sync(post_id):
         author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (post['author_id'],))
         author_name = get_display_name(author)
         
-        post_preview = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
-        
-        logger.info(f"Mini App Post awaiting approval from {author_name}: {post_preview}")
-        
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        payload = {
-            "chat_id": ADMIN_ID,
-            "text": f"New post awaiting approval from {author_name}:\n\n{post_preview}",
-            "reply_markup": {
-                "inline_keyboard": [
-                    [
-                        {"text": "Approve", "callback_data": f"approve_post_{post_id}"},
-                        {"text": "Reject", "callback_data": f"reject_post_{post_id}"}
-                    ]
+        media_type = post.get('media_type') or 'text'
+        media_id = post.get('media_id')
+        content_text = post['content'] or ''
+        explicit_line = "Marked as explicit\n\n" if post.get('explicit') else ""
+        media_label = {'voice': '[Voice message — no caption]', 'audio': '[Audio — no caption]', 'photo': '[Photo — no caption]'}.get(media_type, '')
+
+        logger.info(f"Mini App Post awaiting approval from {author_name}: {content_text[:100] or media_label}")
+
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Approve", "callback_data": f"approve_post_{post_id}"},
+                    {"text": "Reject", "callback_data": f"reject_post_{post_id}"}
+                ],
+                [
+                    {"text": "Unmark Explicit" if post.get('explicit') else "Mark Explicit",
+                     "callback_data": f"toggle_explicit_{post_id}"}
                 ]
-            }
+            ]
         }
-        requests.post(url, json=payload, timeout=5)
+
+        if media_id and media_type != 'text':
+            caption_body = content_text[:900] + ('...' if len(content_text) > 900 else '') if content_text else media_label
+            caption = f"New post awaiting approval from {author_name}:\n\n{explicit_line}{caption_body}"[:1024]
+            send_telegram_media_sync(
+                chat_id=ADMIN_ID, media_type=media_type, media_id=media_id,
+                caption=caption, parse_mode=None, reply_markup=keyboard
+            )
+        else:
+            post_preview = content_text[:4000] + ('...' if len(content_text) > 4000 else '')
+            header = f"New post awaiting approval from {author_name}:\n\n{explicit_line}{post_preview}"
+            send_telegram_message_sync(ADMIN_ID, header, parse_mode=None, reply_markup=keyboard)
     except Exception as e:
         logger.error(f"Error in sync admin notification: {e}")
 
