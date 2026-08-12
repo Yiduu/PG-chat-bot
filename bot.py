@@ -2152,36 +2152,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("Error showing confirmation. Please try again.")
         elif update.callback_query:
             await update.callback_query.message.reply_text("Error showing confirmation. Please try again.")
-async def _send_notification_with_media(context: ContextTypes.DEFAULT_TYPE, chat_id, text, parse_mode, reply_markup=None, media_type=None, media_id=None):
-    """Send a notification. If real media (photo/voice/gif) is available, attach it with the
-    text as caption so the person can see/hear the actual reply, not just a label. Falls back
-    to a plain text message on any failure so a notification is never silently dropped."""
-    try:
-        if media_id and media_type and media_type != 'text':
-            caption = text[:1024]  # Telegram's caption hard limit
-            if media_type == 'photo':
-                await context.bot.send_photo(chat_id=chat_id, photo=media_id, caption=caption, parse_mode=parse_mode, reply_markup=reply_markup)
-                return
-            if media_type == 'voice':
-                await context.bot.send_voice(chat_id=chat_id, voice=media_id, caption=caption, parse_mode=parse_mode, reply_markup=reply_markup)
-                return
-            if media_type == 'gif':
-                await context.bot.send_animation(chat_id=chat_id, animation=media_id, caption=caption, parse_mode=parse_mode, reply_markup=reply_markup)
-                return
-            if media_type == 'sticker':
-                # Stickers don't support captions — send the sticker, then the text+button as a follow-up
-                await context.bot.send_sticker(chat_id=chat_id, sticker=media_id)
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
-                return
-        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
-    except Exception as e:
-        logger.error(f"_send_notification_with_media failed, falling back to text: {e}")
-        try:
-            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
-        except Exception as e2:
-            logger.error(f"_send_notification_with_media text fallback also failed: {e2}")
-
-async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post_id: int, commenter_id: str, comment_id: int = None, comment_content: str = None, media_type: str = 'text', media_id: str = None):
+async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post_id: int, commenter_id: str, comment_id: int = None):
     """Notify the post author when a new top‑level comment is added."""
     try:
         post = db_fetch_one("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,))
@@ -2205,27 +2176,13 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
         import html
         safe_commenter_name = html.escape(commenter_name)
         safe_post_preview = html.escape(post_preview)
-
-        media_label = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🩹 Sticker', 'photo': '🖼 Photo'}.get(media_type)
-        if comment_content:
-            safe_comment_text = html.escape(comment_content[:500])
-        else:
-            safe_comment_text = media_label or ""
-
-        lines = [
-            "<b>New comment on your vent!</b>",
-            "",
-            f"<b>{safe_commenter_name}</b> wrote:",
-        ]
-        if safe_comment_text:
-            lines.append(f"“{safe_comment_text}”")
-        lines += [
-            "",
-            f"<b>Your vent:</b> {safe_post_preview}",
-            "",
-            f"<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>",
-        ]
-        notification_text = "\n".join(lines)
+        
+        notification_text = (
+            f"<b>New comment on your vent!</b>\n\n"
+            f"{safe_commenter_name} commented:\n\n"
+            f"<b>Your vent:</b> {safe_post_preview}\n\n"
+            f"<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>"
+        )
 
         reply_markup = None
         if comment_id:
@@ -2233,13 +2190,15 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
                 [InlineKeyboardButton("↩ Reply", callback_data=f"reply_{post_id}_{comment_id}")]
             ])
         
-        await _send_notification_with_media(
-            context, author_id, notification_text, ParseMode.HTML,
-            reply_markup=reply_markup, media_type=media_type, media_id=media_id
+        await context.bot.send_message(
+            chat_id=author_id,
+            text=notification_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup
         )
     except Exception as e:
         logger.error(f"Error notifying vent author: {e}")
-async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str, new_comment_id: int = None, comment_content: str = None, media_type: str = 'text', media_id: str = None):
+async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str, new_comment_id: int = None):
     try:
         comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
         if not comment:
@@ -2265,27 +2224,14 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
         
         safe_post_preview = escape_markdown(post_preview, version=2)
-        safe_parent_preview = escape_markdown((comment['content'] or '[media]')[:100], version=2)
+        safe_comment_preview = escape_markdown(comment['content'][:100], version=2)
 
-        media_label = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🩹 Sticker', 'photo': '🖼 Photo'}.get(media_type)
-        if comment_content:
-            safe_reply_text = escape_markdown(comment_content[:500], version=2)
-        else:
-            safe_reply_text = escape_markdown(media_label, version=2) if media_label else ""
-
-        lines = [
-            f"{safe_replier_name} replied to your comment\\:",
-            f"_{safe_parent_preview}_",
-            "",
-        ]
-        if safe_reply_text:
-            lines += [f"*Their reply:*", safe_reply_text, ""]
-        lines += [
-            f"Post\\: {safe_post_preview}",
-            "",
-            f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})",
-        ]
-        notification_text = "\n".join(lines)
+        notification_text = (
+            f"{safe_replier_name} replied to your comment\\:\n\n"
+            f"{safe_comment_preview}\n\n"
+            f"Post\\: {safe_post_preview}\n\n"
+            f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
+        )
 
         reply_markup = None
         if new_comment_id:
@@ -2293,9 +2239,11 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
                 [InlineKeyboardButton("↩ Reply", callback_data=f"replytoreply_{post_id}_{comment_id}_{new_comment_id}")]
             ])
         
-        await _send_notification_with_media(
-            context, original_author['user_id'], notification_text, ParseMode.MARKDOWN_V2,
-            reply_markup=reply_markup, media_type=media_type, media_id=media_id
+        await context.bot.send_message(
+            chat_id=original_author['user_id'],
+            text=notification_text,
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=reply_markup
         )
     except Exception as e:
         logger.error(f"Error sending reply notification: {e}")
@@ -4805,29 +4753,28 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             send_kwargs['caption'] = message_text
             msg = await context.bot.send_voice(**send_kwargs)
             
-        elif comment_type in ('photo', 'gif') and file_id:
-            # Photos and GIFs support captions, so attach the author info + buttons
-            # directly to the media — same clean single-bubble layout as voice comments.
-            send_kwargs['caption'] = message_text
-            if comment_type == 'photo':
-                msg = await context.bot.send_photo(photo=file_id, **send_kwargs)
-            else:  # gif
-                msg = await context.bot.send_animation(animation=file_id, **send_kwargs)
-
-        elif comment_type == 'sticker' and file_id:
-            # Stickers can't carry a caption on Telegram, so send the sticker first,
-            # then the author info + buttons as a reply directly beneath it.
+        elif comment_type in ['gif', 'sticker', 'photo'] and file_id:
+            # Send media first, then author info as a reply (so info appears below)
+            # The media message handles the initial threading (reply to parent)
             media_kwargs = {
                 'chat_id': chat_id,
                 'reply_to_message_id': send_kwargs.get('reply_to_message_id')
             }
-            media_msg = await context.bot.send_sticker(sticker=file_id, **media_kwargs)
-
+            
+            if comment_type == 'sticker':
+                media_msg = await context.bot.send_sticker(sticker=file_id, **media_kwargs)
+            elif comment_type == 'photo':
+                media_msg = await context.bot.send_photo(photo=file_id, **media_kwargs)
+            else: # gif
+                media_msg = await context.bot.send_animation(animation=file_id, **media_kwargs)
+            
+            # Now send author info and keyboard as a reply to the media message
+            # This message will be stored in DB as the reference for future replies
             info_kwargs = send_kwargs.copy()
             info_kwargs['text'] = message_text
             info_kwargs['reply_to_message_id'] = media_msg.message_id
             info_kwargs['disable_web_page_preview'] = True
-
+            
             msg = await context.bot.send_message(**info_kwargs)
             
         else:
@@ -4851,19 +4798,20 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             # Create a new dict WITHOUT reply_to_message_id
             fallback_kwargs = {k: v for k, v in send_kwargs.items() if k != 'reply_to_message_id'}
             try:
-                if comment_type == 'text' or comment_type not in ('voice', 'gif', 'sticker', 'photo'):
+                if comment_type == 'text' or comment_type not in ['voice', 'gif', 'sticker']:
                     msg = await context.bot.send_message(**fallback_kwargs)
                 elif comment_type == 'voice':
                     msg = await context.bot.send_voice(**fallback_kwargs)
-                elif comment_type in ('photo', 'gif'):
-                    fallback_kwargs['caption'] = fallback_kwargs.pop('text', message_text)
-                    if comment_type == 'photo':
-                        msg = await context.bot.send_photo(photo=file_id, **fallback_kwargs)
-                    else:  # gif
-                        msg = await context.bot.send_animation(animation=file_id, **fallback_kwargs)
-                elif comment_type == 'sticker':
-                    # Fallback for sticker: media first (standalone), then info as reply
-                    m_msg = await context.bot.send_sticker(sticker=file_id, chat_id=chat_id)
+                elif comment_type in ['gif', 'sticker', 'photo']:
+                    # Fallback for sticker/gif/photo: media first (standalone), then info as reply
+                    m_kwargs = {'chat_id': chat_id}
+                    if comment_type == 'sticker':
+                        m_msg = await context.bot.send_sticker(sticker=file_id, **m_kwargs)
+                    elif comment_type == 'photo':
+                        m_msg = await context.bot.send_photo(photo=file_id, **m_kwargs)
+                    else: # gif
+                        m_msg = await context.bot.send_animation(animation=file_id, **m_kwargs)
+                    
                     msg = await context.bot.send_message(
                         chat_id=chat_id,
                         text=message_text,
@@ -8865,17 +8813,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Notify vent author if this is a top‑level comment
         if parent_comment_id == 0:
-            await notify_vent_author_of_comment(
-                context, post_id, user_id, new_comment_id,
-                comment_content=content, media_type=comment_type, media_id=file_id
-            )
+            await notify_vent_author_of_comment(context, post_id, user_id, new_comment_id)
         
         # Notify parent comment author if this is a reply
         if parent_comment_id != 0:
-            await notify_user_of_reply(
-                context, post_id, parent_comment_id, user_id, new_comment_id,
-                comment_content=content, media_type=comment_type, media_id=file_id
-            )
+            await notify_user_of_reply(context, post_id, parent_comment_id, user_id, new_comment_id)
         return
 
     elif user and user['waiting_for_private_message']:
@@ -10954,6 +10896,7 @@ async function loadAdminChats(search=''){
 }
 
 function openAdminTranscript(userA, userB, nameA, nameB){
+  clearInterval(crPoll); crPoll = null; crPartnerId = null;
   adminViewingPair = [userA, userB];
   document.getElementById('cr-name').textContent = `🔴 ${nameA} ↔ ${nameB}`;
   document.getElementById('cr-ava').innerHTML = ICONS.shield;
@@ -10973,9 +10916,10 @@ async function fetchAdminTranscript(scroll=false){
     // actively playing OR still downloading (spinner phase) - the innerHTML
     // replace recreates every <audio> element from scratch, which both kills
     // playback and abandons an in-flight download before it can ever start.
-    const isBusyVoice = Array.from(box.querySelectorAll('.voice-player-audio')).some(el=>!el.paused || el.dataset.loading==='1');
-    if(isBusyVoice) return;
+    const isBusyVoice = ()=>Array.from(box.querySelectorAll('.voice-player-audio')).some(el=>!el.paused || el.dataset.loading==='1');
+    if(isBusyVoice()) return;
     const d = await api(`/api/mini-app/admin/chats/${a}/${b}?admin_id=${UID}&limit=100`);
+    if(isBusyVoice()) return; // re-check: user may have started playing while this request was in flight
     const wasBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 80;
     box.innerHTML = (d.data || []).map(m => `
       <div class="msg-row ${String(m.sender_id)===String(a) ? 'them' : 'me'}">
@@ -11000,6 +10944,8 @@ async function loadChats(){
 }
 
 function openCR(pid,name,ava){
+  clearInterval(adminMonitorPoll); adminMonitorPoll = null; adminViewingPair = null;
+  document.querySelector('.cr-input').style.display = ''; // in case admin view had hidden it
   crPartnerId=pid;
   if(name===undefined){
     const c=chatsCache.find(x=>String(x.partner_id)===String(pid));
@@ -11015,7 +10961,12 @@ function openCR(pid,name,ava){
 }
 function closeCR(){
   document.getElementById('chat-room').classList.remove('open');
-  clearInterval(crPoll);crPartnerId=null;loadChats();
+  clearInterval(crPoll); crPoll = null;
+  clearInterval(adminMonitorPoll); adminMonitorPoll = null;
+  crPartnerId = null;
+  adminViewingPair = null;
+  document.querySelector('.cr-input').style.display = ''; // restore input bar hidden by admin view
+  loadChats();
 }
 async function fetchCRMsgs(scroll=false){
   if(!crPartnerId)return;
@@ -11026,9 +10977,10 @@ async function fetchCRMsgs(scroll=false){
     // recreates every <audio> element from scratch, which both stops audio
     // the instant a poll tick lands and abandons a download mid-flight.
     // Skip this refresh cycle; the next poll picks up new messages once it's done.
-    const isBusyVoice = Array.from(box.querySelectorAll('.voice-player-audio')).some(a=>!a.paused || a.dataset.loading==='1');
-    if(isBusyVoice) return;
+    const isBusyVoice = ()=>Array.from(box.querySelectorAll('.voice-player-audio')).some(a=>!a.paused || a.dataset.loading==='1');
+    if(isBusyVoice()) return;
     const d=await api(`/api/mini-app/chats/${crPartnerId}?user_id=${UID}`);
+    if(isBusyVoice()) return; // re-check: user may have started playing while this request was in flight
     const wasBottom=box.scrollHeight-box.scrollTop<=box.clientHeight+80;
     box.innerHTML=(d.data||[]).map(m=>`<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble">${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`).join('');
     if(scroll||wasBottom)box.scrollTop=box.scrollHeight;
@@ -11432,14 +11384,13 @@ def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_id=None, c
         post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
         safe_commenter = html.escape(commenter_name)
         safe_post_preview = html.escape(post_preview)
+        safe_comment = html.escape((comment_content or '')[:150]) if comment_content else ""
 
-        media_label = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🩹 Sticker', 'photo': '🖼 Photo'}.get(media_type)
-        safe_comment = html.escape((comment_content or '')[:500]) if comment_content else (media_label or "")
-
-        lines = ["<b>New comment on your vent!</b>", "", f"<b>{safe_commenter}</b> wrote:"]
+        lines = ["<b>New comment on your vent!</b>", "", f"{safe_commenter} commented:"]
         if safe_comment:
-            lines.append(f"“{safe_comment}”")
-        lines += ["", f"<b>Your vent:</b> {safe_post_preview}", "", f"<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>"]
+            lines.append(f"\n{safe_comment}")
+        lines.append(f"\n<b>Your vent:</b> {safe_post_preview}")
+        lines.append(f"\n<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>")
         notification_text = "\n".join(lines)
 
         reply_markup = None
@@ -11484,14 +11435,12 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_commen
         post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
         safe_post_preview = html.escape(post_preview)
         safe_parent_preview = html.escape((parent_comment['content'] or '[media]')[:100])
+        safe_comment = html.escape((comment_content or '')[:150]) if comment_content else ""
 
-        media_label = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🩹 Sticker', 'photo': '🖼 Photo'}.get(media_type)
-        safe_comment = html.escape((comment_content or '')[:500]) if comment_content else (media_label or "")
-
-        lines = [f"{safe_replier_name} replied to your comment:", f"<i>{safe_parent_preview}</i>", ""]
+        lines = [f"{safe_replier_name} replied to your comment:", "", f"{safe_parent_preview}"]
         if safe_comment:
-            lines += ["<b>Their reply:</b>", f"“{safe_comment}”", ""]
-        lines.append(f"Post: {safe_post_preview}")
+            lines.append(f"\n{safe_comment}")
+        lines.append(f"\nPost: {safe_post_preview}")
         lines.append(f"\n<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>")
         notification_text = "\n".join(lines)
 
