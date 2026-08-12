@@ -5336,34 +5336,66 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         parse_mode=ParseMode.MARKDOWN_V2
     )
 
-async def show_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show a grid of emojis for the user to select as an avatar"""
+AVATAR_EMOJIS = [
+    # Original set
+    "🦁", "🦊", "🐉", "🐼", "🦄",
+    "🌈", "✨", "🔥", "💎", "🛡",
+    "🦅", "🦉", "🦋", "🌸", "🌙",
+    "🍎", "🍀", "⛪️", "🎗", "🎖",
+    # Faith
+    "✝️", "🙏", "📿", "💒", "🕊️",
+    # Fire / light / energy
+    "⚡", "💥", "🌟",
+    # Mood
+    "😊", "😄", "😢", "😔",
+    # Activity / learning
+    "🚶", "📖", "📚",
+    # Technology
+    "💻", "📱",
+    # Medical
+    "⚕️", "🩺",
+]
+
+AVATAR_PAGE_SIZE = 20  # 4 rows x 5 columns
+
+def _avatar_page_count():
+    return (len(AVATAR_EMOJIS) + AVATAR_PAGE_SIZE - 1) // AVATAR_PAGE_SIZE
+
+async def show_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    """Show a paginated grid of emojis for the user to select as an avatar"""
     query = update.callback_query
     await query.answer()
 
-    emojis = [
-        "🦁", "🦊", "🐉", "🐼", "🦄", 
-        "🌈", "✨", "🔥", "💎", "🛡",
-        "🦅", "🦉", "🦋", "🌸", "🌙",
-        "🍎", "🍀", "⛪️", "🎗", "🎖"
-    ]
-    
+    page_count = _avatar_page_count()
+    page = max(0, min(page, page_count - 1))
+    start = page * AVATAR_PAGE_SIZE
+    emojis = AVATAR_EMOJIS[start:start + AVATAR_PAGE_SIZE]
+
     keyboard = []
-    # Create a 5x4 grid
+    # 5 emojis per row
     for i in range(0, len(emojis), 5):
-        row = [InlineKeyboardButton(e, callback_data=f"set_avatar_{e}") for e in emojis[i:i+5]]
+        row = [InlineKeyboardButton(e, callback_data=f"set_avatar_{e}") for e in emojis[i:i + 5]]
         keyboard.append(row)
-        
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀ Prev", callback_data=f"avatar_page_{page - 1}"))
+    if page_count > 1:
+        nav_row.append(InlineKeyboardButton(f"{page + 1}/{page_count}", callback_data="noop"))
+    if page < page_count - 1:
+        nav_row.append(InlineKeyboardButton("Next ▶", callback_data=f"avatar_page_{page + 1}"))
+    if nav_row:
+        keyboard.append(nav_row)
+
     keyboard.append([InlineKeyboardButton("Remove Emoji", callback_data="clear_avatar")])
     keyboard.append([InlineKeyboardButton("Back to Profile", callback_data="profile")])
-    
+
     text = (
         "*Select Avatar Emoji*\n\n"
         "Choose an emoji to display next to your name:\n\n"
         "_This will appear on your profile, comments, and the leaderboard\\._"
     )
 
-    
     await query.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -7929,8 +7961,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             post_id = int(query.data.split('_')[1])
             await view_post(update, context, post_id)    
         elif query.data == 'select_avatar':
-            await show_avatar_selection(update, context)
-            
+            await show_avatar_selection(update, context, page=0)
+
+        elif query.data.startswith('avatar_page_'):
+            page = int(query.data.split('_')[2])
+            await show_avatar_selection(update, context, page=page)
+
+        elif query.data == 'noop':
+            await query.answer()
+
         elif query.data.startswith('set_avatar_'):
             emoji = query.data.split('_', 2)[2]
             db_execute("UPDATE users SET avatar_emoji = %s WHERE user_id = %s", (emoji, user_id))
