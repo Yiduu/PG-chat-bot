@@ -10180,19 +10180,47 @@ document.addEventListener('DOMContentLoaded',()=>{
       const pauseIcon = btn.querySelector('.icon-pause');
       const spinnerIcon = btn.querySelector('.icon-spinner');
 
-      // Pause every other player (and reset their icons/loading flag) so only one plays at a time
-      document.querySelectorAll('.voice-player-audio').forEach(a=>{ if(a!==audio){ a.pause(); delete a.dataset.loading; } });
-      document.querySelectorAll('.voice-player-btn').forEach(b=>{
-        if(b!==btn){
-          b.querySelector('.icon-play').style.display='inline-block';
-          b.querySelector('.icon-pause').style.display='none';
-          b.querySelector('.icon-spinner').style.display='none';
+      // Every tap on a player bumps its "attempt" token. Any pending
+      // canplaythrough/canplay/timeout callback from an earlier tap checks this
+      // token before doing anything, so an abandoned load can never sneak in
+      // and start audio playing "in the background" after the user moved on.
+      const cancelAttempt = (a)=>{
+        a.dataset.attempt = String((parseInt(a.dataset.attempt || '0', 10)) + 1);
+        delete a.dataset.loading;
+      };
+
+      // Stop every OTHER player - whether currently playing or still loading -
+      // so only one plays at a time and no abandoned load can fire later.
+      document.querySelectorAll('.voice-player').forEach(p=>{
+        const a = p.querySelector('.voice-player-audio');
+        if(a===audio) return;
+        if(!a.paused || a.dataset.loading==='1'){
+          cancelAttempt(a);
+          a.pause();
+          p.querySelector('.icon-play').style.display='inline-block';
+          p.querySelector('.icon-pause').style.display='none';
+          p.querySelector('.icon-spinner').style.display='none';
         }
       });
 
+      if(audio.dataset.loading==='1'){
+        // Tapped again while it's still spinning/downloading - treat this as a
+        // cancel back to idle, rather than stacking a second load attempt on
+        // top of the first (which is what caused duplicate/erratic spinning).
+        cancelAttempt(audio);
+        spinnerIcon.style.display='none';
+        pauseIcon.style.display='none';
+        playIcon.style.display='inline-block';
+        return;
+      }
+
       if(audio.paused){
-        const showPlaying = ()=>{ delete audio.dataset.loading; spinnerIcon.style.display='none'; playIcon.style.display='none'; pauseIcon.style.display='inline-block'; };
-        const showFailed = ()=>{ delete audio.dataset.loading; spinnerIcon.style.display='none'; pauseIcon.style.display='none'; playIcon.style.display='inline-block'; };
+        const myAttempt = String((parseInt(audio.dataset.attempt || '0', 10)) + 1);
+        audio.dataset.attempt = myAttempt;
+        const isCurrent = ()=> audio.dataset.attempt === myAttempt;
+
+        const showPlaying = ()=>{ if(!isCurrent())return; delete audio.dataset.loading; spinnerIcon.style.display='none'; playIcon.style.display='none'; pauseIcon.style.display='inline-block'; };
+        const showFailed = ()=>{ if(!isCurrent())return; delete audio.dataset.loading; spinnerIcon.style.display='none'; pauseIcon.style.display='none'; playIcon.style.display='inline-block'; };
 
         if(audio.readyState >= 3){
           // Already buffered enough to play start-to-finish - go instantly, no spinner needed
@@ -10207,10 +10235,8 @@ document.addEventListener('DOMContentLoaded',()=>{
           playIcon.style.display='none';
           pauseIcon.style.display='none';
           spinnerIcon.style.display='inline-block';
-          let started = false;
           const startOnce = ()=>{
-            if(started) return;
-            started = true;
+            if(!isCurrent()) return; // this attempt was cancelled or superseded - do nothing
             showPlaying();
             audio.play().catch(err=>{ console.error('Playback failed:', err); showFailed(); });
           };
@@ -10222,7 +10248,7 @@ document.addEventListener('DOMContentLoaded',()=>{
           audio.load();
         }
       } else {
-        delete audio.dataset.loading;
+        cancelAttempt(audio);
         audio.pause();
         playIcon.style.display='inline-block';
         pauseIcon.style.display='none';
