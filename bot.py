@@ -9648,9 +9648,11 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   width:36px;height:36px;border-radius:50%;flex-shrink:0;
   background:var(--bg2);border:0.5px solid var(--border);cursor:pointer;
   display:flex;align-items:center;justify-content:center;
-  transition:background 0.15s, transform 0.15s;
+  transition:background 0.15s, transform 0.15s, border-color 0.15s;
   -webkit-tap-highlight-color:transparent;
 }
+.voice-record-btn svg{width:16px;height:16px;fill:none;stroke:var(--gold);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.voice-record-btn:active{transform:scale(0.92)}
 .voice-record-btn.recording{background:#e74c3c;border-color:#e74c3c;transform:scale(1.1)}
 .voice-record-btn.recording svg{stroke:#fff}
 .voice-record-timer{
