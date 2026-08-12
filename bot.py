@@ -9488,6 +9488,8 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .voice-player{display:flex;align-items:center;gap:9px;background:var(--bg2);border:0.5px solid var(--border);border-radius:22px;padding:7px 12px;max-width:230px;margin:8px 0}
 .voice-player-btn{width:32px;height:32px;border-radius:50%;background:var(--gold);border:none;flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .voice-player-btn svg{width:14px;height:14px;fill:#0c0b09;stroke:#0c0b09}
+.voice-player-btn svg.icon-spinner{fill:none;stroke-width:2.5;stroke-linecap:round;animation:voice-spin 0.8s linear infinite}
+@keyframes voice-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .voice-player-track{flex:1;height:4px;background:var(--border);border-radius:2px;position:relative;cursor:pointer}
 .voice-player-progress{position:absolute;left:0;top:0;height:100%;width:0%;background:var(--gold);border-radius:2px;transition:width 0.1s linear}
 .voice-player-time{font-size:10.5px;color:var(--text3);flex-shrink:0;min-width:32px;text-align:right;font-variant-numeric:tabular-nums}
@@ -9931,6 +9933,7 @@ function renderCompactAudioPlayer(src){
     <button type="button" class="voice-player-btn" aria-label="Play voice message">
       <svg class="icon-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg>
       <svg class="icon-pause" viewBox="0 0 24 24" style="display:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+      <svg class="icon-spinner" viewBox="0 0 24 24" style="display:none"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg>
     </button>
     <div class="voice-player-track"><div class="voice-player-progress"></div></div>
     <span class="voice-player-time">0:00</span>
@@ -10173,23 +10176,57 @@ document.addEventListener('DOMContentLoaded',()=>{
     const btn = e.target.closest('.voice-player-btn');
     if(btn){
       const audio = btn.closest('.voice-player').querySelector('.voice-player-audio');
-      document.querySelectorAll('.voice-player-audio').forEach(a=>{ if(a!==audio) a.pause(); });
+      const playIcon = btn.querySelector('.icon-play');
+      const pauseIcon = btn.querySelector('.icon-pause');
+      const spinnerIcon = btn.querySelector('.icon-spinner');
+
+      // Pause every other player (and reset their icons/loading flag) so only one plays at a time
+      document.querySelectorAll('.voice-player-audio').forEach(a=>{ if(a!==audio){ a.pause(); delete a.dataset.loading; } });
       document.querySelectorAll('.voice-player-btn').forEach(b=>{
-        if(b!==btn){ b.querySelector('.icon-play').style.display='inline-block'; b.querySelector('.icon-pause').style.display='none'; }
+        if(b!==btn){
+          b.querySelector('.icon-play').style.display='inline-block';
+          b.querySelector('.icon-pause').style.display='none';
+          b.querySelector('.icon-spinner').style.display='none';
+        }
       });
+
       if(audio.paused){
-        // Ensure metadata is loaded before playing so duration/currentTime work reliably
-        const doPlay = ()=>{
-          audio.play().catch(err=>console.error('Playback failed:', err));
-          btn.querySelector('.icon-play').style.display='none';
-          btn.querySelector('.icon-pause').style.display='inline-block';
-        };
-        if(audio.readyState >= 1){ doPlay(); }
-        else { audio.addEventListener('loadedmetadata', doPlay, {once:true}); audio.load(); }
+        const showPlaying = ()=>{ delete audio.dataset.loading; spinnerIcon.style.display='none'; playIcon.style.display='none'; pauseIcon.style.display='inline-block'; };
+        const showFailed = ()=>{ delete audio.dataset.loading; spinnerIcon.style.display='none'; pauseIcon.style.display='none'; playIcon.style.display='inline-block'; };
+
+        if(audio.readyState >= 3){
+          // Already buffered enough to play start-to-finish - go instantly, no spinner needed
+          showPlaying();
+          audio.play().catch(err=>{ console.error('Playback failed:', err); showFailed(); });
+        } else {
+          // Show the rotating spinner while the voice note downloads, then start
+          // playback the instant it can play through without stalling partway.
+          // Mark it as "loading" so a background poll can't tear down the DOM
+          // (and abandon the download) before playback actually begins.
+          audio.dataset.loading = '1';
+          playIcon.style.display='none';
+          pauseIcon.style.display='none';
+          spinnerIcon.style.display='inline-block';
+          let started = false;
+          const startOnce = ()=>{
+            if(started) return;
+            started = true;
+            showPlaying();
+            audio.play().catch(err=>{ console.error('Playback failed:', err); showFailed(); });
+          };
+          audio.addEventListener('canplaythrough', startOnce, {once:true});
+          // Fallback for browsers/files that never fire canplaythrough reliably
+          audio.addEventListener('canplay', ()=>setTimeout(startOnce, 300), {once:true});
+          setTimeout(startOnce, 4000); // last-resort so it never spins forever
+          audio.preload = 'auto';
+          audio.load();
+        }
       } else {
+        delete audio.dataset.loading;
         audio.pause();
-        btn.querySelector('.icon-play').style.display='inline-block';
-        btn.querySelector('.icon-pause').style.display='none';
+        playIcon.style.display='inline-block';
+        pauseIcon.style.display='none';
+        spinnerIcon.style.display='none';
       }
       return;
     }
@@ -10210,17 +10247,41 @@ document.addEventListener('DOMContentLoaded',()=>{
     const m = Math.floor(remaining/60), s = Math.floor(remaining%60);
     player.querySelector('.voice-player-time').textContent = `${m}:${String(s).padStart(2,'0')}`;
   }, true);
+  document.addEventListener('waiting', function(e){
+    // Mid-playback buffering stall (e.g. a network hiccup) - show the spinner
+    // again instead of silently freezing, so it's clear more is loading.
+    if(!e.target.classList?.contains('voice-player-audio')) return;
+    e.target.dataset.loading = '1';
+    const player = e.target.closest('.voice-player');
+    player.querySelector('.icon-play').style.display='none';
+    player.querySelector('.icon-pause').style.display='none';
+    player.querySelector('.icon-spinner').style.display='inline-block';
+  }, true);
+  document.addEventListener('playing', function(e){
+    if(!e.target.classList?.contains('voice-player-audio')) return;
+    delete e.target.dataset.loading;
+    const player = e.target.closest('.voice-player');
+    player.querySelector('.icon-spinner').style.display='none';
+    player.querySelector('.icon-play').style.display='none';
+    player.querySelector('.icon-pause').style.display='inline-block';
+  }, true);
   document.addEventListener('ended', function(e){
     if(!e.target.classList?.contains('voice-player-audio')) return;
+    delete e.target.dataset.loading;
     const player = e.target.closest('.voice-player');
     player.querySelector('.icon-play').style.display='inline-block';
     player.querySelector('.icon-pause').style.display='none';
+    player.querySelector('.icon-spinner').style.display='none';
     player.querySelector('.voice-player-progress').style.width='0%';
     e.target.currentTime = 0;
   }, true);
   document.addEventListener('error', function(e){
     if(!e.target.classList?.contains('voice-player-audio')) return;
+    delete e.target.dataset.loading;
     const player = e.target.closest('.voice-player');
+    player.querySelector('.icon-spinner').style.display='none';
+    player.querySelector('.icon-play').style.display='inline-block';
+    player.querySelector('.icon-pause').style.display='none';
     player.querySelector('.voice-player-time').textContent = 'Error';
   }, true);
 
@@ -10695,8 +10756,14 @@ async function fetchAdminTranscript(scroll=false){
   if(!adminViewingPair) return;
   const [a, b] = adminViewingPair;
   try{
-    const d = await api(`/api/mini-app/admin/chats/${a}/${b}?admin_id=${UID}&limit=100`);
     const box = document.getElementById('cr-msgs');
+    // Same fix as fetchCRMsgs: don't tear down the DOM while a voice note is
+    // actively playing OR still downloading (spinner phase) - the innerHTML
+    // replace recreates every <audio> element from scratch, which both kills
+    // playback and abandons an in-flight download before it can ever start.
+    const isBusyVoice = Array.from(box.querySelectorAll('.voice-player-audio')).some(el=>!el.paused || el.dataset.loading==='1');
+    if(isBusyVoice) return;
+    const d = await api(`/api/mini-app/admin/chats/${a}/${b}?admin_id=${UID}&limit=100`);
     const wasBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 80;
     box.innerHTML = (d.data || []).map(m => `
       <div class="msg-row ${String(m.sender_id)===String(a) ? 'them' : 'me'}">
@@ -10742,12 +10809,13 @@ async function fetchCRMsgs(scroll=false){
   if(!crPartnerId)return;
   try{
     const box=document.getElementById('cr-msgs');
-    // Don't tear down the message list (and kill playback) while a voice note is
-    // actively playing in it - the innerHTML replace below recreates every <audio>
-    // element from scratch, which stops audio the instant a poll tick lands.
-    // Skip this refresh cycle; the next poll picks up new messages once playback stops.
-    const isPlayingVoice = Array.from(box.querySelectorAll('.voice-player-audio')).some(a=>!a.paused);
-    if(isPlayingVoice) return;
+    // Don't tear down the message list while a voice note is actively playing
+    // OR still downloading (spinner phase) - the innerHTML replace below
+    // recreates every <audio> element from scratch, which both stops audio
+    // the instant a poll tick lands and abandons a download mid-flight.
+    // Skip this refresh cycle; the next poll picks up new messages once it's done.
+    const isBusyVoice = Array.from(box.querySelectorAll('.voice-player-audio')).some(a=>!a.paused || a.dataset.loading==='1');
+    if(isBusyVoice) return;
     const d=await api(`/api/mini-app/chats/${crPartnerId}?user_id=${UID}`);
     const wasBottom=box.scrollHeight-box.scrollTop<=box.clientHeight+80;
     box.innerHTML=(d.data||[]).map(m=>`<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble">${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`).join('');
