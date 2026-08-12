@@ -2152,7 +2152,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("Error showing confirmation. Please try again.")
         elif update.callback_query:
             await update.callback_query.message.reply_text("Error showing confirmation. Please try again.")
-async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post_id: int, commenter_id: str):
+async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post_id: int, commenter_id: str, comment_id: int = None):
     """Notify the post author when a new top‑level comment is added."""
     try:
         post = db_fetch_one("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,))
@@ -2183,15 +2183,22 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
             f"<b>Your vent:</b> {safe_post_preview}\n\n"
             f"<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>"
         )
+
+        reply_markup = None
+        if comment_id:
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("↩ Reply", callback_data=f"reply_{post_id}_{comment_id}")]
+            ])
         
         await context.bot.send_message(
             chat_id=author_id,
             text=notification_text,
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup
         )
     except Exception as e:
         logger.error(f"Error notifying vent author: {e}")
-async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str):
+async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str, new_comment_id: int = None):
     try:
         comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
         if not comment:
@@ -2226,11 +2233,17 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
             f"[View conversation](https://t.me/{BOT_USERNAME}?start=comments_{post_id})"
         )
 
+        reply_markup = None
+        if new_comment_id:
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("↩ Reply", callback_data=f"replytoreply_{post_id}_{comment_id}_{new_comment_id}")]
+            ])
         
         await context.bot.send_message(
             chat_id=original_author['user_id'],
             text=notification_text,
-            parse_mode=ParseMode.MARKDOWN_V2
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=reply_markup
         )
     except Exception as e:
         logger.error(f"Error sending reply notification: {e}")
@@ -8762,12 +8775,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     
         # Insert new comment
-        db_execute(
+        new_comment_row = db_execute(
             """INSERT INTO comments
             (post_id, parent_comment_id, author_id, content, type, file_id)
-            VALUES (%s, %s, %s, %s, %s, %s)""",
-            (post_id, parent_comment_id, user_id, content, comment_type, file_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING comment_id""",
+            (post_id, parent_comment_id, user_id, content, comment_type, file_id),
+            fetchone=True
         )
+        new_comment_id = new_comment_row['comment_id'] if new_comment_row else None
         
         # Clear Aura Cache
         calculate_user_rating.cache_clear()
@@ -8797,11 +8813,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Notify vent author if this is a top‑level comment
         if parent_comment_id == 0:
-            await notify_vent_author_of_comment(context, post_id, user_id)
+            await notify_vent_author_of_comment(context, post_id, user_id, new_comment_id)
         
         # Notify parent comment author if this is a reply
         if parent_comment_id != 0:
-            await notify_user_of_reply(context, post_id, parent_comment_id, user_id)
+            await notify_user_of_reply(context, post_id, parent_comment_id, user_id, new_comment_id)
         return
 
     elif user and user['waiting_for_private_message']:
@@ -11338,7 +11354,7 @@ def notify_user_of_private_message_sync(sender_id, receiver_id, message_content,
         logger.error(f"notify_user_of_private_message_sync failed: {e}")
 
 
-def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_content=None, media_type='text', media_id=None):
+def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_id=None, comment_content=None, media_type='text', media_id=None):
     """Sync replacement for notify_vent_author_of_comment, for use from Flask routes."""
     try:
         post = db_fetch_one("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,))
@@ -11367,17 +11383,23 @@ def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_content=No
         lines.append(f"\n<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>")
         notification_text = "\n".join(lines)
 
+        reply_markup = None
+        if comment_id:
+            reply_markup = {"inline_keyboard": [[
+                {"text": "↩ Reply", "callback_data": f"reply_{post_id}_{comment_id}"}
+            ]]}
+
         if media_id and media_type and media_type != 'text':
-            result = send_telegram_media_sync(author_id, media_type, media_id, caption=notification_text, parse_mode='HTML')
+            result = send_telegram_media_sync(author_id, media_type, media_id, caption=notification_text, parse_mode='HTML', reply_markup=reply_markup)
             if result and result.get('ok'):
                 return
 
-        send_telegram_message_sync(author_id, notification_text, parse_mode='HTML')
+        send_telegram_message_sync(author_id, notification_text, parse_mode='HTML', reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"notify_vent_author_of_comment_sync failed: {e}")
 
 
-def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, comment_content=None, media_type='text', media_id=None):
+def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_comment_id=None, comment_content=None, media_type='text', media_id=None):
     """Sync replacement for notify_user_of_reply, for use from Flask routes."""
     try:
         parent_comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (parent_comment_id,))
@@ -11412,12 +11434,18 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, comment_co
         lines.append(f"\n<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>")
         notification_text = "\n".join(lines)
 
+        reply_markup = None
+        if new_comment_id:
+            reply_markup = {"inline_keyboard": [[
+                {"text": "↩ Reply", "callback_data": f"replytoreply_{post_id}_{parent_comment_id}_{new_comment_id}"}
+            ]]}
+
         if media_id and media_type and media_type != 'text':
-            result = send_telegram_media_sync(original_author['user_id'], media_type, media_id, caption=notification_text, parse_mode='HTML')
+            result = send_telegram_media_sync(original_author['user_id'], media_type, media_id, caption=notification_text, parse_mode='HTML', reply_markup=reply_markup)
             if result and result.get('ok'):
                 return
 
-        send_telegram_message_sync(original_author['user_id'], notification_text, parse_mode='HTML')
+        send_telegram_message_sync(original_author['user_id'], notification_text, parse_mode='HTML', reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"notify_user_of_reply_sync failed: {e}")
 
@@ -11985,10 +12013,12 @@ def mini_app_submit_comment(post_id):
         if not file_id:
             media_type = 'text'
 
-        db_execute(
-            "INSERT INTO comments (post_id, author_id, content, parent_comment_id, type, file_id) VALUES (%s, %s, %s, %s, %s, %s)",
-            (post_id, user_id, content, parent_comment_id, media_type, file_id)
+        new_comment_row = db_execute(
+            "INSERT INTO comments (post_id, author_id, content, parent_comment_id, type, file_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING comment_id",
+            (post_id, user_id, content, parent_comment_id, media_type, file_id),
+            fetchone=True
         )
+        new_comment_id = new_comment_row['comment_id'] if new_comment_row else None
         db_execute(
             "UPDATE posts SET comment_count = COALESCE(comment_count, 0) + 1 WHERE post_id = %s",
             (post_id,)
@@ -12000,12 +12030,12 @@ def mini_app_submit_comment(post_id):
         # Notify the right person: parent-comment author for a reply, otherwise the vent author
         if parent_comment_id and parent_comment_id != 0:
             notify_user_of_reply_sync(
-                post_id, parent_comment_id, user_id,
+                post_id, parent_comment_id, user_id, new_comment_id,
                 comment_content=content, media_type=media_type, media_id=file_id
             )
         else:
             notify_vent_author_of_comment_sync(
-                post_id, user_id,
+                post_id, user_id, new_comment_id,
                 comment_content=content, media_type=media_type, media_id=file_id
             )
 
