@@ -4805,28 +4805,29 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             send_kwargs['caption'] = message_text
             msg = await context.bot.send_voice(**send_kwargs)
             
-        elif comment_type in ['gif', 'sticker', 'photo'] and file_id:
-            # Send media first, then author info as a reply (so info appears below)
-            # The media message handles the initial threading (reply to parent)
+        elif comment_type in ('photo', 'gif') and file_id:
+            # Photos and GIFs support captions, so attach the author info + buttons
+            # directly to the media — same clean single-bubble layout as voice comments.
+            send_kwargs['caption'] = message_text
+            if comment_type == 'photo':
+                msg = await context.bot.send_photo(photo=file_id, **send_kwargs)
+            else:  # gif
+                msg = await context.bot.send_animation(animation=file_id, **send_kwargs)
+
+        elif comment_type == 'sticker' and file_id:
+            # Stickers can't carry a caption on Telegram, so send the sticker first,
+            # then the author info + buttons as a reply directly beneath it.
             media_kwargs = {
                 'chat_id': chat_id,
                 'reply_to_message_id': send_kwargs.get('reply_to_message_id')
             }
-            
-            if comment_type == 'sticker':
-                media_msg = await context.bot.send_sticker(sticker=file_id, **media_kwargs)
-            elif comment_type == 'photo':
-                media_msg = await context.bot.send_photo(photo=file_id, **media_kwargs)
-            else: # gif
-                media_msg = await context.bot.send_animation(animation=file_id, **media_kwargs)
-            
-            # Now send author info and keyboard as a reply to the media message
-            # This message will be stored in DB as the reference for future replies
+            media_msg = await context.bot.send_sticker(sticker=file_id, **media_kwargs)
+
             info_kwargs = send_kwargs.copy()
             info_kwargs['text'] = message_text
             info_kwargs['reply_to_message_id'] = media_msg.message_id
             info_kwargs['disable_web_page_preview'] = True
-            
+
             msg = await context.bot.send_message(**info_kwargs)
             
         else:
@@ -4850,20 +4851,19 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             # Create a new dict WITHOUT reply_to_message_id
             fallback_kwargs = {k: v for k, v in send_kwargs.items() if k != 'reply_to_message_id'}
             try:
-                if comment_type == 'text' or comment_type not in ['voice', 'gif', 'sticker']:
+                if comment_type == 'text' or comment_type not in ('voice', 'gif', 'sticker', 'photo'):
                     msg = await context.bot.send_message(**fallback_kwargs)
                 elif comment_type == 'voice':
                     msg = await context.bot.send_voice(**fallback_kwargs)
-                elif comment_type in ['gif', 'sticker', 'photo']:
-                    # Fallback for sticker/gif/photo: media first (standalone), then info as reply
-                    m_kwargs = {'chat_id': chat_id}
-                    if comment_type == 'sticker':
-                        m_msg = await context.bot.send_sticker(sticker=file_id, **m_kwargs)
-                    elif comment_type == 'photo':
-                        m_msg = await context.bot.send_photo(photo=file_id, **m_kwargs)
-                    else: # gif
-                        m_msg = await context.bot.send_animation(animation=file_id, **m_kwargs)
-                    
+                elif comment_type in ('photo', 'gif'):
+                    fallback_kwargs['caption'] = fallback_kwargs.pop('text', message_text)
+                    if comment_type == 'photo':
+                        msg = await context.bot.send_photo(photo=file_id, **fallback_kwargs)
+                    else:  # gif
+                        msg = await context.bot.send_animation(animation=file_id, **fallback_kwargs)
+                elif comment_type == 'sticker':
+                    # Fallback for sticker: media first (standalone), then info as reply
+                    m_msg = await context.bot.send_sticker(sticker=file_id, chat_id=chat_id)
                     msg = await context.bot.send_message(
                         chat_id=chat_id,
                         text=message_text,
