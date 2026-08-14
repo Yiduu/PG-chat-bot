@@ -8937,15 +8937,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             explicit_kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("No, safe for everyone", callback_data='post_explicit_no'),
-                    InlineKeyboardButton("Yes, explicit", callback_data='post_explicit_yes')
+                    InlineKeyboardButton("የለውም", callback_data='post_explicit_no'),
+                    InlineKeyboardButton("አዎ", callback_data='post_explicit_yes')
                 ]
             ])
             await update.message.reply_text(
-                "Does this post contain explicit or sexual content?\n\n"
-                "This means sexual content, graphic descriptions, or explicit profanity — "
-                "not just a sensitive topic. It helps us show a content warning to other "
-                "members before they view it.",
+                "⚠️ ይህ ፖስት ወሲባዊ ወይም ለሁሉም እድሜ የማይሆን ይዘት አለው?",
                 reply_markup=explicit_kb
             )
             
