@@ -2005,21 +2005,15 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (user_id,)
         )
         pending_requests = pending_requests_row['cnt'] if pending_requests_row else 0
-        requests_label = f"📨 Chat Requests ({pending_requests})" if pending_requests else "📨 Chat Requests"
+        requests_label = f"Chat Requests ({pending_requests})" if pending_requests else "Chat Requests"
         
         keyboard = [
             [
-                InlineKeyboardButton(f"Notifications: {notifications_status}", 
-                                   callback_data='toggle_notifications')
+                InlineKeyboardButton(f"Notifications: {notifications_status}", callback_data='toggle_notifications'),
+                InlineKeyboardButton(f"Privacy: {privacy_status}", callback_data='toggle_privacy')
             ],
             [
-                InlineKeyboardButton(f"Privacy: {privacy_status}", 
-                                   callback_data='toggle_privacy')
-            ],
-            [
-                InlineKeyboardButton("Privacy Controls", callback_data='privacy_settings')
-            ],
-            [
+                InlineKeyboardButton("Privacy Controls", callback_data='privacy_settings'),
                 InlineKeyboardButton(requests_label, callback_data='chat_requests')
             ],
             [
@@ -7344,7 +7338,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 receiver_text = (
                     f"*New Chat Request\\!*\n"
                     f"_{escape_markdown(sender_name, version=2)}_ wants to chat with you\\.\n\n"
-                    f"_You can find this anytime under Settings ➜ 📨 Chat Requests\\._"
+                    f"_You can find this anytime under Settings ➜ Chat Requests\\._"
                 )
                 receiver_kb = InlineKeyboardMarkup([
                     [
