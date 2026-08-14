@@ -10235,7 +10235,7 @@ const ICONS = {
 function avaHtml(v){ return v ? esc(v) : ICONS.user; }
 
 const CATS = [
-  ['StoryTime',ICONS.book,'Story Time']
+  ['StoryTime',ICONS.book,'Story Time'],
   ['PrayForMe',ICONS.sparkles,'Pray For Me'],['Bible',ICONS.book,'Bible'],['WorkLife',ICONS.briefcase,'Work & Life'],
   ['SpiritualLife',ICONS.feather,'Spiritual Life'],['ChristianChallenges',ICONS.swords,'Challenges'],
   ['Relationship',ICONS.heart,'Relationship'],['Marriage',ICONS.gem,'Marriage'],['Youth',ICONS.users,'Youth'],
