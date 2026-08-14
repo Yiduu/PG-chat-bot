@@ -17,6 +17,7 @@ from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 import threading
+from waitress import serve as waitress_serve
 from flask import Flask, jsonify, request, redirect, send_from_directory
 from datetime import datetime, timedelta, timezone, time
 import time
@@ -5181,7 +5182,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             "Add your thoughts to the conversation",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")]])
         )
-async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None):
+async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None, rating_override=None):
     """Send a single reply message with proper formatting using pre-fetched user data if available"""
     # Use joined data if available, else fetch
     is_admin = reply.get('is_admin')
@@ -5195,8 +5196,10 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
         display_sex = reply.get('sex') or '👤'
         display_name = reply.get('anonymous_name') or 'Anonymous'
         avatar_emoji = reply.get('avatar_emoji')
-        
-    rating_reply = calculate_user_rating(reply['author_id'])
+
+    # rating_override lets callers pass a pre-batched rating (see show_more_replies)
+    # instead of triggering a fresh 5-query calculate_user_rating() call per reply.
+    rating_reply = rating_override if rating_override is not None else calculate_user_rating(reply['author_id'])
     reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply['author_id']}_{post_id}"
     aura_text = f"_Aura_ ⚡ {rating_reply} pts" if not is_admin else ""
     
@@ -5219,6 +5222,74 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     # FIX: Pass the full reply dict (already done, but ensured)
     return await send_comment_message(context, chat_id, reply, reply_author_text, reply_to_message_id, pre_fetched_data=pre_fetched_data)
 
+def _fetch_more_replies_data(comment_id, post_id, replies_per_page, offset, user_id):
+    """Synchronous - all blocking DB calls for one 'show more replies' page,
+    meant to run off the event loop via asyncio.to_thread()."""
+    post = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
+    post_author_id = post['author_id'] if post else None
+
+    total_replies_res = db_fetch_one("""
+        WITH RECURSIVE comment_tree AS (
+            SELECT comment_id FROM comments WHERE parent_comment_id = %s
+            UNION ALL
+            SELECT c.comment_id FROM comments c
+            JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
+        )
+        SELECT COUNT(*) as cnt FROM comment_tree
+    """, (comment_id,))
+    total_replies = total_replies_res['cnt'] if total_replies_res else 0
+
+    replies = db_fetch_all("""
+        WITH RECURSIVE comment_tree AS (
+            SELECT * FROM comments WHERE parent_comment_id = %s
+            UNION ALL
+            SELECT c.* FROM comments c
+            JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
+        )
+        SELECT ct.*, u.sex AS user_sex, u.anonymous_name, u.is_admin, u.avatar_emoji
+        FROM comment_tree ct
+        LEFT JOIN users u ON ct.author_id = u.user_id
+        ORDER BY ct.timestamp ASC LIMIT %s OFFSET %s
+    """, (comment_id, replies_per_page, offset))
+    for r in replies:
+        r['sex'] = r.pop('user_sex', '👤') or '👤'
+
+    reply_ids = [r['comment_id'] for r in replies]
+    reaction_data = {}
+    parent_msg_ids = {}
+    ratings_map = {}
+
+    if reply_ids:
+        counts = db_fetch_all("""
+            SELECT comment_id,
+                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END as rgroup,
+                   COUNT(*) as cnt
+            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END
+        """, (tuple(reply_ids),))
+        for row in counts:
+            cid = row['comment_id']
+            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+            if row['rgroup'] == 'like': reaction_data[cid]['likes'] = row['cnt']
+            else: reaction_data[cid]['dislikes'] = row['cnt']
+
+        u_reacts = db_fetch_all("SELECT comment_id, type FROM reactions WHERE comment_id IN %s AND user_id = %s", (tuple(reply_ids), user_id))
+        for row in u_reacts:
+            cid = row['comment_id']
+            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+            reaction_data[cid]['user_reaction'] = row['type']
+
+        p_ids = [r['parent_comment_id'] for r in replies]
+        if p_ids:
+            p_rows = db_fetch_all("SELECT comment_id, telegram_message_id FROM comments WHERE comment_id IN %s", (tuple(p_ids),))
+            for row in p_rows: parent_msg_ids[row['comment_id']] = row['telegram_message_id']
+
+        ratings_map = get_user_ratings_batch([r['author_id'] for r in replies])
+
+    return {
+        'post_author_id': post_author_id, 'total_replies': total_replies, 'replies': replies,
+        'reaction_data': reaction_data, 'parent_msg_ids': parent_msg_ids, 'ratings_map': ratings_map,
+    }
+
 async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, comment_id: int, page: int):
     """Show additional replies for a comment (paginated)"""
     query = update.callback_query
@@ -5234,83 +5305,24 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     
     post_id = comment['post_id']
     base_reply_to_id = comment.get('telegram_message_id')
-    post = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
-    post_author_id = post['author_id'] if post else None
-    
-    # Pagination for replies
     replies_per_page = 5
-    # Skip the first 3 replies already shown in the comment view
     offset = 3 + (page - 1) * replies_per_page
-    
-    # FIX: Get total replies for pagination
-    total_replies_res = db_fetch_one("""
-        WITH RECURSIVE comment_tree AS (
-            SELECT comment_id FROM comments WHERE parent_comment_id = %s
-            UNION ALL
-            SELECT c.comment_id FROM comments c
-            JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
-        )
-        SELECT COUNT(*) as cnt FROM comment_tree
-    """, (comment_id,))
-    total_replies = total_replies_res['cnt'] if total_replies_res else 0
-    total_pages = (total_replies - 3 + replies_per_page - 1) // replies_per_page
-    
-    # Get replies for this page with user data JOINed
+    user_id = str(update.effective_user.id)
+
     try:
-        replies = db_fetch_all("""
-            WITH RECURSIVE comment_tree AS (
-                SELECT * FROM comments WHERE parent_comment_id = %s
-                UNION ALL
-                SELECT c.* FROM comments c
-                JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
-            )
-            SELECT ct.*, u.sex AS user_sex, u.anonymous_name, u.is_admin, u.avatar_emoji
-            FROM comment_tree ct
-            LEFT JOIN users u ON ct.author_id = u.user_id
-            ORDER BY ct.timestamp ASC LIMIT %s OFFSET %s
-        """, (comment_id, replies_per_page, offset))
-        
-        # FIX: Restore sex field from aliased user_sex
-        for r in replies:
-            r['sex'] = r.pop('user_sex', '👤') or '👤'
-            
+        page_data = await asyncio.to_thread(_fetch_more_replies_data, comment_id, post_id, replies_per_page, offset, user_id)
     except Exception as e:
         logger.error(f"Error fetching more replies for comment {comment_id}: {e}")
         await query.answer("Error loading replies", show_alert=True)
         return
-    
-    # Pre-fetch reaction data for replies
-    reply_ids = [r['comment_id'] for r in replies]
-    reaction_data = {}
-    parent_msg_ids = {}
-    user_id = str(update.effective_user.id)
-    
-    if reply_ids:
-        # Batch counts
-        counts = db_fetch_all("""
-            SELECT comment_id, 
-                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END as rgroup,
-                   COUNT(*) as cnt 
-            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END
-        """, (tuple(reply_ids),))
-        for row in counts:
-            cid = row['comment_id']
-            if cid not in reaction_data: reaction_data[cid] = {'likes': 0, 'dislikes': 0, 'user_reaction': None}
-            if row['rgroup'] == 'like': reaction_data[cid]['likes'] = row['cnt']
-            else: reaction_data[cid]['dislikes'] = row['cnt']
-            
-        # Batch user reactions
-        u_reacts = db_fetch_all("SELECT comment_id, type FROM reactions WHERE comment_id IN %s AND user_id = %s", (tuple(reply_ids), user_id))
-        for row in u_reacts:
-            cid = row['comment_id']
-            if cid not in reaction_data: reaction_data[cid] = {'likes': 0, 'dislikes': 0, 'user_reaction': None}
-            reaction_data[cid]['user_reaction'] = row['type']
 
-        # Batch parent message IDs
-        p_ids = [r['parent_comment_id'] for r in replies]
-        if p_ids:
-            p_rows = db_fetch_all("SELECT comment_id, telegram_message_id FROM comments WHERE comment_id IN %s", (tuple(p_ids),))
-            for row in p_rows: parent_msg_ids[row['comment_id']] = row['telegram_message_id']
+    post_author_id = page_data['post_author_id']
+    total_replies = page_data['total_replies']
+    total_pages = (total_replies - 3 + replies_per_page - 1) // replies_per_page
+    replies = page_data['replies']
+    reaction_data = page_data['reaction_data']
+    parent_msg_ids = page_data['parent_msg_ids']
+    ratings_map = page_data['ratings_map']
 
     # Delete the "Show more replies" button
     try: await query.message.delete()
@@ -5324,7 +5336,8 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             target_msg_id = msg_ids.get(pid) or parent_msg_ids.get(pid) or base_reply_to_id
             
             pref = reaction_data.get(reply['comment_id'], {'likes': 0, 'dislikes': 0, 'user_reaction': None})
-            reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, post_id, target_msg_id, pre_fetched_data=pref)
+            reply_rating = ratings_map.get(reply['author_id'], 0)
+            reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, post_id, target_msg_id, pre_fetched_data=pref, rating_override=reply_rating)
             
             if reply_msg_id:
                 msg_ids[reply['comment_id']] = reply_msg_id
@@ -9346,7 +9359,13 @@ def main():
     # Start Flask server in a separate thread for Render
     port = int(os.environ.get('PORT', 5000))
     threading.Thread(
-        target=lambda: flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False),
+        target=lambda: waitress_serve(flask_app, host='0.0.0.0', port=port, threads=8),
+        # waitress replaces Werkzeug's dev server: it's a real production WSGI
+        # server (proper thread pool, not "not intended for production use"
+        # like flask_app.run()), while still running in-process alongside the
+        # bot's polling loop - no webhook migration needed. threads=8 lets up
+        # to 8 mini-app API requests be handled at once; raise it if the app
+        # grows and Render gives it more CPU/connections to work with.
         daemon=True
     ).start()
     
@@ -11888,6 +11907,7 @@ def mini_app_get_posts():
         formatted_posts = []
         viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(user_id),)) if user_id else None
         is_admin_viewer = bool(viewer_row and viewer_row.get('is_admin'))
+        ratings_map = get_user_ratings_batch([p['author_id'] for p in posts])
         for post in posts:
             if isinstance(post['timestamp'], str):
                 post_time = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S')
@@ -11911,7 +11931,7 @@ def mini_app_get_posts():
             if len(content_preview) > 300:
                 content_preview = content_preview[:297] + '...'
             
-            rating = calculate_user_rating(post['author_id'])
+            rating = ratings_map.get(post['author_id'], 0)
             aura_sticker = "" if post['author_is_admin'] else format_aura(rating)
             
             category_list = post['categories'].split(',') if post['categories'] else ['Other']
@@ -12163,6 +12183,7 @@ def mini_app_get_post_comments(post_id):
                     comment_user_reactions_map[cid] = rtype
         post_author = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
         post_author_id = post_author['author_id'] if post_author else None
+        ratings_map = get_user_ratings_batch([c['author_id'] for c in comments])
         formatted_comments = []
         now = datetime.now()
         for c in comments:
@@ -12181,7 +12202,7 @@ def mini_app_get_post_comments(post_id):
             else:
                 calc_time = "Just now"
 
-            rating = calculate_user_rating(c['author_id'])
+            rating = ratings_map.get(c['author_id'], 0)
 
             formatted_comments.append({
                 'id': c['comment_id'],
@@ -12936,8 +12957,9 @@ def mini_app_search():
         formatted_posts = []
         viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(user_id),)) if user_id else None
         is_admin_viewer = bool(viewer_row and viewer_row.get('is_admin'))
+        ratings_map = get_user_ratings_batch([p['author_id'] for p in posts])
         for post in posts:
-            rating = calculate_user_rating(post['author_id'])
+            rating = ratings_map.get(post['author_id'], 0)
             is_owner = str(post['author_id']) == str(user_id)
             is_explicit = bool(post.get('explicit'))
             hide_content = is_explicit and not is_owner and not is_admin_viewer
