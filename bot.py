@@ -265,6 +265,17 @@ def init_db():
                     c.execute("CREATE INDEX IF NOT EXISTS idx_pm_lookup ON private_messages (sender_id, receiver_id, timestamp DESC)")
                     c.execute("CREATE INDEX IF NOT EXISTS idx_pm_unread ON private_messages (receiver_id, is_read)")
 
+                # Indexes for the columns comment/rating lookups filter on - these were
+                # missing, so every comments-page load and every rating calculation was
+                # doing sequential scans on posts/comments/blocks/followers as they grow.
+                c.execute("CREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments (post_id, timestamp)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_comments_author_id ON comments (author_id)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments (parent_comment_id)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_posts_author_id ON posts (author_id)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_reactions_comment_id ON reactions (comment_id)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_blocks_blocked_id ON blocks (blocked_id)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_followers_followed_id ON followers (followed_id)")
+
                 # Private messages media columns
                 c.execute("""
                     SELECT column_name FROM information_schema.columns
@@ -638,10 +649,15 @@ from psycopg2 import pool
 
 # Create a global connection pool (reuses DB connections instead of reconnecting every time)
 try:
-    db_pool = pool.SimpleConnectionPool(
-        1, 10,  # min 1, max 10 connections
+    db_pool = pool.ThreadedConnectionPool(
+        # ThreadedConnectionPool, not SimpleConnectionPool: getconn/putconn are now
+        # called concurrently from multiple threads (Flask's own thread, plus every
+        # asyncio.to_thread worker), and SimpleConnectionPool isn't safe for that.
+        2, 20,  # min 2, max 20 connections - raised from 10 now that DB calls run
+                # concurrently instead of one-at-a-time on the event loop
         dsn=DATABASE_URL,
-        cursor_factory=RealDictCursor
+        cursor_factory=RealDictCursor,
+        connect_timeout=5
     )
     logging.info("Database connection pool created successfully")
 except Exception as e:
@@ -1465,6 +1481,64 @@ def calculate_user_rating(user_id):
     follower_points = (follower_res['cnt'] if follower_res else 0) * 2
 
     return post_points + comm_points + rx_points + block_points + follower_points
+
+def get_user_ratings_batch(user_ids):
+    """Same scoring as calculate_user_rating(), but for many users at once.
+    Runs 5 GROUP-BY queries total instead of 5 queries PER user, which is what
+    was happening every time a comments page rendered (calculate_user_rating
+    was called once per comment, inside the render loop)."""
+    uids = tuple({uid for uid in user_ids if uid is not None})
+    if not uids:
+        return {}
+    ratings = {uid: 0 for uid in uids}
+
+    for row in db_fetch_all(
+        "SELECT author_id, COUNT(*) as cnt FROM posts WHERE author_id IN %s AND approved = TRUE GROUP BY author_id",
+        (uids,)
+    ):
+        ratings[row['author_id']] += row['cnt'] * 10
+
+    for row in db_fetch_all(
+        "SELECT author_id, COUNT(*) as cnt FROM comments WHERE author_id IN %s GROUP BY author_id",
+        (uids,)
+    ):
+        ratings[row['author_id']] += row['cnt'] * 2
+
+    # NOTE: kept identical to calculate_user_rating()'s weights dict, bug for bug —
+    # that dict has several duplicate '' keys which collapse to one, so in practice
+    # only 'like'/'dislike' get an explicit weight and everything else falls back
+    # to the default of 1. Worth fixing separately, but not silently here.
+    weights = {'like': 1, 'dislike': -2}
+
+    for row in db_fetch_all("""
+        SELECT c.author_id, r.type, COUNT(*) as cnt
+        FROM reactions r JOIN comments c ON r.comment_id = c.comment_id
+        WHERE c.author_id IN %s AND r.comment_id IS NOT NULL
+        GROUP BY c.author_id, r.type
+    """, (uids,)):
+        ratings[row['author_id']] += row['cnt'] * weights.get(row['type'], 1)
+
+    for row in db_fetch_all("""
+        SELECT p.author_id, r.type, COUNT(*) as cnt
+        FROM reactions r JOIN posts p ON r.post_id = p.post_id
+        WHERE p.author_id IN %s AND r.post_id IS NOT NULL
+        GROUP BY p.author_id, r.type
+    """, (uids,)):
+        ratings[row['author_id']] += row['cnt'] * weights.get(row['type'], 1)
+
+    for row in db_fetch_all(
+        "SELECT blocked_id, COUNT(*) as cnt FROM blocks WHERE blocked_id IN %s GROUP BY blocked_id",
+        (uids,)
+    ):
+        ratings[row['blocked_id']] += row['cnt'] * -10
+
+    for row in db_fetch_all(
+        "SELECT followed_id, COUNT(*) as cnt FROM followers WHERE followed_id IN %s GROUP BY followed_id",
+        (uids,)
+    ):
+        ratings[row['followed_id']] += row['cnt'] * 2
+
+    return ratings
 
 def calculate_top_weekly_contributors():
     """Calculate top 3 users by aura points earned in the last 7 days."""
@@ -4926,6 +5000,64 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
     
     return None
 
+def _fetch_comments_page_data(post_id, per_page, offset, user_id):
+    """Synchronous - all blocking psycopg2 calls for one comments-page render,
+    meant to be run off the event loop via asyncio.to_thread(). Returns plain
+    dicts/lists only, no DB objects, so it's safe to hand back to async code."""
+    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    if not post:
+        return {'post': None, 'comments': [], 'total_comments': 0,
+                'reaction_data': {}, 'parent_msg_ids': {}, 'ratings_map': {}}
+
+    comments = db_fetch_all("""
+        SELECT c.*, u.sex AS user_sex, u.avatar_emoji, u.anonymous_name, u.is_admin
+        FROM comments c
+        LEFT JOIN users u ON c.author_id = u.user_id
+        WHERE c.post_id = %s
+        ORDER BY c.timestamp ASC
+        LIMIT %s OFFSET %s
+    """, (post_id, per_page, offset))
+    for c in comments:
+        c['sex'] = c.pop('user_sex', '👤') or '👤'
+
+    total_comments = count_all_comments(post_id)
+
+    reaction_data = {}
+    parent_msg_ids = {}
+    ratings_map = {}
+
+    comment_ids = [c['comment_id'] for c in comments]
+    if comment_ids:
+        counts = db_fetch_all("""
+            SELECT comment_id,
+                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END as rgroup,
+                   COUNT(*) as cnt
+            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END
+        """, (tuple(comment_ids),))
+        for row in counts:
+            cid = row['comment_id']
+            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+            if row['rgroup'] == 'like': reaction_data[cid]['likes'] = row['cnt']
+            else: reaction_data[cid]['dislikes'] = row['cnt']
+
+        u_reacts = db_fetch_all("SELECT comment_id, type FROM reactions WHERE comment_id IN %s AND user_id = %s", (tuple(comment_ids), user_id))
+        for row in u_reacts:
+            cid = row['comment_id']
+            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+            reaction_data[cid]['user_reaction'] = row['type']
+
+        parent_ids = [c['parent_comment_id'] for c in comments if c.get('parent_comment_id', 0) != 0]
+        if parent_ids:
+            p_rows = db_fetch_all("SELECT comment_id, telegram_message_id FROM comments WHERE comment_id IN %s", (tuple(parent_ids),))
+            for row in p_rows: parent_msg_ids[row['comment_id']] = row['telegram_message_id']
+
+        ratings_map = get_user_ratings_batch([c['author_id'] for c in comments])
+
+    return {
+        'post': post, 'comments': comments, 'total_comments': total_comments,
+        'reaction_data': reaction_data, 'parent_msg_ids': parent_msg_ids, 'ratings_map': ratings_map,
+    }
+
 async def show_comments_page(update, context, post_id, page=1, reply_pages=None):
     if update.effective_chat is None:
         logger.error("Cannot determine chat from update: %s", update)
@@ -4943,7 +5075,20 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         except:
             pass
 
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    user_id = str(update.effective_user.id)
+    per_page = 10
+    offset = (page - 1) * per_page
+
+    # All of the DB work for this page - post, comments, reactions, threading,
+    # and per-author ratings - runs together in a worker thread via to_thread.
+    # Previously these ran as blocking psycopg2 calls directly on the asyncio
+    # event loop, so every comment-page load froze ALL users' button presses
+    # for the duration of the DB round trips (and calculate_user_rating() was
+    # being called once per comment, i.e. up to 5 extra blocking queries per
+    # comment shown). See _fetch_comments_page_data / get_user_ratings_batch.
+    page_data = await asyncio.to_thread(_fetch_comments_page_data, post_id, per_page, offset, user_id)
+
+    post = page_data['post']
     if not post:
         if loading_msg:
             try: await loading_msg.delete()
@@ -4952,28 +5097,13 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         return
 
     post_author_id = post['author_id'] if not post.get('deleted') else None
-    per_page = 10
-    offset = (page - 1) * per_page
-
-    # OPTIMIZED: Batch load comments and user data using a JOIN
-    comments = db_fetch_all("""
-        SELECT c.*, u.sex AS user_sex, u.avatar_emoji, u.anonymous_name, u.is_admin
-        FROM comments c
-        LEFT JOIN users u ON c.author_id = u.user_id
-        WHERE c.post_id = %s
-        ORDER BY c.timestamp ASC
-        LIMIT %s OFFSET %s
-    """, (post_id, per_page, offset))
-
-    # FIX: Restore sex field from aliased user_sex
-    for c in comments:
-        c['sex'] = c.pop('user_sex', '👤') or '👤'
-
-    # Count all comments for pagination
-    total_comments = count_all_comments(post_id)
+    comments = page_data['comments']
+    total_comments = page_data['total_comments']
+    reaction_data = page_data['reaction_data']
+    parent_msg_ids = page_data['parent_msg_ids']
+    ratings_map = page_data['ratings_map']
     total_pages = (total_comments + per_page - 1) // per_page
 
-    user_id = str(update.effective_user.id)
     if not comments and page == 1:
         if loading_msg:
             try: await loading_msg.delete()
@@ -4994,38 +5124,6 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         try: await loading_msg.delete()
         except: pass
 
-    # PRE-FETCH: Batch load reactions and parent message IDs
-    comment_ids = [c['comment_id'] for c in comments]
-    reaction_data = {}
-    parent_msg_ids = {}
-
-    if comment_ids:
-        # Batch counts
-        counts = db_fetch_all("""
-            SELECT comment_id, 
-                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END as rgroup,
-                   COUNT(*) as cnt 
-            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END
-        """, (tuple(comment_ids),))
-        for row in counts:
-            cid = row['comment_id']
-            if cid not in reaction_data: reaction_data[cid] = {'likes': 0, 'dislikes': 0, 'user_reaction': None}
-            if row['rgroup'] == 'like': reaction_data[cid]['likes'] = row['cnt']
-            else: reaction_data[cid]['dislikes'] = row['cnt']
-
-        # Batch user reactions
-        u_reacts = db_fetch_all("SELECT comment_id, type FROM reactions WHERE comment_id IN %s AND user_id = %s", (tuple(comment_ids), user_id))
-        for row in u_reacts:
-            cid = row['comment_id']
-            if cid not in reaction_data: reaction_data[cid] = {'likes': 0, 'dislikes': 0, 'user_reaction': None}
-            reaction_data[cid]['user_reaction'] = row['type']
-
-        # Batch parent message IDs for threading
-        parent_ids = [c['parent_comment_id'] for c in comments if c.get('parent_comment_id', 0) != 0]
-        if parent_ids:
-            p_rows = db_fetch_all("SELECT comment_id, telegram_message_id FROM comments WHERE comment_id IN %s", (tuple(parent_ids),))
-            for row in p_rows: parent_msg_ids[row['comment_id']] = row['telegram_message_id']
-
     context._user_id = user_id
     msg_ids = {}
 
@@ -5034,7 +5132,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         parent_id = comment.get('parent_comment_id', 0)
         
         # User cached or joined data
-        rating = calculate_user_rating(comment['author_id'])
+        rating = ratings_map.get(comment['author_id'], 0)
         is_author = str(comment['author_id']) == str(post_author_id)
         
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{comment['author_id']}_{post_id}"
