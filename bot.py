@@ -5611,6 +5611,55 @@ async def show_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TY
 # UPDATED: Function to show user's previous posts with NEW CLEAN UI
 # UPDATED: Function to show user's previous posts with CHRONOLOGICAL ORDER and NEW STRUCTURE
 # UPDATED: Function to show user's previous posts with CHRONOLOGICAL ORDER and NEW STRUCTURE
+def build_thread_pick_content(user_id, page=1):
+    """Build the text + keyboard for one page of the 'Thread to Previous Post'
+    picker. Previously this only ever showed the 6 most recent posts with no
+    way to reach anything older; now it's paginated the same way My Previous
+    Posts is."""
+    per_page = 6
+    page = max(page, 1)
+    offset = (page - 1) * per_page
+
+    recent_posts = db_fetch_all(
+        "SELECT post_id, content, vent_number FROM posts "
+        "WHERE author_id = %s AND approved = TRUE AND deleted = FALSE "
+        "ORDER BY timestamp DESC LIMIT %s OFFSET %s",
+        (user_id, per_page, offset)
+    )
+    total_row = db_fetch_one(
+        "SELECT COUNT(*) as cnt FROM posts WHERE author_id = %s AND approved = TRUE AND deleted = FALSE",
+        (user_id,)
+    )
+    total_posts = total_row['cnt'] if total_row else 0
+    total_pages = max((total_posts + per_page - 1) // per_page, 1)
+
+    if not recent_posts:
+        return None, None, total_pages
+
+    thread_kb = []
+    for p in recent_posts:
+        label = p['content'][:40] + ('…' if len(p['content']) > 40 else '')
+        num = p.get('vent_number')
+        prefix = f"Vent-{num:03d}: " if num else ""
+        thread_kb.append([InlineKeyboardButton(f"{prefix}{label}", callback_data=f"thread_pick_{p['post_id']}")])
+
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("◀ Newer", callback_data=f"threadpg_{page - 1}"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("Older ▶", callback_data=f"threadpg_{page + 1}"))
+    if nav_row:
+        thread_kb.append(nav_row)
+
+    thread_kb.append([InlineKeyboardButton("No Thread (Standalone)", callback_data="thread_pick_none")])
+    thread_kb.append([InlineKeyboardButton("Back to Preview", callback_data="thread_pick_cancel")])
+
+    text = "*Thread to Previous Post*\n\nPick one of your recent posts to continue as a thread, or keep this post standalone:"
+    if total_pages > 1:
+        text += f"\n\nPage {page}/{total_pages}"
+
+    return text, InlineKeyboardMarkup(thread_kb), total_pages
+
 async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
     """Show user's previous posts as clickable snippets"""
     
@@ -7704,20 +7753,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.answer()
 
-            # Pull the user's most recent approved posts to thread from
-            recent_posts = db_fetch_all(
-                "SELECT post_id, content, vent_number FROM posts "
-                "WHERE author_id = %s AND approved = TRUE AND deleted = FALSE "
-                "ORDER BY timestamp DESC LIMIT 6",
-                (user_id,)
-            )
-
             try:
                 await query.message.edit_reply_markup(reply_markup=None)
             except Exception:
                 pass
 
-            if not recent_posts:
+            text, reply_markup, _ = build_thread_pick_content(user_id, page=1)
+            if not reply_markup:
                 await query.message.reply_text(
                     "You don't have any previous posts yet to thread from.",
                     reply_markup=InlineKeyboardMarkup([
@@ -7726,22 +7768,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            thread_kb = []
-            for p in recent_posts:
-                label = p['content'][:40] + ('…' if len(p['content']) > 40 else '')
-                num = p.get('vent_number')
-                prefix = f"Vent-{num:03d}: " if num else ""
-                thread_kb.append([InlineKeyboardButton(f"{prefix}{label}", callback_data=f"thread_pick_{p['post_id']}")])
+            await query.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+            return
 
-            thread_kb.append([InlineKeyboardButton("No Thread (Standalone)", callback_data="thread_pick_none")])
-            thread_kb.append([InlineKeyboardButton("Back to Preview", callback_data="thread_pick_cancel")])
-
-            await query.message.reply_text(
-                "*Thread to Previous Post*\n\nPick one of your recent posts to continue as a thread, "
-                "or keep this post standalone:",
-                reply_markup=InlineKeyboardMarkup(thread_kb),
-                parse_mode=ParseMode.MARKDOWN
-            )
+        elif query.data.startswith('threadpg_'):
+            try:
+                page = int(query.data[len('threadpg_'):])
+            except ValueError:
+                page = 1
+            await query.answer()
+            text, reply_markup, _ = build_thread_pick_content(user_id, page=page)
+            if not reply_markup:
+                # Page emptied out (e.g. a post got deleted between clicks) - fall back to page 1
+                text, reply_markup, _ = build_thread_pick_content(user_id, page=1)
+            if reply_markup:
+                try:
+                    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+                except BadRequest:
+                    pass
             return
 
         elif query.data == 'clear_thread_post':
