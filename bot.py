@@ -921,6 +921,7 @@ async def recount_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"Error during recount: {str(e)}")
 # Categories
 CATEGORIES = [
+    ("Story Time", "StoryTime"),
     ("Pray For Me", "PrayForMe"),
     ("Bible", "Bible"),
     ("Work and Life", "WorkLife"),
@@ -10234,6 +10235,7 @@ const ICONS = {
 function avaHtml(v){ return v ? esc(v) : ICONS.user; }
 
 const CATS = [
+  ['StoryTime',ICONS.book,'Story Time']
   ['PrayForMe',ICONS.sparkles,'Pray For Me'],['Bible',ICONS.book,'Bible'],['WorkLife',ICONS.briefcase,'Work & Life'],
   ['SpiritualLife',ICONS.feather,'Spiritual Life'],['ChristianChallenges',ICONS.swords,'Challenges'],
   ['Relationship',ICONS.heart,'Relationship'],['Marriage',ICONS.gem,'Marriage'],['Youth',ICONS.users,'Youth'],
