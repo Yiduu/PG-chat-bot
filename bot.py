@@ -853,6 +853,9 @@ STATE_AWAITING_NAME = 'awaiting_name'
 STATE_AWAITING_BIO = 'awaiting_bio'
 STATE_AWAITING_REJECTION_REASON = 'awaiting_rejection_reason'
 STATE_REPORTING = 'reporting'
+# NEW: state entered when a user is editing the content of an already-published
+# (approved) post from the "edit_published_<post_id>" flow in view_post/button_handler.
+STATE_AWAITING_EDIT_CONTENT = 'awaiting_edit_content'
 
 
 def get_state(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -879,8 +882,22 @@ def reset_state(context: ContextTypes.DEFAULT_TYPE):
                 'thread_context_post_id', 'thread_from_post_id', 'rejecting_post',
                 'reporting', 'pending_explicit_check', 'editing_comment', 'editing_post',
                 'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type',
-                'editing_categories_for_pending', 'pending_comment_edit'):
+                'editing_categories_for_pending', 'pending_comment_edit',
+                'editing_published_post'):
         context.user_data.pop(key, None)
+
+
+def clear_edit_published_state(context: ContextTypes.DEFAULT_TYPE):
+    """Clear the state used while a user is editing the content of an already
+    -published post (see the `edit_published_<post_id>` callback in button_handler
+    and the STATE_AWAITING_EDIT_CONTENT handling in handle_message).
+
+    This is the single place that knows how to unwind that flow, mirroring the
+    role reset_state() plays for the rest of the bot's input flows.
+    """
+    context.user_data.pop('editing_published_post', None)
+    if context.user_data.get('state') == STATE_AWAITING_EDIT_CONTENT:
+        context.user_data['state'] = STATE_IDLE
 
 
 async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: ContextTypes.DEFAULT_TYPE = None):
@@ -6135,18 +6152,28 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
     )
     
     # Create action buttons for this post
+    # (We've already verified above that post['author_id'] == user_id, so every
+    # button below - including Edit Post - is implicitly author-only.)
     keyboard = [
         [InlineKeyboardButton("View Comments", callback_data=f"viewcomments_{post_id}_1")],
         [InlineKeyboardButton("Continue Thread", callback_data=f"continue_post_{post_id}")],
-        [
-            InlineKeyboardButton("Delete Post", callback_data=f"delete_post_{post_id}_{from_page}"),
-            InlineKeyboardButton("Back to List", callback_data=f"my_posts_{from_page}")
-        ],
-        [
-            InlineKeyboardButton("Back to My Content", callback_data='my_content_menu'),
-            InlineKeyboardButton("Main Menu", callback_data='menu')
-        ]
     ]
+
+    # NEW: Let the author edit their post's content once it has been approved
+    # and published to the channel.
+    if post.get('approved'):
+        keyboard.append(
+            [InlineKeyboardButton("Edit Post", callback_data=f"edit_published_{post_id}")]
+        )
+
+    keyboard.append([
+        InlineKeyboardButton("Delete Post", callback_data=f"delete_post_{post_id}_{from_page}"),
+        InlineKeyboardButton("Back to List", callback_data=f"my_posts_{from_page}")
+    ])
+    keyboard.append([
+        InlineKeyboardButton("Back to My Content", callback_data='my_content_menu'),
+        InlineKeyboardButton("Main Menu", callback_data='menu')
+    ])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -7433,6 +7460,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except (IndexError, ValueError):
                 # Fallback to post list
                 await show_previous_posts(update, context, 1)
+
+        # NEW: Let an author edit the content of a post that's already been
+        # approved and published to the channel.
+        elif query.data.startswith("edit_published_"):
+            try:
+                post_id = int(query.data.split('_')[2])
+                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+
+                # Permission check: only the author can edit their own post
+                if not post or post['author_id'] != user_id:
+                    await query.answer("You can only edit your own posts", show_alert=True)
+                    return
+
+                # Content edits via this flow only apply once a post is live
+                if not post.get('approved'):
+                    await query.answer("Only approved, published posts can be edited this way", show_alert=True)
+                    return
+
+                # Enter the "editing a published post" state and remember which post
+                set_state(context, STATE_AWAITING_EDIT_CONTENT, editing_published_post=post_id)
+
+                # Message 1: ONLY the copyable content, wrapped in <pre> with no
+                # other text - so the user can select/copy just the content
+                # without dragging in any instruction text.
+                content_escaped = html.escape(post['content'])
+                await query.message.reply_text(
+                    f"<pre>{content_escaped}</pre>",
+                    parse_mode=ParseMode.HTML
+                )
+
+                # Message 2: the instructions, sent separately on purpose.
+                await query.message.reply_text(
+                    "Edit your post \u2013 send the entire corrected text as a new message. "
+                    "Tap Cancel to abort.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("Cancel", callback_data='cancel_input')]
+                    ])
+                )
+                return
+            except (IndexError, ValueError) as e:
+                logger.error(f"Error starting published post edit: {e}")
+                await query.answer("Error processing request", show_alert=True)
 
         
         elif query.data.startswith('chatrequest_'):
@@ -9083,6 +9152,116 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
     # FIX: Handle pending post editing (NEW CODE ENDS HERE)
+
+    # NEW: Handle editing of an already-published (approved) post's content
+    # (see the edit_published_<post_id> callback in button_handler)
+    if get_state(context) == STATE_AWAITING_EDIT_CONTENT and context.user_data.get('editing_published_post'):
+        if text in main_menu_buttons: return
+
+        post_id = context.user_data['editing_published_post']
+        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+
+        # Re-verify the post still exists and still belongs to this user
+        if not post or post['author_id'] != user_id:
+            clear_edit_published_state(context)
+            await update.message.reply_text(
+                "Error updating post. Please try again.",
+                reply_markup=get_main_menu(user_id)
+            )
+            return
+
+        # Guard against users accidentally pasting our own "copy the text below"
+        # instruction along with the content they meant to edit.
+        cleaned_text, was_cleaned = sanitize_pasted_edit(text)
+        if was_cleaned:
+            await update.message.reply_text(
+                "Looks like our copy instructions got pasted in too — I've trimmed those out."
+            )
+
+        # Update the post's content in the database first, so the edit is
+        # never lost even if the channel message update below fails.
+        db_execute(
+            "UPDATE posts SET content = %s WHERE post_id = %s",
+            (cleaned_text, post_id)
+        )
+
+        # If the post is live in the channel, keep the published message in sync.
+        # Text posts get their message text updated; media posts only have their
+        # caption updated - the underlying media file is left untouched.
+        channel_update_ok = True
+        if post.get('channel_message_id'):
+            try:
+                # Same vent-number formatting as approve_post
+                vent_display = f"Vent - {post['vent_number']:03d}" if post.get('vent_number') else f"Post #{post_id}"
+
+                # Same categories/hashtags construction as approve_post
+                cats_row = db_fetch_all("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,))
+                categories = [row['category_code'] for row in cats_row]
+                hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
+                safe_hashtags = html.escape(hashtags)
+
+                # Explicit posts keep their content hidden behind "View Post",
+                # exactly as they're shown when first approved
+                if post.get('explicit'):
+                    body_html = (
+                        "የዚህ post ይዘት ለሁሉም አባላት ተገቢ አይደለም። በራስዎ ሃላፊነት  ይህንን ፖስት ማንበብ ከፈለጉ፣ ከታች ያለውን\n"
+                        "\"View Post\" የሚለውን ይጫኑ።"
+                    )
+                else:
+                    body_html = html.escape(cleaned_text)
+
+                # Same channel text construction as in approve_post, using the new content
+                channel_text = (
+                    f"<code>{vent_display}</code>\n\n"
+                    f"{body_html}\n\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"{safe_hashtags}\n"
+                    f"<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
+                )
+
+                channel_keyboard = build_channel_post_keyboard(
+                    post_id, post.get('comment_count') or 0, post.get('explicit', False)
+                )
+
+                if post.get('media_type', 'text') == 'text':
+                    await context.bot.edit_message_text(
+                        chat_id=CHANNEL_ID,
+                        message_id=post['channel_message_id'],
+                        text=channel_text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=channel_keyboard,
+                        disable_web_page_preview=True
+                    )
+                else:
+                    # Media post: only the caption changes, the media itself stays unchanged
+                    await context.bot.edit_message_caption(
+                        chat_id=CHANNEL_ID,
+                        message_id=post['channel_message_id'],
+                        caption=channel_text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=channel_keyboard
+                    )
+            except Exception as e:
+                # DB is already updated above; log and let the user know the
+                # channel copy may briefly lag behind rather than losing their edit.
+                logger.error(f"Error updating channel message for edited post {post_id}: {e}")
+                channel_update_ok = False
+
+        # Clear the editing state now that the update attempt is complete
+        clear_edit_published_state(context)
+
+        if channel_update_ok:
+            await update.message.reply_text(
+                "Your post has been updated successfully!",
+                reply_markup=get_main_menu(user_id)
+            )
+        else:
+            await update.message.reply_text(
+                "Your post was updated, but the published channel message couldn't be "
+                "refreshed automatically. Please contact an admin if it doesn't update shortly.",
+                reply_markup=get_main_menu(user_id)
+            )
+        return
 
     # If user doesn't exist, create them
     # FIX: only create user if not exists
