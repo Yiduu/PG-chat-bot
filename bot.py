@@ -2307,7 +2307,54 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("Error showing confirmation. Please try again.")
         elif update.callback_query:
             await update.callback_query.message.reply_text("Error showing confirmation. Please try again.")
-async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post_id: int, commenter_id: str, comment_id: int = None, comment_content: str = None, comment_type: str = 'text'):
+async def send_telegram_media_async(context: ContextTypes.DEFAULT_TYPE, chat_id, media_type, media_id, caption=None, parse_mode=None, reply_markup=None):
+    """
+    Send an actual media message (photo/voice/audio/video/document/gif/sticker) via the
+    bot, using a file_id already stored on Telegram. Falls back to a plain text message
+    (using `caption` as the text) if the media type is missing/unsupported, or if the
+    media send itself fails. Returns the sent Message object, or None.
+    """
+    if not media_id or not media_type or media_type == 'text':
+        if caption:
+            return await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode=parse_mode, reply_markup=reply_markup)
+        return None
+
+    # Telegram's caption hard limit
+    safe_caption = caption[:1024] if caption else None
+
+    try:
+        if media_type == 'photo':
+            return await context.bot.send_photo(chat_id=chat_id, photo=media_id, caption=safe_caption, parse_mode=parse_mode, reply_markup=reply_markup)
+        elif media_type == 'voice':
+            return await context.bot.send_voice(chat_id=chat_id, voice=media_id, caption=safe_caption, parse_mode=parse_mode, reply_markup=reply_markup)
+        elif media_type == 'audio':
+            return await context.bot.send_audio(chat_id=chat_id, audio=media_id, caption=safe_caption, parse_mode=parse_mode, reply_markup=reply_markup)
+        elif media_type == 'video':
+            return await context.bot.send_video(chat_id=chat_id, video=media_id, caption=safe_caption, parse_mode=parse_mode, reply_markup=reply_markup)
+        elif media_type == 'document':
+            return await context.bot.send_document(chat_id=chat_id, document=media_id, caption=safe_caption, parse_mode=parse_mode, reply_markup=reply_markup)
+        elif media_type == 'gif':
+            return await context.bot.send_animation(chat_id=chat_id, animation=media_id, caption=safe_caption, parse_mode=parse_mode, reply_markup=reply_markup)
+        elif media_type == 'sticker':
+            # sendSticker doesn't accept a caption at all — send the sticker, then
+            # follow up with the notification text (and keyboard) as its own message.
+            msg = await context.bot.send_sticker(chat_id=chat_id, sticker=media_id)
+            if caption:
+                await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode=parse_mode, reply_markup=reply_markup)
+            return msg
+        else:
+            if caption:
+                return await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode=parse_mode, reply_markup=reply_markup)
+            return None
+    except Exception as e:
+        logger.error(f"send_telegram_media_async failed ({media_type}): {e}")
+        # Media send failed entirely — still let the person know something arrived
+        if caption:
+            return await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode=parse_mode, reply_markup=reply_markup)
+        return None
+
+
+async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post_id: int, commenter_id: str, comment_id: int = None, comment_content: str = None, comment_type: str = 'text', media_id: str = None):
     """Notify the post author when a new top‑level comment is added."""
     try:
         post = db_fetch_one("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,))
@@ -2354,7 +2401,16 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
             reply_markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("↩ Reply", callback_data=f"reply_{post_id}_{comment_id}")]
             ])
-        
+
+        # If the comment has media, send the actual file with the notification text as
+        # its caption; falls back to a text-only message if there's no media or the send fails.
+        if media_id and comment_type and comment_type != 'text':
+            await send_telegram_media_async(
+                context, author_id, comment_type, media_id,
+                caption=notification_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
+            )
+            return
+
         await context.bot.send_message(
             chat_id=author_id,
             text=notification_text,
@@ -2363,7 +2419,7 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
         )
     except Exception as e:
         logger.error(f"Error notifying vent author: {e}")
-async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str, new_comment_id: int = None, comment_content: str = None, comment_type: str = 'text'):
+async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str, new_comment_id: int = None, comment_content: str = None, comment_type: str = 'text', media_id: str = None):
     try:
         comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
         if not comment:
@@ -2413,7 +2469,16 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
             reply_markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("↩ Reply", callback_data=f"replytoreply_{post_id}_{comment_id}_{new_comment_id}")]
             ])
-        
+
+        # If the reply has media, send the actual file with the notification text as its
+        # caption; falls back to a text-only message if there's no media or the send fails.
+        if media_id and comment_type and comment_type != 'text':
+            await send_telegram_media_async(
+                context, original_author['user_id'], comment_type, media_id,
+                caption=notification_text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=reply_markup
+            )
+            return
+
         await context.bot.send_message(
             chat_id=original_author['user_id'],
             text=notification_text,
@@ -4837,12 +4902,71 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
     if not post.get('deleted'):
         header_kb.append([InlineKeyboardButton("Report Post", callback_data=f"report_post_{post_id}")])
 
+    media_type = post.get('media_type') or 'text'
+    media_id = post.get('media_id')
+    # Deleted posts show the "content has been deleted" placeholder text only —
+    # don't resend the original media alongside it.
+    has_media = bool(media_id) and media_type != 'text' and not post.get('deleted')
+
     if target_message:
-        await target_message.reply_text(
-            header_text,
-            reply_markup=InlineKeyboardMarkup(header_kb),
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
+        header_kb_markup = InlineKeyboardMarkup(header_kb)
+
+        if has_media:
+            # Telegram captions are capped at 1024 chars, unlike message text.
+            caption_text = header_text
+            if len(caption_text) > 1024:
+                caption_text = caption_text[:1021] + '...'
+
+            media_kwargs = {
+                'caption': caption_text,
+                'parse_mode': ParseMode.MARKDOWN_V2,
+                'reply_markup': header_kb_markup
+            }
+
+            try:
+                if media_type == 'photo':
+                    await target_message.reply_photo(photo=media_id, **media_kwargs)
+                elif media_type == 'voice':
+                    await target_message.reply_voice(voice=media_id, **media_kwargs)
+                elif media_type == 'audio':
+                    await target_message.reply_audio(audio=media_id, **media_kwargs)
+                elif media_type == 'gif':
+                    await target_message.reply_animation(animation=media_id, **media_kwargs)
+                elif media_type == 'video':
+                    await target_message.reply_video(video=media_id, **media_kwargs)
+                elif media_type == 'sticker':
+                    # Stickers don't reliably support captions across clients, so send the
+                    # sticker first, then the header text (with the keyboard) as a follow-up.
+                    try:
+                        await target_message.reply_sticker(sticker=media_id)
+                    except (BadRequest, TypeError) as e:
+                        logger.warning(f"Failed to send sticker for post {post_id}: {e}")
+                    await target_message.reply_text(
+                        header_text,
+                        reply_markup=header_kb_markup,
+                        parse_mode=ParseMode.MARKDOWN_V2
+                    )
+                else:
+                    # Unrecognized media type — fall back to text-only header
+                    await target_message.reply_text(
+                        header_text,
+                        reply_markup=header_kb_markup,
+                        parse_mode=ParseMode.MARKDOWN_V2
+                    )
+            except Exception as e:
+                logger.error(f"Error sending post media in show_comments_menu for post {post_id}: {e}")
+                # Fall back to a text-only header if the media send fails for any reason
+                await target_message.reply_text(
+                    header_text,
+                    reply_markup=header_kb_markup,
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+        else:
+            await target_message.reply_text(
+                header_text,
+                reply_markup=header_kb_markup,
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
 
     # Comments only load once the user taps "View Comments" — unless we were asked
     # to auto-show them (e.g. right after the user posts a new comment).
@@ -5155,14 +5279,6 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     # Show typing animation
     await typing_animation(context, chat_id, 0.5)
-    
-    # Show loading message
-    loading_msg = None
-    if page == 1:
-        try:
-            loading_msg = await context.bot.send_message(chat_id, "Loading comments...")
-        except:
-            pass
 
     user_id = str(update.effective_user.id)
     per_page = 10
@@ -5179,9 +5295,6 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     post = page_data['post']
     if not post:
-        if loading_msg:
-            try: await loading_msg.delete()
-            except: pass
         await context.bot.send_message(chat_id, "Post not found.")
         return
 
@@ -5194,9 +5307,6 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     total_pages = (total_comments + per_page - 1) // per_page
 
     if not comments and page == 1:
-        if loading_msg:
-            try: await loading_msg.delete()
-            except: pass
         first_comment_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("Be the first to comment", callback_data=f"writecomment_{post_id}")]
         ])
@@ -5207,11 +5317,6 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             reply_markup=first_comment_kb
         )
         return
-
-    # Delete loading message if it exists
-    if loading_msg:
-        try: await loading_msg.delete()
-        except: pass
 
     context._user_id = user_id
     msg_ids = {}
@@ -9140,11 +9245,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Notify vent author if this is a top‑level comment
         if parent_comment_id == 0:
-            await notify_vent_author_of_comment(context, post_id, user_id, new_comment_id, comment_content=content, comment_type=comment_type)
+            await notify_vent_author_of_comment(context, post_id, user_id, new_comment_id, comment_content=content, comment_type=comment_type, media_id=file_id)
         
         # Notify parent comment author if this is a reply
         if parent_comment_id != 0:
-            await notify_user_of_reply(context, post_id, parent_comment_id, user_id, new_comment_id, comment_content=content, comment_type=comment_type)
+            await notify_user_of_reply(context, post_id, parent_comment_id, user_id, new_comment_id, comment_content=content, comment_type=comment_type, media_id=file_id)
         return
 
     elif state == STATE_AWAITING_PRIVATE_MESSAGE:
