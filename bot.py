@@ -4902,28 +4902,39 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             msg = await context.bot.send_voice(**send_kwargs)
             
         elif comment_type in ['gif', 'sticker', 'photo'] and file_id:
-            # Send media first, then author info as a reply (so info appears below)
-            # The media message handles the initial threading (reply to parent)
+            # Build the caption with author info and comment content
+            caption_text = f"{escaped_content}\n\n{author_text}" if escaped_content else author_text
+            # Truncate caption if needed (Telegram caption limit is 1024)
+            if len(caption_text) > 1024:
+                caption_text = caption_text[:1021] + '...'
+            
             media_kwargs = {
                 'chat_id': chat_id,
-                'reply_to_message_id': send_kwargs.get('reply_to_message_id')
+                'reply_markup': kb,
+                'reply_to_message_id': send_kwargs.get('reply_to_message_id'),
+                'caption': caption_text,
+                'parse_mode': ParseMode.MARKDOWN_V2
             }
             
-            if comment_type == 'sticker':
-                media_msg = await context.bot.send_sticker(sticker=file_id, **media_kwargs)
-            elif comment_type == 'photo':
-                media_msg = await context.bot.send_photo(photo=file_id, **media_kwargs)
-            else: # gif
-                media_msg = await context.bot.send_animation(animation=file_id, **media_kwargs)
-            
-            # Now send author info and keyboard as a reply to the media message
-            # This message will be stored in DB as the reference for future replies
-            info_kwargs = send_kwargs.copy()
-            info_kwargs['text'] = message_text
-            info_kwargs['reply_to_message_id'] = media_msg.message_id
-            info_kwargs['disable_web_page_preview'] = True
-            
-            msg = await context.bot.send_message(**info_kwargs)
+            if comment_type == 'photo':
+                msg = await context.bot.send_photo(photo=file_id, **media_kwargs)
+            elif comment_type == 'sticker':
+                # Sticker may not show caption well on all clients, but we still send it.
+                # If caption doesn't show, we fallback below.
+                try:
+                    msg = await context.bot.send_sticker(sticker=file_id, **media_kwargs)
+                except (BadRequest, TypeError):
+                    # Fallback: send sticker without caption, then send info as separate message
+                    msg = await context.bot.send_sticker(sticker=file_id, reply_to_message_id=send_kwargs.get('reply_to_message_id'))
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=author_text,
+                        reply_markup=kb,
+                        parse_mode=ParseMode.MARKDOWN_V2,
+                        reply_to_message_id=msg.message_id
+                    )
+            else:  # gif
+                msg = await context.bot.send_animation(animation=file_id, **media_kwargs)
             
         else:
             # Fallback for unknown types
@@ -8342,40 +8353,78 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ==================== REPORTING CALLBACKS ====================
 
         elif query.data.startswith('report_post_'):
-            try:
-                post_id = int(query.data.split('_')[2])
-                post = db_fetch_one("SELECT post_id FROM posts WHERE post_id = %s", (post_id,))
-                if not post:
-                    await query.answer("Post not found.", show_alert=True)
-                    return
-                context.user_data['reporting'] = {'type': 'post', 'id': post_id, 'timestamp': time.time()}
-                await query.answer()
-                await query.message.reply_text(
-                    "*Report Post*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap Cancel to go back.",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=cancel_menu
-                )
-            except Exception as e:
-                logger.error(f"Error in report_post handler: {e}")
-                await query.answer("Error processing request", show_alert=True)
+            post_id = int(query.data.split('_')[2])
+            post = db_fetch_one("SELECT content FROM posts WHERE post_id = %s", (post_id,))
+            if not post:
+                await query.answer("Post not found.", show_alert=True)
+                return
+            preview = (post['content'] or '')[:200] + ('...' if len(post['content'] or '') > 200 else '')
+            # Show confirmation
+            context.user_data['pending_report'] = {'type': 'post', 'id': post_id}
+            keyboard = [
+                [InlineKeyboardButton("Yes, Report", callback_data=f"confirm_report_post_{post_id}")],
+                [InlineKeyboardButton("No, Cancel", callback_data="cancel_report")]
+            ]
+            await query.message.reply_text(
+                f"⚠️ *Are you sure you want to report this post?*\n\n"
+                f"Content preview:\n{escape_markdown(preview, version=2)}\n\n"
+                f"This action cannot be undone.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            await query.answer()
+            return
 
         elif query.data.startswith('report_comment_'):
-            try:
-                comment_id = int(query.data.split('_')[2])
-                comment = db_fetch_one("SELECT comment_id FROM comments WHERE comment_id = %s", (comment_id,))
-                if not comment:
-                    await query.answer("Comment not found.", show_alert=True)
-                    return
-                context.user_data['reporting'] = {'type': 'comment', 'id': comment_id, 'timestamp': time.time()}
-                await query.answer()
-                await query.message.reply_text(
-                    "*Report Comment*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap Cancel to go back.",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=cancel_menu
-                )
-            except Exception as e:
-                logger.error(f"Error in report_comment handler: {e}")
-                await query.answer("Error processing request", show_alert=True)
+            comment_id = int(query.data.split('_')[2])
+            comment = db_fetch_one("SELECT content, post_id FROM comments WHERE comment_id = %s", (comment_id,))
+            if not comment:
+                await query.answer("Comment not found.", show_alert=True)
+                return
+            preview = (comment['content'] or '[Media]')[:200] + ('...' if len(comment['content'] or '') > 200 else '')
+            context.user_data['pending_report'] = {'type': 'comment', 'id': comment_id}
+            keyboard = [
+                [InlineKeyboardButton("Yes, Report", callback_data=f"confirm_report_comment_{comment_id}")],
+                [InlineKeyboardButton("No, Cancel", callback_data="cancel_report")]
+            ]
+            await query.message.reply_text(
+                f"⚠️ *Are you sure you want to report this comment?*\n\n"
+                f"Content preview:\n{escape_markdown(preview, version=2)}\n\n"
+                f"This action cannot be undone.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            await query.answer()
+            return
+
+        elif query.data.startswith('confirm_report_post_'):
+            post_id = int(query.data.split('_')[3])  # confirm_report_post_<post_id>
+            context.user_data['reporting'] = {'type': 'post', 'id': post_id, 'timestamp': time.time()}
+            await query.message.reply_text(
+                "*Report Post*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap Cancel to go back.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=cancel_menu
+            )
+            await query.answer()
+            return
+
+        elif query.data.startswith('confirm_report_comment_'):
+            comment_id = int(query.data.split('_')[3])
+            context.user_data['reporting'] = {'type': 'comment', 'id': comment_id, 'timestamp': time.time()}
+            await query.message.reply_text(
+                "*Report Comment*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap Cancel to go back.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=cancel_menu
+            )
+            await query.answer()
+            return
+
+        elif query.data == 'cancel_report':
+            context.user_data.pop('pending_report', None)
+            context.user_data.pop('reporting', None)
+            await query.message.edit_text("Report cancelled.")
+            await query.answer()
+            return
 
         elif query.data.startswith('admin_chats_'):
             try:
@@ -9030,16 +9079,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
         await update.message.reply_text("Your comment has been posted!", reply_markup=get_main_menu(user_id))
 
-        # Refresh the post + comments view so the new comment is visible right away
-        try:
-            total_comments_now = count_all_comments(post_id)
-            per_page = 10
-            last_page = max(1, (total_comments_now + per_page - 1) // per_page)
-            await show_comments_menu(update, context, post_id, page=last_page, force_reveal=True, auto_show_comments=True)
-        except Exception as e:
-            logger.error(f"Error refreshing comments view after posting: {e}")
-
-        
         # Update comment count in background
         asyncio.create_task(update_channel_post_comment_count(context, post_id))
         
