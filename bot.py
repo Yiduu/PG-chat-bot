@@ -8355,22 +8355,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('report_post_'):
             try:
                 post_id = int(query.data.split('_')[2])
-                post = db_fetch_one("SELECT content FROM posts WHERE post_id = %s", (post_id,))
+                post = db_fetch_one("SELECT post_id FROM posts WHERE post_id = %s", (post_id,))
                 if not post:
                     await query.answer("Post not found.", show_alert=True)
                     return
-                preview = (post['content'] or '')[:200] + ('...' if len(post['content'] or '') > 200 else '')
                 # Show confirmation
                 context.user_data['pending_report'] = {'type': 'post', 'id': post_id}
                 keyboard = [
                     [InlineKeyboardButton("Yes, Report", callback_data=f"confirm_report_post_{post_id}")],
                     [InlineKeyboardButton("No, Cancel", callback_data="cancel_report")]
                 ]
-                escaped_preview = html.escape(preview)
                 await query.message.reply_text(
-                    f"⚠️ <b>Are you sure you want to report this post?</b>\n\n"
-                    f"Content preview:\n{escaped_preview}\n\n"
-                    f"This action cannot be undone.",
+                    "⚠️ <b>Are you sure you want to report this post?</b>",
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode=ParseMode.HTML
                 )
@@ -8383,21 +8379,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('report_comment_'):
             try:
                 comment_id = int(query.data.split('_')[2])
-                comment = db_fetch_one("SELECT content, post_id FROM comments WHERE comment_id = %s", (comment_id,))
+                comment = db_fetch_one("SELECT comment_id FROM comments WHERE comment_id = %s", (comment_id,))
                 if not comment:
                     await query.answer("Comment not found.", show_alert=True)
                     return
-                preview = (comment['content'] or '[Media]')[:200] + ('...' if len(comment['content'] or '') > 200 else '')
                 context.user_data['pending_report'] = {'type': 'comment', 'id': comment_id}
                 keyboard = [
                     [InlineKeyboardButton("Yes, Report", callback_data=f"confirm_report_comment_{comment_id}")],
                     [InlineKeyboardButton("No, Cancel", callback_data="cancel_report")]
                 ]
-                escaped_preview = html.escape(preview)
                 await query.message.reply_text(
-                    f"⚠️ <b>Are you sure you want to report this comment?</b>\n\n"
-                    f"Content preview:\n{escaped_preview}\n\n"
-                    f"This action cannot be undone.",
+                    "⚠️ <b>Are you sure you want to report this comment?</b>",
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode=ParseMode.HTML
                 )
