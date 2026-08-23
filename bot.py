@@ -75,6 +75,19 @@ def init_db():
                     user_id TEXT PRIMARY KEY,
                     anonymous_name TEXT,
                     sex TEXT DEFAULT '👤',
+                    -- DEPRECATED (kept only so existing rows/backups still load cleanly):
+                    -- awaiting_name, waiting_for_post, waiting_for_comment, selected_category,
+                    -- comment_post_id, comment_idx, reply_idx, nested_idx,
+                    -- waiting_for_private_message, private_message_target, awaiting_bio.
+                    -- The bot no longer reads or writes any of these - all per-user
+                    -- conversational state now lives in context.user_data (see
+                    -- get_state/set_state/reset_state). Safe to drop in a later migration
+                    -- once you've confirmed nothing external still reads them, e.g.:
+                    --   ALTER TABLE users DROP COLUMN awaiting_name, DROP COLUMN waiting_for_post,
+                    --     DROP COLUMN waiting_for_comment, DROP COLUMN selected_category,
+                    --     DROP COLUMN comment_post_id, DROP COLUMN comment_idx, DROP COLUMN reply_idx,
+                    --     DROP COLUMN nested_idx, DROP COLUMN waiting_for_private_message,
+                    --     DROP COLUMN private_message_target, DROP COLUMN awaiting_bio;
                     awaiting_name BOOLEAN DEFAULT FALSE,
                     waiting_for_post BOOLEAN DEFAULT FALSE,
                     waiting_for_comment BOOLEAN DEFAULT FALSE,
@@ -262,9 +275,6 @@ def init_db():
                     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_post_user ON reactions (post_id, user_id) WHERE post_id IS NOT NULL")
                     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_comment_user ON reactions (comment_id, user_id) WHERE comment_id IS NOT NULL")
                     c.execute("CREATE INDEX IF NOT EXISTS idx_reactions_lookup ON reactions (post_id, comment_id, type)")
-                    
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_pm_lookup ON private_messages (sender_id, receiver_id, timestamp DESC)")
-                    c.execute("CREATE INDEX IF NOT EXISTS idx_pm_unread ON private_messages (receiver_id, is_read)")
 
                 # Indexes for the columns comment/rating lookups filter on - these were
                 # missing, so every comments-page load and every rating calculation was
@@ -276,6 +286,29 @@ def init_db():
                 c.execute("CREATE INDEX IF NOT EXISTS idx_reactions_comment_id ON reactions (comment_id)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_blocks_blocked_id ON blocks (blocked_id)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_followers_followed_id ON followers (followed_id)")
+
+                # These were previously created only inside the one-time reactions.post_id
+                # migration above, so they'd silently never exist on a DB where that
+                # migration had already run before this fix (e.g. restored from a backup
+                # taken after the migration, or the migration re-ordered). Moved out here
+                # so they're always ensured, like every other index in this block.
+                c.execute("CREATE INDEX IF NOT EXISTS idx_pm_lookup ON private_messages (sender_id, receiver_id, timestamp DESC)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_pm_unread ON private_messages (receiver_id, is_read)")
+                # Covers the reverse direction of get_admin_conversation_transcript's /
+                # get_admin_conversations' LATERAL "last message between A and B" lookup
+                # (idx_pm_lookup only covers sender->receiver order efficiently).
+                c.execute("CREATE INDEX IF NOT EXISTS idx_pm_receiver_sender ON private_messages (receiver_id, sender_id, timestamp DESC)")
+                # get_admin_conversations groups by LEAST(sender_id, receiver_id) /
+                # GREATEST(sender_id, receiver_id) to find each unique conversation pair.
+                # That expression can't use a plain btree on (sender_id, receiver_id), so
+                # without this the whole private_messages table gets hash-aggregated on
+                # every admin conversations list/search. A matching expression index lets
+                # Postgres do an index-only scan for both the grouping and the MAX(timestamp)
+                # ordering instead.
+                c.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_pm_conversation_pair
+                    ON private_messages (LEAST(sender_id, receiver_id), GREATEST(sender_id, receiver_id), timestamp DESC)
+                """)
 
                 # Private messages media columns
                 c.execute("""
@@ -696,6 +729,35 @@ def db_fetch_one(query, params=()):
 
 def db_fetch_all(query, params=()):
     return db_execute(query, params, fetch=True)
+
+
+# -------------------- Async DB wrappers (Telegram handlers only) --------------------
+# psycopg2 is synchronous, so calling db_execute/db_fetch_one/db_fetch_all directly
+# from an `async def` handler blocks the whole event loop for every other chat
+# until the query returns. asyncio.to_thread() runs the same sync call in the
+# default thread pool instead, freeing the loop to keep handling other updates.
+#
+# Flask routes should keep calling the sync db_execute/db_fetch_one/db_fetch_all
+# directly - each Flask request already runs in its own worker thread, so there's
+# no event loop being blocked and wrapping them here would just add overhead.
+async def db_execute_async(query, params=(), fetch=False, fetchone=False):
+    """Async version of db_execute for use inside Telegram bot handlers (async def ...)."""
+    try:
+        return await asyncio.to_thread(db_execute, query, params, fetch, fetchone)
+    except Exception as e:
+        # db_execute already logs and re-raises; this log adds the async call-site context.
+        logging.error(f"Async database error (db_execute_async): {e}")
+        raise
+
+
+async def db_fetch_one_async(query, params=()):
+    """Async version of db_fetch_one for use inside Telegram bot handlers."""
+    return await db_execute_async(query, params, fetchone=True)
+
+
+async def db_fetch_all_async(query, params=()):
+    """Async version of db_fetch_all for use inside Telegram bot handlers."""
+    return await db_execute_async(query, params, fetch=True)
 def get_admin_conversations(limit=20, offset=0, search=None):
     """List distinct conversation pairs, most recently active first."""
     where_extra = ""
@@ -775,36 +837,59 @@ def get_admin_conversation_transcript(user_a, user_b, limit=50):
         ORDER BY timestamp ASC
     """, (user_a, user_b, user_b, user_a, limit))
 
-async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: ContextTypes.DEFAULT_TYPE = None):
-    """Reset all waiting states for a user and optionally restore main menu"""
-    # Reset database states
-    db_execute('''
-        UPDATE users 
-        SET waiting_for_post = FALSE, 
-            waiting_for_comment = FALSE, 
-            awaiting_name = FALSE,
-            waiting_for_private_message = FALSE,
-            awaiting_bio = FALSE,
-            selected_category = NULL,
-            selected_categories = NULL,
-            comment_post_id = NULL,
-            comment_idx = NULL,
-            private_message_target = NULL,
-            thread_context_post_id = NULL
-        WHERE user_id = %s
-    ''', (user_id,))
-    
-    # Reset context flags
-    if context:
-        context_keys = ['editing_comment', 'editing_post', 'thread_from_post_id', 
-                       'pending_post', 'pending_explicit_check', 'broadcasting', 'broadcast_step', 'broadcast_type',
-                       'rejecting_post', 'awaiting_rejection_reason', 'reporting',
-                       'editing_categories_for_pending', 'selected_categories', 'pending_comment_edit']
-        for key in context_keys:
-            if key in context.user_data:
-                del context.user_data[key]
+# -------------------- Unified conversational state (context.user_data only) --------------------
+# Single source of truth for "what input is this user's next message going to?".
+# This replaces the old waiting_for_post / waiting_for_comment / awaiting_name /
+# waiting_for_private_message / awaiting_bio / awaiting_rejection_reason columns on
+# `users`, which duplicated what context.user_data already tracked (e.g. comment_post_id)
+# and could drift out of sync - a message handler that updated one and forgot the other
+# left a user stuck in a flow they could no longer get out of. All per-user "temporary
+# input mode" state now lives exclusively in context.user_data.
+STATE_IDLE = 'idle'
+STATE_AWAITING_POST = 'awaiting_post'
+STATE_AWAITING_COMMENT = 'awaiting_comment'
+STATE_AWAITING_PRIVATE_MESSAGE = 'awaiting_private_message'
+STATE_AWAITING_NAME = 'awaiting_name'
+STATE_AWAITING_BIO = 'awaiting_bio'
+STATE_AWAITING_REJECTION_REASON = 'awaiting_rejection_reason'
+STATE_REPORTING = 'reporting'
 
-    
+
+def get_state(context: ContextTypes.DEFAULT_TYPE) -> str:
+    """Return the user's current conversational state. Defaults to idle."""
+    return context.user_data.get('state', STATE_IDLE)
+
+
+def set_state(context: ContextTypes.DEFAULT_TYPE, state: str, **data):
+    """Enter a new state, optionally stashing the data that state needs
+    (e.g. set_state(context, STATE_AWAITING_COMMENT, comment_post_id=post_id)).
+    Data keys land directly in context.user_data so existing lookups like
+    context.user_data['comment_post_id'] keep working unchanged."""
+    context.user_data['state'] = state
+    context.user_data.update(data)
+
+
+def reset_state(context: ContextTypes.DEFAULT_TYPE):
+    """Return the user to idle and clear all state-scoped data. Call this whenever
+    a flow finishes, errors out, or is cancelled - the single place to keep in sync
+    instead of one DB UPDATE plus a hand-picked list of context keys."""
+    context.user_data['state'] = STATE_IDLE
+    for key in ('comment_post_id', 'comment_idx', 'reply_idx', 'nested_idx',
+                'selected_category', 'selected_categories', 'private_message_target',
+                'thread_context_post_id', 'thread_from_post_id', 'rejecting_post',
+                'reporting', 'pending_explicit_check', 'editing_comment', 'editing_post',
+                'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type',
+                'editing_categories_for_pending', 'pending_comment_edit'):
+        context.user_data.pop(key, None)
+
+
+async def reset_user_waiting_states(user_id: str, chat_id: int = None, context: ContextTypes.DEFAULT_TYPE = None):
+    """Reset all waiting states for a user and optionally restore main menu.
+    State now lives only in context.user_data (see reset_state above) - the old
+    per-flow columns on `users` are no longer read or written by the bot handlers."""
+    if context:
+        reset_state(context)
+
     # If chat_id and context are provided, restore main menu
     if chat_id and context:
         try:
@@ -3734,12 +3819,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             post_id_str = arg.split("_", 1)[1]
             if post_id_str.isdigit():
                 post_id = int(post_id_str)
-                db_execute(
-                    "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s WHERE user_id = %s",
-                    (post_id, user_id)
-                )
-                
-                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+                set_state(context, STATE_AWAITING_COMMENT, comment_post_id=post_id, comment_idx=None)
+
+                post = await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,))
                 preview_text = "Original content not found"
                 if post:
                     content = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
@@ -5760,8 +5842,11 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Clean snippet for button text
         clean_snippet = snippet.replace('*', '').replace('_', '').replace('`', '').strip()
         
-        # Get comment count for this post
-        comment_count = count_all_comments(post['post_id'])
+        # Comment count is already denormalized onto posts.comment_count and kept in
+        # sync by update_channel_post_comment_count() whenever a comment is added/removed -
+        # calling count_all_comments() here was a redundant extra query per post
+        # (an N+1: one COUNT(*) query per row instead of using the column already fetched).
+        comment_count = post['comment_count'] or 0
         
         # Create button for each post with post number and snippet
         button_text = f"#{post_number} - {clean_snippet} ({comment_count})"
@@ -6601,17 +6686,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            # Check if this is a thread continuation
-            user_data = db_fetch_one("SELECT thread_context_post_id FROM users WHERE user_id = %s", (user_id,))
-            if user_data and user_data.get('thread_context_post_id'):
-                context.user_data['thread_from_post_id'] = user_data['thread_context_post_id']
-            
-            # Store selected categories in user's DB record
-            db_execute(
-                "UPDATE users SET selected_categories = %s, waiting_for_post = TRUE WHERE user_id = %s",
-                (','.join(selected), user_id)
-            )
-            
+            # Store selected categories and enter the awaiting-post state.
+            # thread_from_post_id (if any) was already set in context.user_data
+            # directly when the "continue this post" button was tapped.
+            set_state(context, STATE_AWAITING_POST, selected_categories=','.join(selected))
+
             await query.message.reply_text(
                 f"*Selected: {', '.join(selected)}*\n\nNow send your post content (text, photo, or voice).",
                 parse_mode=ParseMode.MARKDOWN,
@@ -6742,10 +6821,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data == 'edit_name':
             await query.answer("Renaming...", show_alert=False)
-            db_execute(
-                "UPDATE users SET awaiting_name = TRUE WHERE user_id = %s",
-                (user_id,)
-            )
+            set_state(context, STATE_AWAITING_NAME)
             await query.message.reply_text(
                 "Please type your new anonymous name:\n\nTap Cancel to return to menu.",
                 parse_mode=ParseMode.MARKDOWN,
@@ -6754,10 +6830,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data == 'edit_bio':
             await query.answer("Opening Bio Editor...", show_alert=False)
-            db_execute(
-                "UPDATE users SET awaiting_bio = TRUE WHERE user_id = %s",
-                (user_id,)
-            )
+            set_state(context, STATE_AWAITING_BIO)
             await query.message.reply_text(
                 "*Please type your new bio:*\n\nKeep it short and interesting (max 150 chars).\n\nTap Cancel to return to menu.",
                 parse_mode=ParseMode.MARKDOWN,
@@ -6943,11 +7016,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             post_id_str = query.data.split('_', 1)[1]
             if post_id_str.isdigit():
                 post_id = int(post_id_str)
-                db_execute(
-                    "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s WHERE user_id = %s",
-                    (post_id, user_id)
-                )
-                
+                set_state(context, STATE_AWAITING_COMMENT, comment_post_id=post_id, comment_idx=None)
+
                 await query.message.reply_text(
                     "Type your comment, or send a voice message, GIF, or sticker.\n\nTap Cancel to return to the menu.",
                     reply_markup=cancel_menu,
@@ -7275,7 +7345,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if existing:
                 if existing['status'] == 'accepted':
                     await query.answer("Request already accepted!", show_alert=False)
-                    db_execute("UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s", (target_id, user_id))
+                    set_state(context, STATE_AWAITING_PRIVATE_MESSAGE, private_message_target=target_id)
                     await query.message.reply_text("Type your message below:", reply_markup=cancel_menu)
                     return
 
@@ -7468,7 +7538,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             await query.answer("Opening Chat...", show_alert=False)
-            db_execute("UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s", (target_id, user_id))
+            set_state(context, STATE_AWAITING_PRIVATE_MESSAGE, private_message_target=target_id)
             await query.message.reply_text("*Please type your private message:*\n\nTap Cancel to return to menu.", parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_menu)
         
         elif query.data.startswith('reply_msg_'):
@@ -7493,7 +7563,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("No active chat permission.", show_alert=True)
                 return
 
-            db_execute("UPDATE users SET waiting_for_private_message = TRUE, private_message_target = %s WHERE user_id = %s", (target_id, user_id))
+            set_state(context, STATE_AWAITING_PRIVATE_MESSAGE, private_message_target=target_id)
             target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
             await query.message.reply_text(f"*Replying to {target_user['anonymous_name']}*\n\nPlease send your text,voice or picturemessage:", parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_menu)
 
@@ -7502,11 +7572,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(parts) == 3:
                 post_id = int(parts[1])
                 comment_id = int(parts[2])
-                db_execute(
-                    "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
-                    (post_id, comment_id, user_id)
-                )
-                
+                set_state(context, STATE_AWAITING_COMMENT, comment_post_id=post_id, comment_idx=comment_id)
+
                 await query.message.reply_text(
                     "Please type your reply or send a voice message, GIF, or sticker:\n\nTap Cancel to return to menu.",
                     reply_markup=cancel_menu,
@@ -7518,11 +7585,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(parts) == 4:
                 post_id = int(parts[1])
                 comment_id = int(parts[3])
-                db_execute(
-                    "UPDATE users SET waiting_for_comment = TRUE, comment_post_id = %s, comment_idx = %s WHERE user_id = %s",
-                    (post_id, comment_id, user_id)
-                )
-                
+                set_state(context, STATE_AWAITING_COMMENT, comment_post_id=post_id, comment_idx=comment_id)
+
                 await query.message.reply_text(
                     "Please type your reply or send a voice message, GIF, or sticker:\n\nTap Cancel to return to menu.",
                     reply_markup=cancel_menu,
@@ -7650,8 +7714,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if post and post['author_id'] == user_id:
                 context.user_data['thread_from_post_id'] = post_id
-                # Save to DB for persistence
-                db_execute("UPDATE users SET thread_context_post_id = %s WHERE user_id = %s", (post_id, user_id))
                 # Use multi-category selection
                 context.user_data['selected_categories'] = set()
                 await query.message.reply_text(
@@ -8718,7 +8780,7 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or update.message.caption or ""
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    user = await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,))
     
 
     # Handle cancel command or main menu buttons while in an input state
@@ -8728,9 +8790,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # UNCONDITIONALLY reset all waiting states when a menu button is pressed
         # We pass None for chat_id to reset quietly, as we'll send the specific menu next
         await reset_user_waiting_states(user_id, None, context)
-        
-        # Reload user object from DB to ensure subsequent flags are FALSE
-        user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
         
         # Early exit for explicit cancellation
         if text in ["❌ Cancel", "/cancel"] or text.lower() in ("cancel", "❌ cancel"):
@@ -8754,10 +8813,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # NEW: Handle report reason capture from user
     # IMPORTANT: comment flow always wins. If the user is mid-comment
-    # (waiting_for_comment is TRUE in the DB) a lingering 'reporting' state
+    # (state is STATE_AWAITING_COMMENT) a lingering 'reporting' state
     # must NOT hijack their message — fall through and let the
-    # waiting_for_comment branch further down handle it instead.
-    if context.user_data.get('reporting') and not (user and user['waiting_for_comment']):
+    # awaiting-comment branch further down handle it instead.
+    if context.user_data.get('reporting') and get_state(context) != STATE_AWAITING_COMMENT:
         if text in main_menu_buttons: return
         reporting = context.user_data.get('reporting')
 
@@ -8925,30 +8984,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         anon = create_anonymous_name(user_id)
         is_admin = str(user_id) == str(ADMIN_ID)
-        db_execute(
+        await db_execute_async(
             "INSERT INTO users (user_id, anonymous_name, sex, is_admin) VALUES (%s, %s, %s, %s)",
             (user_id, anon, '👤', is_admin)
         )
-        user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        user = await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,))
 
     # NEW: Check if we have a thread_from_post_id for continuation
     thread_from_post_id = context.user_data.get('thread_from_post_id')
-    if not thread_from_post_id:
-        # Fallback to database
-        user_db = db_fetch_one("SELECT thread_context_post_id FROM users WHERE user_id = %s", (user_id,))
-        if user_db and user_db.get('thread_context_post_id'):
-            thread_from_post_id = user_db['thread_context_post_id']
-            context.user_data['thread_from_post_id'] = thread_from_post_id
-    
-    if user and user['waiting_for_post']:
+
+    state = get_state(context)
+
+    if state == STATE_AWAITING_POST:
         if text in main_menu_buttons: return
-        category = user.get('selected_categories')
-        if not category:
-            category = user.get('selected_category') # Fallback for transition
-            
+        category = context.user_data.get('selected_categories')
+
         if not category:
             await update.message.reply_text("No categories selected. Please start over.", reply_markup=get_main_menu(user_id))
-            db_execute("UPDATE users SET waiting_for_post = FALSE WHERE user_id = %s", (user_id,))
+            reset_state(context)
             return
 
         post_content = ""
@@ -8984,12 +9037,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             
-            # FIX: Reset user state for BOTH text and media posts
-            db_execute(
-                "UPDATE users SET waiting_for_post = FALSE, selected_categories = NULL, selected_category = NULL WHERE user_id = %s",
-                (user_id,)
-            )
-            
+            # Reset flow state for BOTH text and media posts before handing off
+            # to the explicit-content confirmation (a callback-driven step, so no
+            # further text state should be "waiting" for the interim).
+            reset_state(context)
+
             # Ask whether the post contains explicit content before showing the preview
             context.user_data['pending_explicit_check'] = {
                 'content': post_content,
@@ -9008,10 +9060,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⚠️ ይህ ፖስት ወሲባዊ ወይም ለሁሉም እድሜ የማይሆን ይዘት አለው?",
                 reply_markup=explicit_kb
             )
-            
-            # Clear thread context from DB now that it's been captured for the pending post
-            if thread_from_post_id:
-                db_execute("UPDATE users SET thread_context_post_id = NULL WHERE user_id = %s", (user_id,))
             return
         except Exception as e:
             logger.error(f"Error reading media: {e}")
@@ -9021,20 +9069,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             )
             # Reset state on error
-            db_execute(
-                "UPDATE users SET waiting_for_post = FALSE, selected_category = NULL WHERE user_id = %s",
-                (user_id,)
-            )
+            reset_state(context)
             return
 
-    elif user and user['waiting_for_comment']:
+    elif state == STATE_AWAITING_COMMENT:
         if text in main_menu_buttons: return
-        post_id = user['comment_post_id']
+        post_id = context.user_data.get('comment_post_id')
     
         parent_comment_id = 0
-        if user['comment_idx']:
+        if context.user_data.get('comment_idx'):
             try:
-                parent_comment_id = int(user['comment_idx'])
+                parent_comment_id = int(context.user_data['comment_idx'])
             except Exception:
                 parent_comment_id = 0
     
@@ -9070,7 +9115,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     
         # Insert new comment
-        new_comment_row = db_execute(
+        new_comment_row = await db_execute_async(
             """INSERT INTO comments
             (post_id, parent_comment_id, author_id, content, type, file_id)
             VALUES (%s, %s, %s, %s, %s, %s)
@@ -9086,10 +9131,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     
         # Reset state
-        db_execute(
-            "UPDATE users SET waiting_for_comment = FALSE, comment_post_id = NULL, comment_idx = NULL, reply_idx = NULL WHERE user_id = %s",
-            (user_id,)
-        )
+        reset_state(context)
     
         await update.message.reply_text("Your comment has been posted!", reply_markup=get_main_menu(user_id))
 
@@ -9105,9 +9147,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await notify_user_of_reply(context, post_id, parent_comment_id, user_id, new_comment_id, comment_content=content, comment_type=comment_type)
         return
 
-    elif user and user['waiting_for_private_message']:
+    elif state == STATE_AWAITING_PRIVATE_MESSAGE:
         if text in main_menu_buttons: return
-        target_id = user['private_message_target']
+        target_id = context.user_data.get('private_message_target')
         
         message_content = update.message.text or update.message.caption or ""
         media_type = 'text'
@@ -9137,7 +9179,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Check if blocked
-        is_blocked = db_fetch_one(
+        is_blocked = await db_fetch_one_async(
             "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
             (target_id, user_id)
         )
@@ -9147,26 +9189,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "You cannot send messages to this user. They have blocked you.",
                 reply_markup=get_main_menu(user_id)
             )
-
-
-            db_execute(
-                "UPDATE users SET waiting_for_private_message = FALSE, private_message_target = NULL WHERE user_id = %s",
-                (user_id,)
-            )
+            reset_state(context)
             return
         
         # Save message
-        message_row = db_execute(
+        message_row = await db_execute_async(
             "INSERT INTO private_messages (sender_id, receiver_id, content, media_type, media_id) VALUES (%s, %s, %s, %s, %s) RETURNING message_id",
             (user_id, target_id, message_content, media_type, media_id),
             fetchone=True
         )
         
         # Reset state
-        db_execute(
-            "UPDATE users SET waiting_for_private_message = FALSE, private_message_target = NULL WHERE user_id = %s",
-            (user_id,)
-        )
+        reset_state(context)
         
         # Notify receiver
         await notify_user_of_private_message(context, user_id, target_id, message_content, message_row['message_id'] if message_row else None)
@@ -9179,14 +9213,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    if user and user.get('awaiting_name'):
+    if state == STATE_AWAITING_NAME:
         if text in main_menu_buttons: return
         new_name = text.strip()
         if new_name and len(new_name) <= 30:
-            db_execute(
-                "UPDATE users SET anonymous_name = %s, awaiting_name = FALSE WHERE user_id = %s",
+            await db_execute_async(
+                "UPDATE users SET anonymous_name = %s WHERE user_id = %s",
                 (new_name, user_id)
             )
+            reset_state(context)
             await update.message.reply_text(
                 f"Name updated to *{new_name}*!", 
                 parse_mode=ParseMode.MARKDOWN,
@@ -9217,7 +9252,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_updated_profile(user_id, update.message.chat.id, context)
         return
         
-    if user and user.get('awaiting_bio'):
+    if state == STATE_AWAITING_BIO:
         if text in main_menu_buttons: return
         if not text:
             await update.message.reply_text("Bio must be text. Please try again.")
@@ -9227,7 +9262,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await update.message.reply_text("Bio is too long (max 200 chars). Please shorten it.")
              return
              
-        db_execute("UPDATE users SET bio = %s, awaiting_bio = FALSE WHERE user_id = %s", (text, user_id))
+        await db_execute_async("UPDATE users SET bio = %s WHERE user_id = %s", (text, user_id))
+        reset_state(context)
         await update.message.reply_text("Bio updated successfully!", reply_markup=get_main_menu(user_id))
 
         await send_updated_profile(user_id, update.message.chat.id, context)
@@ -11927,39 +11963,49 @@ def mini_app_get_posts():
         per_page = int(request.args.get('per_page', 10))
         offset = (page - 1) * per_page
         
-        # Get approved posts
+        # Get approved posts.
+        # Rewritten from a correlated subquery (COUNT(*) ... WHERE c2.post_id = p.post_id
+        # AND c2.timestamp > (SELECT last_viewed FROM post_views WHERE ...), re-evaluated
+        # per post) to a LEFT JOIN against post_views. The page_posts CTE also picks the
+        # 10 posts for this page *before* joining categories/unread comments, so the
+        # aggregation work only ever runs over `per_page` rows instead of every approved
+        # post in the table (the old query had to GROUP BY + ORDER BY the full result
+        # before LIMIT/OFFSET could be applied).
         posts = db_fetch_all('''
-            SELECT 
-                p.post_id,
-                p.content,
-                p.timestamp,
-                p.comment_count,
-                p.media_type,
-                p.media_id,
-                p.explicit,
+            WITH page_posts AS (
+                SELECT post_id, content, timestamp, comment_count, media_type,
+                       media_id, explicit, author_id
+                FROM posts
+                WHERE approved = TRUE AND deleted = FALSE
+                ORDER BY timestamp DESC
+                LIMIT %s OFFSET %s
+            )
+            SELECT
+                pp.post_id,
+                pp.content,
+                pp.timestamp,
+                pp.comment_count,
+                pp.media_type,
+                pp.media_id,
+                pp.explicit,
                 u.user_id as author_id,
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
                 u.anonymous_name as author_name,
                 u.is_admin as author_is_admin,
                 STRING_AGG(DISTINCT pc.category_code, ',') as categories,
-                COALESCE((
-                    SELECT COUNT(*) 
-                    FROM comments c2 
-                    WHERE c2.post_id = p.post_id 
-                    AND c2.timestamp > COALESCE((
-                        SELECT last_viewed FROM post_views pv 
-                        WHERE pv.user_id = %s AND pv.post_id = p.post_id
-                    ), '1970-01-01')
-                ), 0) as unread_comments
-            FROM posts p
-            JOIN users u ON p.author_id = u.user_id
-            LEFT JOIN post_categories pc ON p.post_id = pc.post_id
-            WHERE p.approved = TRUE AND p.deleted = FALSE
-            GROUP BY p.post_id, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
-            ORDER BY p.timestamp DESC
-            LIMIT %s OFFSET %s
-        ''', (user_id, per_page, offset))
+                COUNT(DISTINCT uc.comment_id) as unread_comments
+            FROM page_posts pp
+            JOIN users u ON pp.author_id = u.user_id
+            LEFT JOIN post_categories pc ON pp.post_id = pc.post_id
+            LEFT JOIN post_views pv ON pv.user_id = %s AND pv.post_id = pp.post_id
+            LEFT JOIN comments uc ON uc.post_id = pp.post_id
+                AND uc.timestamp > COALESCE(pv.last_viewed, '1970-01-01')
+            GROUP BY pp.post_id, pp.content, pp.timestamp, pp.comment_count, pp.media_type,
+                     pp.media_id, pp.explicit, u.user_id, u.sex, u.avatar_emoji,
+                     u.anonymous_name, u.is_admin
+            ORDER BY pp.timestamp DESC
+        ''', (per_page, offset, user_id))
         
         # Batch load reactions for posts
         post_ids = [p['post_id'] for p in posts]
