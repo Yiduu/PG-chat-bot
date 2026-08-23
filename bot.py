@@ -8353,78 +8353,100 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ==================== REPORTING CALLBACKS ====================
 
         elif query.data.startswith('report_post_'):
-            post_id = int(query.data.split('_')[2])
-            post = db_fetch_one("SELECT content FROM posts WHERE post_id = %s", (post_id,))
-            if not post:
-                await query.answer("Post not found.", show_alert=True)
+            try:
+                post_id = int(query.data.split('_')[2])
+                post = db_fetch_one("SELECT content FROM posts WHERE post_id = %s", (post_id,))
+                if not post:
+                    await query.answer("Post not found.", show_alert=True)
+                    return
+                preview = (post['content'] or '')[:200] + ('...' if len(post['content'] or '') > 200 else '')
+                # Show confirmation
+                context.user_data['pending_report'] = {'type': 'post', 'id': post_id}
+                keyboard = [
+                    [InlineKeyboardButton("Yes, Report", callback_data=f"confirm_report_post_{post_id}")],
+                    [InlineKeyboardButton("No, Cancel", callback_data="cancel_report")]
+                ]
+                escaped_preview = html.escape(preview)
+                await query.message.reply_text(
+                    f"⚠️ <b>Are you sure you want to report this post?</b>\n\n"
+                    f"Content preview:\n{escaped_preview}\n\n"
+                    f"This action cannot be undone.",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.HTML
+                )
+                await query.answer()
                 return
-            preview = (post['content'] or '')[:200] + ('...' if len(post['content'] or '') > 200 else '')
-            # Show confirmation
-            context.user_data['pending_report'] = {'type': 'post', 'id': post_id}
-            keyboard = [
-                [InlineKeyboardButton("Yes, Report", callback_data=f"confirm_report_post_{post_id}")],
-                [InlineKeyboardButton("No, Cancel", callback_data="cancel_report")]
-            ]
-            await query.message.reply_text(
-                f"⚠️ *Are you sure you want to report this post?*\n\n"
-                f"Content preview:\n{escape_markdown(preview, version=2)}\n\n"
-                f"This action cannot be undone.",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
-            await query.answer()
-            return
+            except Exception as e:
+                logger.error(f"Error in report_post handler: {e}", exc_info=True)
+                await query.answer("Error processing request", show_alert=True)
 
         elif query.data.startswith('report_comment_'):
-            comment_id = int(query.data.split('_')[2])
-            comment = db_fetch_one("SELECT content, post_id FROM comments WHERE comment_id = %s", (comment_id,))
-            if not comment:
-                await query.answer("Comment not found.", show_alert=True)
+            try:
+                comment_id = int(query.data.split('_')[2])
+                comment = db_fetch_one("SELECT content, post_id FROM comments WHERE comment_id = %s", (comment_id,))
+                if not comment:
+                    await query.answer("Comment not found.", show_alert=True)
+                    return
+                preview = (comment['content'] or '[Media]')[:200] + ('...' if len(comment['content'] or '') > 200 else '')
+                context.user_data['pending_report'] = {'type': 'comment', 'id': comment_id}
+                keyboard = [
+                    [InlineKeyboardButton("Yes, Report", callback_data=f"confirm_report_comment_{comment_id}")],
+                    [InlineKeyboardButton("No, Cancel", callback_data="cancel_report")]
+                ]
+                escaped_preview = html.escape(preview)
+                await query.message.reply_text(
+                    f"⚠️ <b>Are you sure you want to report this comment?</b>\n\n"
+                    f"Content preview:\n{escaped_preview}\n\n"
+                    f"This action cannot be undone.",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.HTML
+                )
+                await query.answer()
                 return
-            preview = (comment['content'] or '[Media]')[:200] + ('...' if len(comment['content'] or '') > 200 else '')
-            context.user_data['pending_report'] = {'type': 'comment', 'id': comment_id}
-            keyboard = [
-                [InlineKeyboardButton("Yes, Report", callback_data=f"confirm_report_comment_{comment_id}")],
-                [InlineKeyboardButton("No, Cancel", callback_data="cancel_report")]
-            ]
-            await query.message.reply_text(
-                f"⚠️ *Are you sure you want to report this comment?*\n\n"
-                f"Content preview:\n{escape_markdown(preview, version=2)}\n\n"
-                f"This action cannot be undone.",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
-            await query.answer()
-            return
+            except Exception as e:
+                logger.error(f"Error in report_comment handler: {e}", exc_info=True)
+                await query.answer("Error processing request", show_alert=True)
 
         elif query.data.startswith('confirm_report_post_'):
-            post_id = int(query.data.split('_')[3])  # confirm_report_post_<post_id>
-            context.user_data['reporting'] = {'type': 'post', 'id': post_id, 'timestamp': time.time()}
-            await query.message.reply_text(
-                "*Report Post*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap Cancel to go back.",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=cancel_menu
-            )
-            await query.answer()
-            return
+            try:
+                post_id = int(query.data.split('_')[3])  # confirm_report_post_<post_id>
+                context.user_data['reporting'] = {'type': 'post', 'id': post_id, 'timestamp': time.time()}
+                await query.message.reply_text(
+                    "*Report Post*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap Cancel to go back.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=cancel_menu
+                )
+                await query.answer()
+                return
+            except Exception as e:
+                logger.error(f"Error in confirm_report_post handler: {e}", exc_info=True)
+                await query.answer("Error processing request", show_alert=True)
 
         elif query.data.startswith('confirm_report_comment_'):
-            comment_id = int(query.data.split('_')[3])
-            context.user_data['reporting'] = {'type': 'comment', 'id': comment_id, 'timestamp': time.time()}
-            await query.message.reply_text(
-                "*Report Comment*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap Cancel to go back.",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=cancel_menu
-            )
-            await query.answer()
-            return
+            try:
+                comment_id = int(query.data.split('_')[3])
+                context.user_data['reporting'] = {'type': 'comment', 'id': comment_id, 'timestamp': time.time()}
+                await query.message.reply_text(
+                    "*Report Comment*\n\nPlease type a short reason for reporting this content (max 200 characters).\n\nTap Cancel to go back.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=cancel_menu
+                )
+                await query.answer()
+                return
+            except Exception as e:
+                logger.error(f"Error in confirm_report_comment handler: {e}", exc_info=True)
+                await query.answer("Error processing request", show_alert=True)
 
         elif query.data == 'cancel_report':
-            context.user_data.pop('pending_report', None)
-            context.user_data.pop('reporting', None)
-            await query.message.edit_text("Report cancelled.")
-            await query.answer()
-            return
+            try:
+                context.user_data.pop('pending_report', None)
+                context.user_data.pop('reporting', None)
+                await query.message.edit_text("Report cancelled.")
+                await query.answer()
+                return
+            except Exception as e:
+                logger.error(f"Error in cancel_report handler: {e}", exc_info=True)
+                await query.answer("Report cancelled.")
 
         elif query.data.startswith('admin_chats_'):
             try:
