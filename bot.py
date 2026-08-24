@@ -336,6 +336,25 @@ def init_db():
                     c.execute("ALTER TABLE private_messages ADD COLUMN is_deleted BOOLEAN DEFAULT FALSE")
                     c.execute("ALTER TABLE private_messages ADD COLUMN deleted_at TIMESTAMP")
 
+                # notif_message_id: the message_id of the live "New Private Message"
+                # notification the bot delivered to the receiver's chat. Storing it lets
+                # us natively edit/delete that real Telegram message later (via the
+                # Bot API) instead of only updating our own DB copy.
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name='private_messages' AND column_name='notif_message_id'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding notif_message_id column to private_messages table")
+                    c.execute("ALTER TABLE private_messages ADD COLUMN notif_message_id INTEGER")
+
+                # Editing/deleting private messages now uses Telegram's native
+                # edit/delete on the real notification message, so a soft-deleted
+                # message no longer needs (or gets) a "Message deleted" placeholder —
+                # it's just gone. Purge any old soft-deleted rows left over from
+                # before this change so nothing embarrassing lingers.
+                c.execute("DELETE FROM private_messages WHERE is_deleted = TRUE")
+
                 # Add timestamp to blocks
                 c.execute("""
                     SELECT column_name FROM information_schema.columns 
@@ -2625,6 +2644,8 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         header_lines = ["*New Private Message*", "", "From: " + safe_sender_name, ""]
         header = "\n".join(header_lines)
 
+        sent_msg = None
+
         if media_id and media_type != 'text':
             caption_lines = [header, safe_preview_content, "", "_Use /inbox to view all messages_"]
             caption = "\n".join(caption_lines)
@@ -2632,34 +2653,93 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
                 caption = caption[:997] + "..."
             try:
                 if media_type == 'photo':
-                    await context.bot.send_photo(chat_id=receiver_id, photo=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                    sent_msg = await context.bot.send_photo(chat_id=receiver_id, photo=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 elif media_type == 'voice':
-                    await context.bot.send_voice(chat_id=receiver_id, voice=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                    sent_msg = await context.bot.send_voice(chat_id=receiver_id, voice=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 elif media_type == 'audio':
-                    await context.bot.send_audio(chat_id=receiver_id, audio=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                    sent_msg = await context.bot.send_audio(chat_id=receiver_id, audio=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 elif media_type == 'video':
-                    await context.bot.send_video(chat_id=receiver_id, video=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                    sent_msg = await context.bot.send_video(chat_id=receiver_id, video=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 elif media_type == 'document':
-                    await context.bot.send_document(chat_id=receiver_id, document=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                    sent_msg = await context.bot.send_document(chat_id=receiver_id, document=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 elif media_type == 'gif':
-                    await context.bot.send_animation(chat_id=receiver_id, animation=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+                    sent_msg = await context.bot.send_animation(chat_id=receiver_id, animation=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 else:
                     raise ValueError("Unhandled media_type: " + str(media_type))
-                return
             except Exception as media_err:
                 logger.error("Failed to deliver media private message, falling back to text notice: " + str(media_err))
 
-        fallback_body = safe_preview_content if safe_preview_content else "_\\\\[attachment\\\\]_"
-        notification_lines = [header, fallback_body, "", "_Use /inbox to view all messages_"]
-        notification_text = "\n".join(notification_lines)
-        await context.bot.send_message(
-            chat_id=receiver_id,
-            text=notification_text,
-            parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=keyboard
-        )
+        if not sent_msg:
+            fallback_body = safe_preview_content if safe_preview_content else "_\\\\[attachment\\\\]_"
+            notification_lines = [header, fallback_body, "", "_Use /inbox to view all messages_"]
+            notification_text = "\n".join(notification_lines)
+            sent_msg = await context.bot.send_message(
+                chat_id=receiver_id,
+                text=notification_text,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=keyboard
+            )
+
+        # Remember the live notification's message_id so a later edit/delete of
+        # this private message can be applied natively to the real Telegram message.
+        if sent_msg and message_id:
+            db_execute(
+                "UPDATE private_messages SET notif_message_id = %s WHERE message_id = %s",
+                (sent_msg.message_id, message_id)
+            )
     except Exception as e:
         logger.error("Error sending private message notification: " + str(e))
+
+
+async def edit_native_pm_notification(context: ContextTypes.DEFAULT_TYPE, receiver_id: str, notif_message_id: int,
+                                       sender_id: str, new_content: str, media_type: str = 'text', media_id: str = None):
+    """Apply an edit to the live notification message already delivered to the
+    receiver, using Telegram's native edit-message call — so the receiver sees
+    the change in place (with Telegram's own "edited" tag) instead of only our
+    DB copy changing underneath them."""
+    try:
+        sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
+        sender_name = get_display_name(sender) if sender else "Someone"
+        safe_sender_name = escape_markdown(sender_name, version=2)
+
+        preview = new_content[:200] + '...' if new_content and len(new_content) > 200 else (new_content or "")
+        safe_preview = escape_markdown(preview, version=2) if preview else ""
+
+        header = f"*New Private Message*\n\nFrom: {safe_sender_name}\n"
+        footer = "\n_Use /inbox to view all messages_"
+
+        if media_id and media_type and media_type != 'text':
+            caption = f"{header}\n{safe_preview}{footer}"
+            if len(caption) > 1000:
+                caption = caption[:997] + "..."
+            await context.bot.edit_message_caption(
+                chat_id=receiver_id,
+                message_id=notif_message_id,
+                caption=caption,
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+        else:
+            body = safe_preview if safe_preview else "_\\[attachment\\]_"
+            text = f"{header}\n{body}{footer}"
+            await context.bot.edit_message_text(
+                chat_id=receiver_id,
+                message_id=notif_message_id,
+                text=text,
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+    except Exception as e:
+        # Not fatal — e.g. the receiver already deleted the notification, blocked
+        # the bot, or Telegram's edit rules rejected it. The DB copy is still updated.
+        logger.warning(f"edit_native_pm_notification failed (receiver={receiver_id}, msg={notif_message_id}): {e}")
+
+
+async def delete_native_pm_notification(context: ContextTypes.DEFAULT_TYPE, chat_id: str, notif_message_id: int):
+    """Natively delete a previously-delivered notification message via the Bot
+    API, so a deleted private message leaves no placeholder behind."""
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=notif_message_id)
+    except Exception as e:
+        logger.warning(f"delete_native_pm_notification failed (chat={chat_id}, msg={notif_message_id}): {e}")
 
 
 
@@ -4728,15 +4808,16 @@ async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
         parse_mode=ParseMode.MARKDOWN
     )
 async def confirm_delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int, sender_id: str, from_page=1, list_page=1):
-    """Confirm and delete message with clean feedback"""
+    """Delete a received message — instant and clean, straight back to the
+    conversation, with no "Deleting..." / "Message deleted" interstitial."""
     query = update.callback_query
-    await query.answer()
 
     user_id = str(query.from_user.id)
 
-    # Show processing
-    await query.message.edit_text("Deleting message...")
-    await asyncio.sleep(0.5)
+    msg = db_fetch_one(
+        "SELECT notif_message_id FROM private_messages WHERE message_id = %s AND receiver_id = %s",
+        (message_id, user_id)
+    )
 
     # Delete the message
     success = db_execute(
@@ -4745,19 +4826,14 @@ async def confirm_delete_message(update: Update, context: ContextTypes.DEFAULT_T
     )
 
     if success:
-        # Show success and return to the conversation thread this message belonged to
-        await query.message.edit_text(
-            "Message deleted successfully.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        await asyncio.sleep(0.7)
+        # Also remove the original notification bubble from this chat, if it's
+        # still there, so no trace of the message is left behind.
+        if msg and msg.get('notif_message_id'):
+            await delete_native_pm_notification(context, user_id, msg['notif_message_id'])
+        await query.answer("Message deleted")
         await show_conversation(update, context, sender_id, from_page, list_page)
     else:
         await query.answer("Error deleting message", show_alert=True)
-        await query.message.edit_text(
-            "Could not delete message. Please try again.",
-            parse_mode=ParseMode.MARKDOWN
-        )
 
 
 async def edit_sent_message_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int):
@@ -4809,7 +4885,7 @@ async def delete_sent_message_prompt(update: Update, context: ContextTypes.DEFAU
         return
 
     await query.message.reply_text(
-        "Delete this message? The other person will see \"Message deleted\" in its place.",
+        "Delete this message? It'll be removed from their chat too — no trace left behind.",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("Delete", callback_data=f"confirm_delete_sent_msg_{message_id}"),
             InlineKeyboardButton("Keep", callback_data=f"cancel_delete_sent_msg_{message_id}")
@@ -4818,13 +4894,16 @@ async def delete_sent_message_prompt(update: Update, context: ContextTypes.DEFAU
 
 
 async def delete_sent_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int):
-    """Soft-delete a private message the current user sent."""
+    """Delete a private message the current user sent — a real, clean delete.
+    Removes the live notification from the receiver's chat natively and drops
+    the row entirely, so nothing embarrassing (a "Message deleted" placeholder)
+    is left for the other person to see."""
     query = update.callback_query
     await query.answer()
 
     user_id = str(query.from_user.id)
     msg = db_fetch_one(
-        "SELECT sender_id, is_deleted FROM private_messages WHERE message_id = %s",
+        "SELECT sender_id, receiver_id, is_deleted, notif_message_id FROM private_messages WHERE message_id = %s",
         (message_id,)
     )
 
@@ -4835,10 +4914,11 @@ async def delete_sent_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.edit_text("Already deleted.")
         return
 
-    db_execute(
-        "UPDATE private_messages SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP WHERE message_id = %s",
-        (message_id,)
-    )
+    # Best-effort: remove the live notification from the receiver's chat first.
+    if msg.get('notif_message_id'):
+        await delete_native_pm_notification(context, msg['receiver_id'], msg['notif_message_id'])
+
+    db_execute("DELETE FROM private_messages WHERE message_id = %s", (message_id,))
     await query.message.edit_text("Message deleted.")
 
 
@@ -9594,7 +9674,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         msg = db_fetch_one(
-            "SELECT sender_id, is_deleted FROM private_messages WHERE message_id = %s",
+            "SELECT sender_id, receiver_id, is_deleted, media_type, media_id, notif_message_id "
+            "FROM private_messages WHERE message_id = %s",
             (pm_id,)
         )
         reset_state(context)
@@ -9610,6 +9691,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE private_messages SET content = %s, is_edited = TRUE, edited_at = CURRENT_TIMESTAMP WHERE message_id = %s",
             (new_content, pm_id)
         )
+
+        # Reflect the edit live in the receiver's chat using Telegram's native
+        # edit, instead of the change only existing in our own DB copy.
+        if msg.get('notif_message_id'):
+            await edit_native_pm_notification(
+                context,
+                receiver_id=msg['receiver_id'],
+                notif_message_id=msg['notif_message_id'],
+                sender_id=user_id,
+                new_content=new_content,
+                media_type=msg.get('media_type'),
+                media_id=msg.get('media_id')
+            )
+
         await update.message.reply_text("Message updated.", reply_markup=get_main_menu(user_id))
         return
 
@@ -11859,7 +11954,7 @@ async function editMsg(id,content){
   }catch(e){toast(e.message)}
 }
 async function delMsg(id){
-  if(!confirm('Delete this message? The other person will see "Message deleted".'))return;
+  if(!confirm("Delete this message? It'll be removed from their chat too — no trace left behind."))return;
   try{
     await api(`/api/mini-app/message/${id}?user_id=${UID}`,{method:'DELETE'});
     fetchCRMsgs(true);
@@ -12208,7 +12303,7 @@ def send_telegram_media_sync(chat_id, media_type, media_id, caption=None, parse_
     return None
 
 
-def notify_user_of_private_message_sync(sender_id, receiver_id, message_content, media_type='text', media_id=None):
+def notify_user_of_private_message_sync(sender_id, receiver_id, message_content, media_type='text', media_id=None, message_id=None):
     """Sync replacement for notify_user_of_private_message — actually delivers the media file."""
     try:
         is_blocked = db_fetch_one(
@@ -12241,22 +12336,94 @@ def notify_user_of_private_message_sync(sender_id, receiver_id, message_content,
         header = f"<b>New Private Message</b>\n\nFrom: <b>{safe_sender_name}</b>\n\n"
         footer = "\n\n<i>Use /inbox to view all messages</i>"
 
+        result = None
         if media_id and media_type and media_type != 'text':
             caption = header + safe_preview + footer
             result = send_telegram_media_sync(
                 chat_id=receiver_id, media_type=media_type, media_id=media_id,
                 caption=caption, parse_mode='HTML', reply_markup=keyboard
             )
-            if result and result.get('ok'):
-                return
-            # if media send failed outright, fall through to plain text below
 
-        fallback_body = safe_preview if safe_preview else "<i>[attachment]</i>"
-        notification_text = header + fallback_body + footer
-        send_telegram_message_sync(receiver_id, notification_text, parse_mode='HTML', reply_markup=keyboard)
+        if not (result and result.get('ok')):
+            # if media send failed outright (or there was no media), fall through to plain text
+            fallback_body = safe_preview if safe_preview else "<i>[attachment]</i>"
+            notification_text = header + fallback_body + footer
+            result = send_telegram_message_sync(receiver_id, notification_text, parse_mode='HTML', reply_markup=keyboard)
+
+        # Remember the live notification's message_id so a later edit/delete of
+        # this private message can be applied natively to the real Telegram message.
+        if message_id and result and result.get('ok') and result.get('result'):
+            notif_message_id = result['result'].get('message_id')
+            if notif_message_id:
+                db_execute(
+                    "UPDATE private_messages SET notif_message_id = %s WHERE message_id = %s",
+                    (notif_message_id, message_id)
+                )
 
     except Exception as e:
         logger.error(f"notify_user_of_private_message_sync failed: {e}")
+
+
+def edit_native_pm_notification_sync(receiver_id, notif_message_id, sender_id, new_content, media_type='text', media_id=None):
+    """Sync (HTTP) version of edit_native_pm_notification, for use from Flask
+    endpoints (the mini app) where no PTB bot context is available."""
+    try:
+        sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
+        sender_name = get_display_name(sender) if sender else "Someone"
+        safe_sender_name = html.escape(sender_name)
+
+        preview_content = (new_content or "")[:200]
+        if new_content and len(new_content) > 200:
+            preview_content += '...'
+        safe_preview = html.escape(preview_content) if preview_content else ""
+
+        header = f"<b>New Private Message</b>\n\nFrom: <b>{safe_sender_name}</b>\n\n"
+        footer = "\n\n<i>Use /inbox to view all messages</i>"
+
+        is_media = bool(media_id) and media_type and media_type != 'text'
+        if is_media:
+            caption = header + safe_preview + footer
+            url = f"https://api.telegram.org/bot{TOKEN}/editMessageCaption"
+            payload = {
+                "chat_id": receiver_id,
+                "message_id": notif_message_id,
+                "caption": caption[:1024],
+                "parse_mode": "HTML"
+            }
+        else:
+            fallback_body = safe_preview if safe_preview else "<i>[attachment]</i>"
+            text = header + fallback_body + footer
+            url = f"https://api.telegram.org/bot{TOKEN}/editMessageText"
+            payload = {
+                "chat_id": receiver_id,
+                "message_id": notif_message_id,
+                "text": text,
+                "parse_mode": "HTML"
+            }
+
+        resp = requests.post(url, json=payload, timeout=10)
+        result = resp.json()
+        if not result.get('ok'):
+            logger.warning(f"edit_native_pm_notification_sync failed: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"edit_native_pm_notification_sync error: {e}")
+        return None
+
+
+def delete_native_pm_notification_sync(chat_id, notif_message_id):
+    """Natively delete a previously-delivered notification message via the Bot
+    API (sync/HTTP), so a deleted private message leaves no placeholder behind."""
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/deleteMessage"
+        resp = requests.post(url, json={"chat_id": chat_id, "message_id": notif_message_id}, timeout=10)
+        result = resp.json()
+        if not result.get('ok'):
+            logger.warning(f"delete_native_pm_notification_sync failed: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"delete_native_pm_notification_sync error: {e}")
+        return None
 
 
 def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_id=None, comment_content=None, media_type='text', media_id=None):
@@ -13269,7 +13436,8 @@ def mini_app_send_message():
             receiver_id=receiver_id,
             message_content=content,
             media_type=media_type,
-            media_id=media_id
+            media_id=media_id,
+            message_id=res['message_id'] if res else None
         )
 
         msg_time = res['timestamp'] if (res and 'timestamp' in res) else datetime.now()
@@ -13303,7 +13471,8 @@ def mini_app_update_message(message_id):
             return jsonify({'success': False, 'error': 'Content required'}), 400
 
         msg = db_fetch_one(
-            "SELECT sender_id, is_deleted FROM private_messages WHERE message_id = %s",
+            "SELECT sender_id, receiver_id, is_deleted, media_type, media_id, notif_message_id "
+            "FROM private_messages WHERE message_id = %s",
             (message_id,)
         )
         if not msg or str(msg['sender_id']) != str(user_id):
@@ -13315,6 +13484,19 @@ def mini_app_update_message(message_id):
             "UPDATE private_messages SET content = %s, is_edited = TRUE, edited_at = CURRENT_TIMESTAMP WHERE message_id = %s",
             (content, message_id)
         )
+
+        # Reflect the edit live in the receiver's chat using Telegram's native
+        # edit, instead of the change only existing in our own DB copy.
+        if msg.get('notif_message_id'):
+            edit_native_pm_notification_sync(
+                receiver_id=msg['receiver_id'],
+                notif_message_id=msg['notif_message_id'],
+                sender_id=user_id,
+                new_content=content,
+                media_type=msg.get('media_type'),
+                media_id=msg.get('media_id')
+            )
+
         return jsonify({'success': True, 'message': 'Message updated'})
     except Exception as e:
         logger.error(f"Message update error: {e}")
@@ -13322,7 +13504,10 @@ def mini_app_update_message(message_id):
 
 @flask_app.route('/api/mini-app/message/<int:message_id>', methods=['DELETE'])
 def mini_app_delete_message(message_id):
-    """API endpoint for (soft) deleting a private message the current user sent."""
+    """API endpoint for deleting a private message the current user sent — a
+    real, clean delete. Removes the live notification from the receiver's chat
+    natively and drops the row entirely, so nothing embarrassing (a "Message
+    deleted" placeholder) is left for the other person to see."""
     try:
         user_id = request.args.get('user_id')
         if not user_id:
@@ -13330,7 +13515,7 @@ def mini_app_delete_message(message_id):
             user_id = body.get('user_id')
 
         msg = db_fetch_one(
-            "SELECT sender_id, is_deleted FROM private_messages WHERE message_id = %s",
+            "SELECT sender_id, receiver_id, is_deleted, notif_message_id FROM private_messages WHERE message_id = %s",
             (message_id,)
         )
         if not msg or str(msg['sender_id']) != str(user_id):
@@ -13338,10 +13523,11 @@ def mini_app_delete_message(message_id):
         if msg.get('is_deleted'):
             return jsonify({'success': True, 'message': 'Message already deleted'})
 
-        db_execute(
-            "UPDATE private_messages SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP WHERE message_id = %s",
-            (message_id,)
-        )
+        # Best-effort: remove the live notification from the receiver's chat first.
+        if msg.get('notif_message_id'):
+            delete_native_pm_notification_sync(msg['receiver_id'], msg['notif_message_id'])
+
+        db_execute("DELETE FROM private_messages WHERE message_id = %s", (message_id,))
         return jsonify({'success': True, 'message': 'Message deleted'})
     except Exception as e:
         logger.error(f"Message delete error: {e}")
