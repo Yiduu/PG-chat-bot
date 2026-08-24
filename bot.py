@@ -11496,7 +11496,7 @@ async function loadAdminChats(search=''){
       return;
     }
     list.innerHTML = convos.map(c => `
-      <div class="chat-item" onclick="openAdminTranscript('${c.user_a}','${c.user_b}','${esc(c.name_a)}','${esc(c.name_b)}')">
+      <div class="chat-item" data-user-a="${esc(c.user_a)}" data-user-b="${esc(c.user_b)}" data-name-a="${esc(c.name_a)}" data-name-b="${esc(c.name_b)}">
         <div class="ava" style="width:44px;height:44px;font-size:14px">${esc(c.avatar_a)}${esc(c.avatar_b)}</div>
         <div class="chat-item-right">
           <div class="chat-item-top">
@@ -11506,6 +11506,9 @@ async function loadAdminChats(search=''){
           <div class="chat-item-preview">${esc(c.last_content || ('[' + (c.last_media_type || 'media') + ']'))}</div>
         </div>
       </div>`).join('');
+    list.querySelectorAll('.chat-item').forEach(el=>{
+      el.onclick = ()=>openAdminTranscript(el.dataset.userA, el.dataset.userB, el.dataset.nameA, el.dataset.nameB);
+    });
   }catch(e){
     list.innerHTML = '<div style="padding:20px;color:var(--text3)">Failed to load</div>';
   }
