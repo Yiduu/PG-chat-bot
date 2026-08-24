@@ -320,6 +320,22 @@ def init_db():
                     c.execute("ALTER TABLE private_messages ADD COLUMN media_type TEXT DEFAULT 'text'")
                     c.execute("ALTER TABLE private_messages ADD COLUMN media_id TEXT")
 
+                # Private messages edit/delete columns - lets a sender edit or
+                # (soft-)delete a message they sent, in both the mini app and the bot.
+                # Soft-delete (is_deleted flag) is used instead of a hard DELETE so the
+                # other side's thread keeps a "Message deleted" placeholder instead of
+                # a confusing gap.
+                c.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name='private_messages' AND column_name='is_edited'
+                """)
+                if not c.fetchone():
+                    logger.info("Adding edit/delete columns to private_messages table")
+                    c.execute("ALTER TABLE private_messages ADD COLUMN is_edited BOOLEAN DEFAULT FALSE")
+                    c.execute("ALTER TABLE private_messages ADD COLUMN edited_at TIMESTAMP")
+                    c.execute("ALTER TABLE private_messages ADD COLUMN is_deleted BOOLEAN DEFAULT FALSE")
+                    c.execute("ALTER TABLE private_messages ADD COLUMN deleted_at TIMESTAMP")
+
                 # Add timestamp to blocks
                 c.execute("""
                     SELECT column_name FROM information_schema.columns 
@@ -856,6 +872,9 @@ STATE_REPORTING = 'reporting'
 # NEW: state entered when a user is editing the content of an already-published
 # (approved) post from the "edit_published_<post_id>" flow in view_post/button_handler.
 STATE_AWAITING_EDIT_CONTENT = 'awaiting_edit_content'
+# State entered when a user tapped "Edit" on a private message they sent
+# (see the edit_sent_msg_<id> callback and the block in handle_message).
+STATE_AWAITING_PM_EDIT = 'awaiting_pm_edit'
 
 
 def get_state(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -883,7 +902,7 @@ def reset_state(context: ContextTypes.DEFAULT_TYPE):
                 'reporting', 'pending_explicit_check', 'editing_comment', 'editing_post',
                 'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type',
                 'editing_categories_for_pending', 'pending_comment_edit',
-                'editing_published_post'):
+                'editing_published_post', 'editing_pm_id'):
         context.user_data.pop(key, None)
 
 
@@ -4476,10 +4495,12 @@ async def show_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         else:
             time_str = timestamp.strftime('%b %d')
 
-        preview = msg['content'] or '[attachment]'
+        preview = "Message deleted" if msg.get('is_deleted') else (msg['content'] or '[attachment]')
         if len(preview) > 26:
             preview = preview[:23] + '...'
         clean_preview = preview.replace('*', '').replace('_', '').replace('`', '').strip()
+        if msg.get('is_edited') and not msg.get('is_deleted'):
+            clean_preview += " (edited)"
 
         button_text = f"{status_icon} {clean_preview} • {time_str}"
         if len(button_text) > 40:
@@ -4582,8 +4603,16 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
 
     media_type = message.get('media_type') or 'text'
     media_id = message.get('media_id')
+    if message.get('is_deleted'):
+        media_type = 'text'
+        media_id = None
 
-    body_text = escape_markdown(message['content'], version=2) if message['content'] else ""
+    if message.get('is_deleted'):
+        body_text = "_This message was deleted\\._"
+    else:
+        body_text = escape_markdown(message['content'], version=2) if message['content'] else ""
+        if message.get('is_edited'):
+            body_text += "\n\n_\\(edited\\)_"
     text_lines = [
         "*Message from " + escape_markdown(message['sender_name'], version=2) + "*",
         "_" + escape_markdown(time_ago, version=2) + "_",
@@ -4729,6 +4758,89 @@ async def confirm_delete_message(update: Update, context: ContextTypes.DEFAULT_T
             "Could not delete message. Please try again.",
             parse_mode=ParseMode.MARKDOWN
         )
+
+
+async def edit_sent_message_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    """Ask the sender for replacement text for a private message they sent."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    msg = db_fetch_one(
+        "SELECT sender_id, content, is_deleted FROM private_messages WHERE message_id = %s",
+        (message_id,)
+    )
+
+    if not msg or str(msg['sender_id']) != str(user_id):
+        await query.answer("That message is no longer available to edit.", show_alert=True)
+        return
+    if msg.get('is_deleted'):
+        await query.answer("That message was deleted, so it can't be edited.", show_alert=True)
+        return
+
+    set_state(context, STATE_AWAITING_PM_EDIT, editing_pm_id=message_id)
+
+    current = msg.get('content') or '[attachment]'
+    await query.message.reply_text(
+        f"Current message:\n_{escape_markdown(current, version=2)}_\n\nSend the new text, or tap Cancel\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("Cancel", callback_data="cancel_edit_sent_msg")
+        ]])
+    )
+
+
+async def delete_sent_message_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    """Confirm before a sender deletes a private message they sent."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    msg = db_fetch_one(
+        "SELECT sender_id, is_deleted FROM private_messages WHERE message_id = %s",
+        (message_id,)
+    )
+
+    if not msg or str(msg['sender_id']) != str(user_id):
+        await query.answer("That message is no longer available.", show_alert=True)
+        return
+    if msg.get('is_deleted'):
+        await query.answer("Already deleted.", show_alert=True)
+        return
+
+    await query.message.reply_text(
+        "Delete this message? The other person will see \"Message deleted\" in its place.",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("Delete", callback_data=f"confirm_delete_sent_msg_{message_id}"),
+            InlineKeyboardButton("Keep", callback_data=f"cancel_delete_sent_msg_{message_id}")
+        ]])
+    )
+
+
+async def delete_sent_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    """Soft-delete a private message the current user sent."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    msg = db_fetch_one(
+        "SELECT sender_id, is_deleted FROM private_messages WHERE message_id = %s",
+        (message_id,)
+    )
+
+    if not msg or str(msg['sender_id']) != str(user_id):
+        await query.answer("That message is no longer available.", show_alert=True)
+        return
+    if msg.get('is_deleted'):
+        await query.message.edit_text("Already deleted.")
+        return
+
+    db_execute(
+        "UPDATE private_messages SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP WHERE message_id = %s",
+        (message_id,)
+    )
+    await query.message.edit_text("Message deleted.")
+
 
 async def mark_all_read(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mark all messages as read"""
@@ -8448,10 +8560,46 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await show_inbox(update, context, 1)
             except (IndexError, ValueError):
                 await show_inbox(update, context, 1)
-            
-            
-        
-                    
+
+        elif query.data.startswith('edit_sent_msg_'):
+            try:
+                pm_id = int(query.data[len('edit_sent_msg_'):])
+                await edit_sent_message_prompt(update, context, pm_id)
+            except (IndexError, ValueError) as e:
+                logger.error(f"Error parsing edit_sent_msg: {e}")
+                await query.answer("Error", show_alert=True)
+
+        elif query.data.startswith('cancel_edit_sent_msg'):
+            reset_state(context)
+            await query.answer("Cancelled")
+            try:
+                await query.message.delete()
+            except:
+                pass
+
+        elif query.data.startswith('confirm_delete_sent_msg_'):
+            try:
+                pm_id = int(query.data[len('confirm_delete_sent_msg_'):])
+                await delete_sent_message(update, context, pm_id)
+            except (IndexError, ValueError) as e:
+                logger.error(f"Error parsing confirm_delete_sent_msg: {e}")
+                await query.answer("Error", show_alert=True)
+
+        elif query.data.startswith('cancel_delete_sent_msg'):
+            await query.answer("Kept")
+            try:
+                await query.message.delete()
+            except:
+                pass
+
+        elif query.data.startswith('delete_sent_msg_'):
+            try:
+                pm_id = int(query.data[len('delete_sent_msg_'):])
+                await delete_sent_message_prompt(update, context, pm_id)
+            except (IndexError, ValueError) as e:
+                logger.error(f"Error parsing delete_sent_msg: {e}")
+                await query.answer("Error", show_alert=True)
+
         # Add this in the button_handler function where you handle other callbacks
         elif query.data == 'refresh_mini_app':
             await query.answer("Refreshing...")
@@ -9431,6 +9579,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await notify_user_of_reply(context, post_id, parent_comment_id, user_id, new_comment_id, comment_content=content, comment_type=comment_type, media_id=file_id)
         return
 
+    elif state == STATE_AWAITING_PM_EDIT:
+        if text in main_menu_buttons: return
+        pm_id = context.user_data.get('editing_pm_id')
+        new_content = (text or "").strip()
+
+        if not pm_id:
+            reset_state(context)
+            await update.message.reply_text("Nothing to edit. Please try again.", reply_markup=get_main_menu(user_id))
+            return
+
+        if not new_content:
+            await update.message.reply_text("Message can't be empty. Send the new text, or type Cancel.")
+            return
+
+        msg = db_fetch_one(
+            "SELECT sender_id, is_deleted FROM private_messages WHERE message_id = %s",
+            (pm_id,)
+        )
+        reset_state(context)
+
+        if not msg or str(msg['sender_id']) != str(user_id):
+            await update.message.reply_text("That message is no longer available to edit.", reply_markup=get_main_menu(user_id))
+            return
+        if msg.get('is_deleted'):
+            await update.message.reply_text("That message was deleted, so it can't be edited.", reply_markup=get_main_menu(user_id))
+            return
+
+        db_execute(
+            "UPDATE private_messages SET content = %s, is_edited = TRUE, edited_at = CURRENT_TIMESTAMP WHERE message_id = %s",
+            (new_content, pm_id)
+        )
+        await update.message.reply_text("Message updated.", reply_markup=get_main_menu(user_id))
+        return
+
     elif state == STATE_AWAITING_PRIVATE_MESSAGE:
         if text in main_menu_buttons: return
         target_id = context.user_data.get('private_message_target')
@@ -9494,6 +9676,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_menu(user_id)
         )
 
+        if message_row:
+            sent_id = message_row['message_id']
+            await update.message.reply_text(
+                "Changed your mind?",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("Edit", callback_data=f"edit_sent_msg_{sent_id}"),
+                    InlineKeyboardButton("Delete", callback_data=f"delete_sent_msg_{sent_id}")
+                ]])
+            )
 
         return
 
@@ -9642,6 +9833,16 @@ async def handle_private_message_text(update: Update, context: ContextTypes.DEFA
     )
 
     await update.message.reply_text("Message sent!")
+
+    if msg:
+        sent_id = msg["message_id"]
+        await update.message.reply_text(
+            "Changed your mind?",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Edit", callback_data=f"edit_sent_msg_{sent_id}"),
+                InlineKeyboardButton("Delete", callback_data=f"delete_sent_msg_{sent_id}")
+            ]])
+        )
 
 async def error_handler(update, context):
     logger.error(f"Update {update} caused error: {context.error}", exc_info=True) 
@@ -10348,6 +10549,10 @@ body.light .cr-head button svg{stroke:#1a1a1a}
   border-bottom-left-radius:4px;
 }
 .msg-time{font-size:10px;color:var(--text3);margin-top:4px;padding:0 4px}
+.msg-bubble{position:relative}
+.msg-deleted{font-style:italic;opacity:0.6;background:var(--bg3)!important;color:var(--text3)!important;border:0.5px solid var(--border)!important;font-weight:400!important}
+.msg-menu-btn{margin-left:8px;cursor:pointer;opacity:0.6;font-weight:700;padding:0 2px}
+.msg-menu-btn:hover{opacity:1}
 .cr-input{
   display:flex;flex-direction:column;gap:8px;padding:12px 16px;
   border-top:0.5px solid var(--border);
@@ -10559,6 +10764,7 @@ let UID = null, profileCache = null, crPartnerId = null, crPoll = null, currentP
 let pendingMedia = null, pendingCommentMedia = null, pendingChatMedia = null;
 let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null;
 let chatsCache = [];
+let crMsgsCache = [];
 const selCats = new Set();
 let selEmoji = null;
 
@@ -11540,11 +11746,17 @@ async function fetchAdminTranscript(scroll=false){
     const d = await api(`/api/mini-app/admin/chats/${a}/${b}?admin_id=${UID}&limit=100`);
     if(isBusyVoice()) return; // re-check: user may have started playing while this request was in flight
     const wasBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 80;
-    box.innerHTML = (d.data || []).map(m => `
+    box.innerHTML = (d.data || []).map(m => {
+      if(m.is_deleted){
+        return `<div class="msg-row ${String(m.sender_id)===String(a) ? 'them' : 'me'}"><div class="msg-bubble msg-deleted">Message deleted</div><div class="msg-time">${esc(m.time_display||'')}</div></div>`;
+      }
+      const editedTag = m.is_edited ? ' · edited' : '';
+      return `
       <div class="msg-row ${String(m.sender_id)===String(a) ? 'them' : 'me'}">
         <div class="msg-bubble">${esc(m.content||'')}${m.media_id ? renderMedia(m.media_type, m.media_id) : ''}</div>
-        <div class="msg-time">${esc(m.time_display||'')}</div>
-      </div>`).join('');
+        <div class="msg-time">${esc(m.time_display||'')}${editedTag}</div>
+      </div>`;
+    }).join('');
     if(scroll || wasBottom) box.scrollTop = box.scrollHeight;
   }catch(e){}
 }
@@ -11601,9 +11813,57 @@ async function fetchCRMsgs(scroll=false){
     const d=await api(`/api/mini-app/chats/${crPartnerId}?user_id=${UID}`);
     if(isBusyVoice()) return; // re-check: user may have started playing while this request was in flight
     const wasBottom=box.scrollHeight-box.scrollTop<=box.clientHeight+80;
-    box.innerHTML=(d.data||[]).map(m=>`<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble">${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`).join('');
+    crMsgsCache=d.data||[];
+    box.innerHTML=crMsgsCache.map(m=>{
+      if(m.is_deleted){
+        return `<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble msg-deleted">Message deleted</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`;
+      }
+      const editedTag=m.is_edited?' · edited':'';
+      const menuBtn=m.is_mine?'<span class="msg-menu-btn">⋯</span>':'';
+      return `<div class="msg-row ${m.is_mine?'me':'them'}" data-mid="${m.id}"><div class="msg-bubble">${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}${menuBtn}</div><div class="msg-time">${esc(m.timestamp||'')}${editedTag}</div></div>`;
+    }).join('');
+    box.querySelectorAll('.msg-row.me .msg-menu-btn').forEach(btn=>{
+      btn.onclick=(e)=>{e.stopPropagation();msgActions(btn.closest('.msg-row').dataset.mid);};
+    });
     if(scroll||wasBottom)box.scrollTop=box.scrollHeight;
   }catch(e){}
+}
+function msgActions(id){
+  const m=crMsgsCache.find(x=>String(x.id)===String(id));
+  if(!m||m.is_deleted)return;
+  const mask=document.createElement('div');
+  mask.className='modal-mask active';
+  mask.onclick=(e)=>{if(e.target===mask)mask.remove();};
+  mask.innerHTML=`<div class="modal-container" style="padding:16px">
+    <div style="font-weight:700;margin-bottom:12px">Message options</div>
+    <button class="modal-btn modal-btn-secondary" id="msgEditBtn">Edit</button>
+    <button class="modal-btn modal-btn-secondary" id="msgDelBtn" style="color:#e05252">Delete</button>
+    <button class="modal-btn modal-btn-primary" id="msgCancelBtn">Cancel</button>
+  </div>`;
+  document.body.appendChild(mask);
+  mask.querySelector('#msgCancelBtn').onclick=()=>mask.remove();
+  mask.querySelector('#msgEditBtn').onclick=()=>{mask.remove();startEditMsg(m);};
+  mask.querySelector('#msgDelBtn').onclick=()=>{mask.remove();delMsg(m.id);};
+}
+function startEditMsg(m){
+  const newText=prompt('Edit message:',m.content||'');
+  if(newText===null)return;
+  const trimmed=newText.trim();
+  if(!trimmed||trimmed===m.content)return;
+  editMsg(m.id,trimmed);
+}
+async function editMsg(id,content){
+  try{
+    await api(`/api/mini-app/message/${id}`,{method:'PUT',body:JSON.stringify({user_id:UID,content})});
+    fetchCRMsgs(true);
+  }catch(e){toast(e.message)}
+}
+async function delMsg(id){
+  if(!confirm('Delete this message? The other person will see "Message deleted".'))return;
+  try{
+    await api(`/api/mini-app/message/${id}?user_id=${UID}`,{method:'DELETE'});
+    fetchCRMsgs(true);
+  }catch(e){toast(e.message)}
 }
 async function crSend(){
   const txt=document.getElementById('cr-txt').value.trim();
@@ -12809,7 +13069,9 @@ def mini_app_get_chats():
                     content,
                     timestamp,
                     is_read,
-                    sender_id
+                    sender_id,
+                    is_deleted,
+                    is_edited
                 FROM private_messages
                 WHERE sender_id = %s OR receiver_id = %s
                 ORDER BY partner_id, timestamp DESC
@@ -12820,6 +13082,8 @@ def mini_app_get_chats():
                 lm.timestamp,
                 lm.is_read,
                 lm.sender_id,
+                lm.is_deleted,
+                lm.is_edited,
                 u.anonymous_name as partner_name,
                 u.sex as partner_sex,
                 u.avatar_emoji as partner_avatar,
@@ -12853,14 +13117,21 @@ def mini_app_get_chats():
                 time_str = f"{diff.seconds // 60}m ago"
             else:
                 time_str = "Just now"
-                
+
+            if r.get('is_deleted'):
+                last_message = "Message deleted"
+            else:
+                last_message = r['content']
+                if r.get('is_edited'):
+                    last_message = f"{last_message} (edited)" if last_message else last_message
+
             chats.append({
                 'partner_id': r['partner_id'],
                 'partner_name': r['partner_name'] or 'Anonymous',
                 'partner_sex': r['partner_sex'] or '👤',
                 'partner_avatar': r['partner_avatar'] or '',
                 'partner_is_admin': r['partner_is_admin'],
-                'last_message': r['content'],
+                'last_message': last_message,
                 'time_ago': time_str,
                 'is_mine': str(r['sender_id']) == str(user_id),
                 'unread_count': r['unread_count']
@@ -12928,7 +13199,8 @@ def mini_app_get_messages(partner_id):
         
         # Get messages history
         rows = db_fetch_all("""
-            SELECT message_id, sender_id, receiver_id, content, timestamp, is_read, media_type, media_id
+            SELECT message_id, sender_id, receiver_id, content, timestamp, is_read, media_type, media_id,
+                   is_edited, is_deleted
             FROM private_messages
             WHERE (sender_id = %s AND receiver_id = %s)
                OR (sender_id = %s AND receiver_id = %s)
@@ -12941,17 +13213,21 @@ def mini_app_get_messages(partner_id):
                 msg_time = datetime.strptime(r['timestamp'], '%Y-%m-%d %H:%M:%S')
             else:
                 msg_time = r['timestamp']
-            
+
+            is_deleted = bool(r.get('is_deleted'))
+
             messages.append({
                 'id': r['message_id'],
                 'sender_id': r['sender_id'],
                 'receiver_id': r['receiver_id'],
-                'content': r['content'],
-                'media_type': r.get('media_type', 'text'),
-                'media_id': r.get('media_id'),
+                'content': None if is_deleted else r['content'],
+                'media_type': None if is_deleted else r.get('media_type', 'text'),
+                'media_id': None if is_deleted else r.get('media_id'),
                 'timestamp': format_ethiopian_time(msg_time),
                 'is_read': r['is_read'],
-                'is_mine': str(r['sender_id']) == str(user_id)
+                'is_mine': str(r['sender_id']) == str(user_id),
+                'is_edited': bool(r.get('is_edited')),
+                'is_deleted': is_deleted
             })
             
         return jsonify({'success': True, 'data': messages})
@@ -13012,7 +13288,65 @@ def mini_app_send_message():
     except Exception as e:
         logger.error(f"Error sending message: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-        
+
+@flask_app.route('/api/mini-app/message/<int:message_id>', methods=['PUT'])
+def mini_app_update_message(message_id):
+    """API endpoint for editing a private message the current user sent."""
+    try:
+        data = request.get_json() or {}
+        user_id = data.get('user_id') or request.args.get('user_id')
+        content = (data.get('content') or '').strip()
+
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Missing user_id'}), 400
+        if not content:
+            return jsonify({'success': False, 'error': 'Content required'}), 400
+
+        msg = db_fetch_one(
+            "SELECT sender_id, is_deleted FROM private_messages WHERE message_id = %s",
+            (message_id,)
+        )
+        if not msg or str(msg['sender_id']) != str(user_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        if msg.get('is_deleted'):
+            return jsonify({'success': False, 'error': 'Message was deleted'}), 400
+
+        db_execute(
+            "UPDATE private_messages SET content = %s, is_edited = TRUE, edited_at = CURRENT_TIMESTAMP WHERE message_id = %s",
+            (content, message_id)
+        )
+        return jsonify({'success': True, 'message': 'Message updated'})
+    except Exception as e:
+        logger.error(f"Message update error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/message/<int:message_id>', methods=['DELETE'])
+def mini_app_delete_message(message_id):
+    """API endpoint for (soft) deleting a private message the current user sent."""
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id:
+            body = request.get_json(silent=True) or {}
+            user_id = body.get('user_id')
+
+        msg = db_fetch_one(
+            "SELECT sender_id, is_deleted FROM private_messages WHERE message_id = %s",
+            (message_id,)
+        )
+        if not msg or str(msg['sender_id']) != str(user_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        if msg.get('is_deleted'):
+            return jsonify({'success': True, 'message': 'Message already deleted'})
+
+        db_execute(
+            "UPDATE private_messages SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP WHERE message_id = %s",
+            (message_id,)
+        )
+        return jsonify({'success': True, 'message': 'Message deleted'})
+    except Exception as e:
+        logger.error(f"Message delete error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @flask_app.route('/api/mini-app/chat-request/status', methods=['GET'])
 def mini_app_chat_request_status():
     """Check the status of a chat request between two users."""
@@ -13269,13 +13603,16 @@ def mini_app_admin_chat_transcript(user_a, user_b):
     data = []
     for m in msgs:
         ts = m['timestamp']
+        is_deleted = bool(m.get('is_deleted'))
         data.append({
             'id': m['message_id'],
             'sender_id': m['sender_id'],
             'receiver_id': m['receiver_id'],
-            'content': m['content'],
-            'media_type': m.get('media_type', 'text'),
-            'media_id': m.get('media_id'),
+            'content': "[deleted]" if is_deleted else m['content'],
+            'media_type': None if is_deleted else m.get('media_type', 'text'),
+            'media_id': None if is_deleted else m.get('media_id'),
+            'is_deleted': is_deleted,
+            'is_edited': bool(m.get('is_edited')),
             'time_display': format_ethiopian_time(ts)
         })
 
