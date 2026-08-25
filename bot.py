@@ -5229,9 +5229,9 @@ def sanitize_pasted_edit(raw_text: str):
 async def send_comment_message(context, chat_id, comment, author_text, reply_to_message_id=None, pre_fetched_data=None):
     """Helper function to send comments with proper media handling and pre-fetched data support"""
     comment_id = comment['comment_id']
-    comment_type = comment['type']
-    file_id = comment['file_id']
-    content = comment['content']
+    comment_type = comment.get('type') or 'text'
+    file_id = comment.get('file_id')
+    content = comment.get('content') or ""
     
     # Get user reaction for buttons
     user_id = getattr(context, '_user_id', None)
@@ -5276,7 +5276,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
     ]
     
     # Add edit/delete buttons only for comment author and only for text comments
-    if comment['author_id'] == user_id:
+    if comment.get('author_id') == user_id:
         if comment_type == 'text':
             kb_buttons.append([
                 InlineKeyboardButton("Edit", callback_data=f"edit_comment_{comment_id}"),
@@ -5289,137 +5289,151 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
     
     kb = InlineKeyboardMarkup(kb_buttons)
 
-    # FIX: use dynamic kwargs for reply_to_message_id
-    send_kwargs = {
-        'chat_id': chat_id,
-        'reply_markup': kb,
-        'parse_mode': ParseMode.MARKDOWN_V2
-    }
-    
-    if isinstance(reply_to_message_id, int) and reply_to_message_id > 0:
-        send_kwargs['reply_to_message_id'] = reply_to_message_id
+    escaped_content = escape_markdown_v2(content) if content else ""
+    message_text = f"{escaped_content}\n\n{author_text}" if escaped_content else author_text
+    plain_text = f"{content}\n\n" if content else ""
+    valid_reply_id = reply_to_message_id if isinstance(reply_to_message_id, int) and reply_to_message_id > 0 else None
 
-    # Send message based on comment type
-    try:
-        escaped_content = escape_markdown_v2(content) if content else ""
-        # FIX: always use comment's own author fields (already built in author_text by callers)
-        message_text = f"{escaped_content}\n\n{author_text}" if escaped_content else author_text
+    async def _send_media(target_reply_id, use_markdown=True):
+        p_mode = ParseMode.MARKDOWN_V2 if use_markdown else None
+        caption = message_text if use_markdown else f"{plain_text}{author_text}"
+        if caption and len(caption) > 1024:
+            caption = caption[:1020] + '...'
         
-        msg = None
-        if comment_type == 'text':
-            send_kwargs['text'] = message_text
-            send_kwargs['disable_web_page_preview'] = True
-            msg = await context.bot.send_message(**send_kwargs)
-            
-        elif comment_type == 'voice' and file_id:
-            send_kwargs['voice'] = file_id
-            send_kwargs['caption'] = message_text
-            msg = await context.bot.send_voice(**send_kwargs)
-            
-        elif comment_type in ['gif', 'sticker', 'photo'] and file_id:
-            # Build the caption with author info and comment content
-            caption_text = f"{escaped_content}\n\n{author_text}" if escaped_content else author_text
-            # Truncate caption if needed (Telegram caption limit is 1024)
-            if len(caption_text) > 1024:
-                caption_text = caption_text[:1021] + '...'
-            
-            media_kwargs = {
-                'chat_id': chat_id,
-                'reply_markup': kb,
-                'reply_to_message_id': send_kwargs.get('reply_to_message_id'),
-                'caption': caption_text,
-                'parse_mode': ParseMode.MARKDOWN_V2
-            }
-            
-            if comment_type == 'photo':
-                msg = await context.bot.send_photo(photo=file_id, **media_kwargs)
-            elif comment_type == 'sticker':
-                # Sticker may not show caption well on all clients, but we still send it.
-                # If caption doesn't show, we fallback below.
-                try:
-                    msg = await context.bot.send_sticker(sticker=file_id, **media_kwargs)
-                except (BadRequest, TypeError):
-                    # Fallback: send sticker without caption, then send info as separate message
-                    msg = await context.bot.send_sticker(sticker=file_id, reply_to_message_id=send_kwargs.get('reply_to_message_id'))
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=author_text,
-                        reply_markup=kb,
-                        parse_mode=ParseMode.MARKDOWN_V2,
-                        reply_to_message_id=msg.message_id
-                    )
-            else:  # gif
-                msg = await context.bot.send_animation(animation=file_id, **media_kwargs)
-            
-        else:
-            # Fallback for unknown types
-            send_kwargs['text'] = message_text
-            send_kwargs['disable_web_page_preview'] = True
-            msg = await context.bot.send_message(**send_kwargs)
-
-        if msg:
-            # FIX: Store message ID in database for threading
-            db_execute(
-                "UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s",
-                (msg.message_id, comment_id)
+        if comment_type == 'text' or not file_id:
+            text_to_send = message_text if use_markdown else f"{plain_text}{author_text}"
+            return await context.bot.send_message(
+                chat_id=chat_id,
+                text=text_to_send,
+                reply_markup=kb,
+                parse_mode=p_mode,
+                reply_to_message_id=target_reply_id,
+                disable_web_page_preview=True
             )
-            return msg.message_id
-            
-    except BadRequest as e:
-        # FIX: Improved fallback logic for "Message to be replied not found"
-        if "Message to be replied not found" in str(e) and 'reply_to_message_id' in send_kwargs:
-            logger.warning(f"Threading failed for comment {comment_id}, retrying as standalone. Error: {e}")
-            # Create a new dict WITHOUT reply_to_message_id
-            fallback_kwargs = {k: v for k, v in send_kwargs.items() if k != 'reply_to_message_id'}
-            try:
-                if comment_type == 'text' or comment_type not in ['voice', 'gif', 'sticker']:
-                    msg = await context.bot.send_message(**fallback_kwargs)
-                elif comment_type == 'voice':
-                    msg = await context.bot.send_voice(**fallback_kwargs)
-                elif comment_type in ['gif', 'sticker', 'photo']:
-                    # Fallback for sticker/gif/photo: media first (standalone), then info as reply
-                    m_kwargs = {'chat_id': chat_id}
-                    if comment_type == 'sticker':
-                        m_msg = await context.bot.send_sticker(sticker=file_id, **m_kwargs)
-                    elif comment_type == 'photo':
-                        m_msg = await context.bot.send_photo(photo=file_id, **m_kwargs)
-                    else: # gif
-                        m_msg = await context.bot.send_animation(animation=file_id, **m_kwargs)
-                    
-                    msg = await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=message_text,
-                        reply_markup=kb,
-                        parse_mode=ParseMode.MARKDOWN_V2,
-                        reply_to_message_id=m_msg.message_id,
-                        disable_web_page_preview=True
-                    )
-                
-                if msg:
-                    db_execute("UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s", (msg.message_id, comment_id))
-                    return msg.message_id
-            except Exception as e2:
-                logger.error(f"Fallback also failed for comment {comment_id}: {e2}")
+        elif comment_type == 'photo':
+            return await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=file_id,
+                caption=caption,
+                reply_markup=kb,
+                parse_mode=p_mode,
+                reply_to_message_id=target_reply_id
+            )
+        elif comment_type == 'voice':
+            return await context.bot.send_voice(
+                chat_id=chat_id,
+                voice=file_id,
+                caption=caption,
+                reply_markup=kb,
+                parse_mode=p_mode,
+                reply_to_message_id=target_reply_id
+            )
+        elif comment_type == 'audio':
+            return await context.bot.send_audio(
+                chat_id=chat_id,
+                audio=file_id,
+                caption=caption,
+                reply_markup=kb,
+                parse_mode=p_mode,
+                reply_to_message_id=target_reply_id
+            )
+        elif comment_type == 'video':
+            return await context.bot.send_video(
+                chat_id=chat_id,
+                video=file_id,
+                caption=caption,
+                reply_markup=kb,
+                parse_mode=p_mode,
+                reply_to_message_id=target_reply_id
+            )
+        elif comment_type == 'document':
+            return await context.bot.send_document(
+                chat_id=chat_id,
+                document=file_id,
+                caption=caption,
+                reply_markup=kb,
+                parse_mode=p_mode,
+                reply_to_message_id=target_reply_id
+            )
+        elif comment_type == 'gif':
+            return await context.bot.send_animation(
+                chat_id=chat_id,
+                animation=file_id,
+                caption=caption,
+                reply_markup=kb,
+                parse_mode=p_mode,
+                reply_to_message_id=target_reply_id
+            )
+        elif comment_type == 'sticker':
+            st_msg = await context.bot.send_sticker(
+                chat_id=chat_id,
+                sticker=file_id,
+                reply_to_message_id=target_reply_id
+            )
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=message_text if use_markdown else author_text,
+                reply_markup=kb,
+                parse_mode=p_mode,
+                reply_to_message_id=st_msg.message_id,
+                disable_web_page_preview=True
+            )
+            return st_msg
         else:
-            logger.error(f"BadRequest sending comment {comment_id}: {e}")
-            
-    except Exception as e:
-        logger.error(f"Error sending comment {comment_id}: {e}")
-        # Final fallback to plain text without markdown
+            return await context.bot.send_message(
+                chat_id=chat_id,
+                text=message_text if use_markdown else f"{plain_text}{author_text}",
+                reply_markup=kb,
+                parse_mode=p_mode,
+                reply_to_message_id=target_reply_id,
+                disable_web_page_preview=True
+            )
+
+    msg = None
+    try:
+        # Step 1: Send with markdown and threading
+        msg = await _send_media(valid_reply_id, use_markdown=True)
+    except Exception as e1:
+        logger.warning(f"Initial send failed for comment {comment_id} ({comment_type}): {e1}")
+        
+        # Step 2: Retry standalone if reply threading caused the error
+        if valid_reply_id and "reply" in str(e1).lower():
+            try:
+                msg = await _send_media(None, use_markdown=True)
+            except Exception as e2:
+                logger.warning(f"Standalone send with markdown failed for comment {comment_id}: {e2}")
+        
+        # Step 3: If still failed (e.g. MarkdownV2 entity parse error), retry without markdown
+        if not msg:
+            try:
+                msg = await _send_media(valid_reply_id, use_markdown=False)
+            except Exception as e3:
+                logger.warning(f"Send without markdown failed for comment {comment_id}: {e3}")
+                try:
+                    msg = await _send_media(None, use_markdown=False)
+                except Exception as e4:
+                    logger.error(f"All media send attempts failed for comment {comment_id}: {e4}")
+
+    # Fallback to plain text only if the media file itself failed completely (e.g. invalid file_id)
+    if not msg:
         try:
-            message_text = f"[Media] {content}\n\n{author_text}"
+            fallback_text = f"[Media: {comment_type}] {content}\n\n{author_text}".strip()
             msg = await context.bot.send_message(
                 chat_id=chat_id,
-                text=message_text,
+                text=fallback_text,
                 reply_markup=kb,
                 disable_web_page_preview=True
             )
-            if msg:
-                db_execute("UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s", (msg.message_id, comment_id))
-                return msg.message_id
-        except Exception as e2:
-            logger.error(f"Final fallback failed for comment {comment_id}: {e2}")
-    
+        except Exception as e_final:
+            logger.error(f"Absolute final fallback failed for comment {comment_id}: {e_final}")
+
+    if msg:
+        db_execute(
+            "UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s",
+            (msg.message_id, comment_id)
+        )
+        return msg.message_id
+
     return None
 
 def _fetch_comments_page_data(post_id, per_page, offset, user_id):
@@ -5539,12 +5553,12 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         is_author = str(comment['author_id']) == str(post_author_id)
         
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{comment['author_id']}_{post_id}"
-        aura_text = f"_Aura_ ⚡ {rating} pts" if not comment['is_admin'] else ""
+        aura_text = f"_Aura_ ⚡ {escape_markdown(str(rating), version=2)} pts" if not comment['is_admin'] else ""
         
         if is_author:
             # Vent author: show sex emoji + clickable "Vent author" (no custom avatar, no aura)
             sex_emoji = comment.get('sex') or '👤'
-            author_text = f"{sex_emoji} _[{escape_markdown('Vent author', version=2)}]({profile_link})_"
+            author_text = f"{sex_emoji} [_{escape_markdown('Vent author', version=2)}_]({profile_link})"
         else:
             # Normal user: show full display (sex + custom avatar + name + aura)
             sex_emoji = comment.get('sex') or '👤'
@@ -5553,7 +5567,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
                 author_avatar = f"{sex_emoji} {avatar_emoji}" if avatar_emoji else sex_emoji
             else:
                 author_avatar = avatar_emoji if avatar_emoji else '👤'
-            author_label = f"_[{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}]({profile_link})_"
+            author_label = f"[_{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}_]({profile_link})"
             author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
         # Threading logic - FIX: check current batch msg_ids first
@@ -5603,17 +5617,17 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     # instead of triggering a fresh 5-query calculate_user_rating() call per reply.
     rating_reply = rating_override if rating_override is not None else calculate_user_rating(reply['author_id'])
     reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply['author_id']}_{post_id}"
-    aura_text = f"_Aura_ ⚡ {rating_reply} pts" if not is_admin else ""
+    aura_text = f"_Aura_ ⚡ {escape_markdown(str(rating_reply), version=2)} pts" if not is_admin else ""
     
     # Check if reply author is the vent author
     if str(reply['author_id']) == str(post_author_id):
         # Vent author reply: clickable "Vent author" with sex emoji
         sex_emoji = display_sex or '👤'
-        reply_author_text = f"{sex_emoji} _[{escape_markdown('Vent author', version=2)}]({reply_profile_link})_"
+        reply_author_text = f"{sex_emoji} [_{escape_markdown('Vent author', version=2)}_]({reply_profile_link})"
     else:
         # Normal user
         author_sex = display_sex or '👤'
-        author_label = f"_[{escape_markdown(display_name, version=2)}]({reply_profile_link})_"
+        author_label = f"[_{escape_markdown(display_name, version=2)}_]({reply_profile_link})"
         if author_sex in ('👨', '👩'):
             author_avatar = f"{author_sex} {avatar_emoji}" if avatar_emoji else author_sex
         else:
