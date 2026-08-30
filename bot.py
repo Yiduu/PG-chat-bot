@@ -5446,7 +5446,7 @@ def _fetch_comments_page_data(post_id, per_page, offset, user_id):
                 'reaction_data': {}, 'parent_msg_ids': {}, 'ratings_map': {}}
 
     comments = db_fetch_all("""
-        SELECT c.*, u.sex AS user_sex, u.avatar_emoji, u.anonymous_name, u.is_admin
+        SELECT c.*, u.sex AS user_sex, u.avatar_emoji, u.anonymous_name, u.is_admin, COALESCE(u.hide_aura, FALSE) AS hide_aura
         FROM comments c
         LEFT JOIN users u ON c.author_id = u.user_id
         WHERE c.post_id = %s
@@ -5461,6 +5461,8 @@ def _fetch_comments_page_data(post_id, per_page, offset, user_id):
     reaction_data = {}
     parent_msg_ids = {}
     ratings_map = {}
+    viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(user_id),)) if user_id else None
+    is_viewer_admin = bool(viewer_row and viewer_row.get('is_admin'))
 
     comment_ids = [c['comment_id'] for c in comments]
     if comment_ids:
@@ -5492,6 +5494,7 @@ def _fetch_comments_page_data(post_id, per_page, offset, user_id):
     return {
         'post': post, 'comments': comments, 'total_comments': total_comments,
         'reaction_data': reaction_data, 'parent_msg_ids': parent_msg_ids, 'ratings_map': ratings_map,
+        'is_viewer_admin': is_viewer_admin,
     }
 
 async def show_comments_page(update, context, post_id, page=1, reply_pages=None):
@@ -5527,6 +5530,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     reaction_data = page_data['reaction_data']
     parent_msg_ids = page_data['parent_msg_ids']
     ratings_map = page_data['ratings_map']
+    is_viewer_admin = page_data.get('is_viewer_admin', False)
     total_pages = (total_comments + per_page - 1) // per_page
 
     if not comments and page == 1:
@@ -5553,7 +5557,8 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         is_author = str(comment['author_id']) == str(post_author_id)
         
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{comment['author_id']}_{post_id}"
-        aura_text = f"_Aura_ ⚡ {escape_markdown(str(rating), version=2)} pts" if not comment['is_admin'] else ""
+        show_aura = not comment.get('hide_aura') or str(user_id) == str(comment['author_id']) or is_viewer_admin
+        aura_text = f"_Aura_ ⚡ {escape_markdown(str(rating), version=2)} pts" if (not comment.get('is_admin') and show_aura) else ""
         
         if is_author:
             # Vent author: show sex emoji + clickable "Vent author" (no custom avatar, no aura)
@@ -5598,26 +5603,30 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             "Add your thoughts to the conversation",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")]])
         )
-async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None, rating_override=None):
+async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None, rating_override=None, show_aura=None):
     """Send a single reply message with proper formatting using pre-fetched user data if available"""
     # Use joined data if available, else fetch
     is_admin = reply.get('is_admin')
     if is_admin is None: # Not pre-fetched
         reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (reply['author_id'],))
-        is_admin = reply_user.get('is_admin', False)
-        display_sex = get_display_sex(reply_user)
-        display_name = get_display_name(reply_user)
-        avatar_emoji = reply_user.get('avatar_emoji')
+        is_admin = reply_user.get('is_admin', False) if reply_user else False
+        display_sex = get_display_sex(reply_user) if reply_user else '👤'
+        display_name = get_display_name(reply_user) if reply_user else 'Anonymous'
+        avatar_emoji = reply_user.get('avatar_emoji') if reply_user else None
+        hide_aura = reply_user.get('hide_aura', False) if reply_user else False
     else:
         display_sex = reply.get('sex') or '👤'
         display_name = reply.get('anonymous_name') or 'Anonymous'
         avatar_emoji = reply.get('avatar_emoji')
+        hide_aura = reply.get('hide_aura', False)
 
     # rating_override lets callers pass a pre-batched rating (see show_more_replies)
     # instead of triggering a fresh 5-query calculate_user_rating() call per reply.
     rating_reply = rating_override if rating_override is not None else calculate_user_rating(reply['author_id'])
     reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply['author_id']}_{post_id}"
-    aura_text = f"_Aura_ ⚡ {escape_markdown(str(rating_reply), version=2)} pts" if not is_admin else ""
+    if show_aura is None:
+        show_aura = not hide_aura
+    aura_text = f"_Aura_ ⚡ {escape_markdown(str(rating_reply), version=2)} pts" if (not is_admin and show_aura) else ""
     
     # Check if reply author is the vent author
     if str(reply['author_id']) == str(post_author_id):
@@ -5662,7 +5671,7 @@ def _fetch_more_replies_data(comment_id, post_id, replies_per_page, offset, user
             SELECT c.* FROM comments c
             JOIN comment_tree ct ON c.parent_comment_id = ct.comment_id
         )
-        SELECT ct.*, u.sex AS user_sex, u.anonymous_name, u.is_admin, u.avatar_emoji
+        SELECT ct.*, u.sex AS user_sex, u.anonymous_name, u.is_admin, u.avatar_emoji, COALESCE(u.hide_aura, FALSE) AS hide_aura
         FROM comment_tree ct
         LEFT JOIN users u ON ct.author_id = u.user_id
         ORDER BY ct.timestamp ASC LIMIT %s OFFSET %s
@@ -5674,6 +5683,8 @@ def _fetch_more_replies_data(comment_id, post_id, replies_per_page, offset, user
     reaction_data = {}
     parent_msg_ids = {}
     ratings_map = {}
+    viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(user_id),)) if user_id else None
+    is_viewer_admin = bool(viewer_row and viewer_row.get('is_admin'))
 
     if reply_ids:
         counts = db_fetch_all("""
@@ -5704,6 +5715,7 @@ def _fetch_more_replies_data(comment_id, post_id, replies_per_page, offset, user
     return {
         'post_author_id': post_author_id, 'total_replies': total_replies, 'replies': replies,
         'reaction_data': reaction_data, 'parent_msg_ids': parent_msg_ids, 'ratings_map': ratings_map,
+        'is_viewer_admin': is_viewer_admin,
     }
 
 async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, comment_id: int, page: int):
@@ -5739,6 +5751,7 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     reaction_data = page_data['reaction_data']
     parent_msg_ids = page_data['parent_msg_ids']
     ratings_map = page_data['ratings_map']
+    is_viewer_admin = page_data.get('is_viewer_admin', False)
 
     # Delete the "Show more replies" button
     try: await query.message.delete()
@@ -5753,7 +5766,13 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             
             pref = reaction_data.get(reply['comment_id'], {'likes': 0, 'dislikes': 0, 'user_reaction': None})
             reply_rating = ratings_map.get(reply['author_id'], 0)
-            reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, post_id, target_msg_id, pre_fetched_data=pref, rating_override=reply_rating)
+            show_aura = not reply.get('hide_aura') or str(user_id) == str(reply['author_id']) or is_viewer_admin
+            reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, post_id, target_msg_id, pre_fetched_data=pref, rating_override=reply_rating, show_aura=show_aura)
+            
+            if reply_msg_id:
+                msg_ids[reply['comment_id']] = reply_msg_id
+        except Exception as e:
+            logger.error(f"Error sending reply {reply.get('comment_id')}: {e}")
             
             if reply_msg_id:
                 msg_ids[reply['comment_id']] = reply_msg_id
@@ -12721,6 +12740,7 @@ def mini_app_get_posts():
                 u.avatar_emoji as author_avatar,
                 u.anonymous_name as author_name,
                 u.is_admin as author_is_admin,
+                COALESCE(u.hide_aura, FALSE) as author_hide_aura,
                 STRING_AGG(DISTINCT pc.category_code, ',') as categories,
                 COUNT(DISTINCT uc.comment_id) as unread_comments
             FROM page_posts pp
@@ -12731,7 +12751,7 @@ def mini_app_get_posts():
                 AND uc.timestamp > COALESCE(pv.last_viewed, '1970-01-01')
             GROUP BY pp.post_id, pp.content, pp.timestamp, pp.comment_count, pp.media_type,
                      pp.media_id, pp.explicit, u.user_id, u.sex, u.avatar_emoji,
-                     u.anonymous_name, u.is_admin
+                     u.anonymous_name, u.is_admin, u.hide_aura
             ORDER BY pp.timestamp DESC
         ''', (per_page, offset, user_id))
         
@@ -12796,7 +12816,9 @@ def mini_app_get_posts():
                 content_preview = content_preview[:297] + '...'
             
             rating = ratings_map.get(post['author_id'], 0)
-            aura_sticker = "" if post['author_is_admin'] else format_aura(rating)
+            is_owner = str(post['author_id']) == str(user_id) if user_id else False
+            show_aura = not post.get('author_hide_aura') or is_owner or is_admin_viewer
+            aura_sticker = format_aura(rating) if (not post['author_is_admin'] and show_aura) else ""
             
             category_list = post['categories'].split(',') if post['categories'] else ['Other']
             
@@ -12984,12 +13006,13 @@ def mini_app_get_post_comments(post_id):
         # Get viewer_id
         viewer_id = request.args.get('viewer_id')
         reveal_requested = request.args.get('reveal') == '1'
+        viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(viewer_id),)) if viewer_id else None
+        is_viewer_admin = bool(viewer_row and viewer_row.get('is_admin'))
 
         post_gate = db_fetch_one("SELECT author_id, explicit FROM posts WHERE post_id = %s", (post_id,))
         if post_gate and post_gate.get('explicit'):
-            viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(viewer_id),)) if viewer_id else None
             is_privileged_viewer = bool(viewer_id) and (
-                str(viewer_id) == str(post_gate['author_id']) or bool(viewer_row and viewer_row.get('is_admin'))
+                str(viewer_id) == str(post_gate['author_id']) or is_viewer_admin
             )
             if not is_privileged_viewer and not reveal_requested:
                 return jsonify({'success': True, 'data': [], 'content_hidden': True})
@@ -13006,7 +13029,8 @@ def mini_app_get_post_comments(post_id):
                 u.sex as author_sex,
                 u.avatar_emoji as author_avatar,
                 u.anonymous_name as author_name,
-                u.is_admin as author_is_admin
+                u.is_admin as author_is_admin,
+                COALESCE(u.hide_aura, FALSE) as author_hide_aura
             FROM comments c
             JOIN users u ON c.author_id = u.user_id
             WHERE c.post_id = %s
@@ -13067,6 +13091,9 @@ def mini_app_get_post_comments(post_id):
                 calc_time = "Just now"
 
             rating = ratings_map.get(c['author_id'], 0)
+            is_owner = str(c['author_id']) == str(viewer_id) if viewer_id else False
+            show_aura = not c.get('author_hide_aura') or is_owner or is_viewer_admin
+            aura_str = format_aura(rating) if (not c['author_is_admin'] and show_aura) else ""
 
             formatted_comments.append({
                 'id': c['comment_id'],
@@ -13081,7 +13108,7 @@ def mini_app_get_post_comments(post_id):
                     'name': c['author_name'] or 'Anonymous',
                     'sex': c['author_sex'] or '👤',
                     'avatar': c['author_avatar'] or "",
-                    'aura': "" if c['author_is_admin'] else format_aura(rating),
+                    'aura': aura_str,
                     'is_admin': c['author_is_admin'],
                     'is_vent_author': str(c['author_id']) == str(post_author_id) if post_author_id else False
                 },
