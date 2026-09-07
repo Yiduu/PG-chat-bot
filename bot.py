@@ -14020,6 +14020,13 @@ def mini_app_delete_comment(comment_id):
     """API endpoint for deleting a comment"""
     try:
         user_id = request.args.get('user_id')
+        if not user_id:
+            data = request.get_json(silent=True) or {}
+            user_id = data.get('user_id')
+
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Missing user_id'}), 400
+
         comment = db_fetch_one("SELECT author_id, post_id FROM comments WHERE comment_id = %s", (comment_id,))
         
         if not comment or str(comment['author_id']) != str(user_id):
