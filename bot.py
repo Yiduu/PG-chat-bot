@@ -2437,7 +2437,7 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
         # Show the actual comment text so it's visible in the notification itself
         media_labels = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🏷 Sticker', 'photo': '🖼 Photo'}
         if comment_content:
-            safe_comment_text = html.escape(comment_content[:300])
+            safe_comment_text = html.escape(truncate_for_telegram(comment_content, COMMENT_TEXT_CONTENT_LIMIT))
         else:
             safe_comment_text = media_labels.get(comment_type, '')
 
@@ -2505,7 +2505,7 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
         # Show the actual reply text, not just the comment it replied to
         media_labels = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🏷 Sticker', 'photo': '🖼 Photo'}
         if comment_content:
-            safe_reply_text = escape_markdown(comment_content[:300], version=2)
+            safe_reply_text = escape_markdown(truncate_for_telegram(comment_content, COMMENT_TEXT_CONTENT_LIMIT), version=2)
         else:
             safe_reply_text = escape_markdown(media_labels.get(comment_type, ''), version=2)
 
@@ -2631,8 +2631,8 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
                 media_type = media_row.get('media_type') or 'text'
                 media_id = media_row.get('media_id')
 
-        preview_content = message_content[:200] + '...' if message_content and len(message_content) > 200 else (message_content or "")
-        safe_preview_content = escape_markdown(preview_content, version=2) if preview_content else ""
+        full_content = truncate_for_telegram(message_content or "", PM_TEXT_CONTENT_LIMIT)
+        safe_preview_content = escape_markdown(full_content, version=2) if full_content else ""
 
         keyboard = InlineKeyboardMarkup([
             [
@@ -2647,10 +2647,12 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         sent_msg = None
 
         if media_id and media_type != 'text':
-            caption_lines = [header, safe_preview_content, "", "_Use /inbox to view all messages_"]
+            caption_content = truncate_for_telegram(message_content or "", PM_CAPTION_CONTENT_LIMIT)
+            safe_caption_content = escape_markdown(caption_content, version=2) if caption_content else ""
+            caption_lines = [header, safe_caption_content, "", "_Use /inbox to view all messages_"]
             caption = "\n".join(caption_lines)
-            if len(caption) > 1000:
-                caption = caption[:997] + "..."
+            if len(caption) > 1024:
+                caption = truncate_for_telegram(caption, 1024)
             try:
                 if media_type == 'photo':
                     sent_msg = await context.bot.send_photo(chat_id=receiver_id, photo=media_id, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
@@ -2702,16 +2704,15 @@ async def edit_native_pm_notification(context: ContextTypes.DEFAULT_TYPE, receiv
         sender_name = get_display_name(sender) if sender else "Someone"
         safe_sender_name = escape_markdown(sender_name, version=2)
 
-        preview = new_content[:200] + '...' if new_content and len(new_content) > 200 else (new_content or "")
-        safe_preview = escape_markdown(preview, version=2) if preview else ""
-
         header = f"*New Private Message*\n\nFrom: {safe_sender_name}\n"
         footer = "\n_Use /inbox to view all messages_"
 
         if media_id and media_type and media_type != 'text':
-            caption = f"{header}\n{safe_preview}{footer}"
-            if len(caption) > 1000:
-                caption = caption[:997] + "..."
+            caption_preview = truncate_for_telegram(new_content or "", PM_CAPTION_CONTENT_LIMIT)
+            safe_caption_preview = escape_markdown(caption_preview, version=2) if caption_preview else ""
+            caption = f"{header}\n{safe_caption_preview}{footer}"
+            if len(caption) > 1024:
+                caption = truncate_for_telegram(caption, 1024)
             await context.bot.edit_message_caption(
                 chat_id=receiver_id,
                 message_id=notif_message_id,
@@ -2719,6 +2720,8 @@ async def edit_native_pm_notification(context: ContextTypes.DEFAULT_TYPE, receiv
                 parse_mode=ParseMode.MARKDOWN_V2
             )
         else:
+            text_preview = truncate_for_telegram(new_content or "", PM_TEXT_CONTENT_LIMIT)
+            safe_preview = escape_markdown(text_preview, version=2) if text_preview else ""
             body = safe_preview if safe_preview else "_\\[attachment\\]_"
             text = f"{header}\n{body}{footer}"
             await context.bot.edit_message_text(
@@ -5190,6 +5193,24 @@ def escape_markdown_v2(text):
     for char in escape_chars:
         text = text.replace(char, '\\' + char)
     return text
+
+def truncate_for_telegram(text, max_len):
+    """Truncate raw text to fit a Telegram length limit, keeping as much of the
+    original message as possible (instead of a short fixed preview) and adding
+    an ellipsis only when truncation actually happens."""
+    if not text:
+        return text or ""
+    if len(text) <= max_len:
+        return text
+    return text[:max(0, max_len - 1)].rstrip() + "…"
+
+# Telegram hard limits: plain messages <=4096 chars, media captions <=1024 chars.
+# Leave headroom for the header/footer text wrapped around the message content
+# in each notification below, so the combined message never gets rejected or
+# silently cut off by Telegram itself.
+PM_TEXT_CONTENT_LIMIT = 3500
+PM_CAPTION_CONTENT_LIMIT = 850
+COMMENT_TEXT_CONTENT_LIMIT = 3500
 
 # Fragments of our own "copy this" prompts that users sometimes paste back to us
 # by accident (e.g. selecting the whole message bubble instead of just the code block).
@@ -12313,7 +12334,7 @@ def send_telegram_media_sync(chat_id, media_type, media_id, caption=None, parse_
 
     # sendSticker does not accept a caption param at all — send it as a follow-up message instead
     if caption and media_type != 'sticker':
-        payload["caption"] = caption[:1024]  # Telegram's caption hard limit
+        payload["caption"] = truncate_for_telegram(caption, 1024)  # Telegram's caption hard limit
         if parse_mode:
             payload["parse_mode"] = parse_mode
     if reply_markup:
@@ -12354,9 +12375,7 @@ def notify_user_of_private_message_sync(sender_id, receiver_id, message_content,
         sender_name = get_display_name(sender)
         safe_sender_name = html.escape(sender_name)
 
-        preview_content = (message_content or "")[:200]
-        if message_content and len(message_content) > 200:
-            preview_content += '...'
+        preview_content = truncate_for_telegram(message_content or "", PM_TEXT_CONTENT_LIMIT)
         safe_preview = html.escape(preview_content) if preview_content else ""
 
         keyboard = {
@@ -12405,9 +12424,7 @@ def edit_native_pm_notification_sync(receiver_id, notif_message_id, sender_id, n
         sender_name = get_display_name(sender) if sender else "Someone"
         safe_sender_name = html.escape(sender_name)
 
-        preview_content = (new_content or "")[:200]
-        if new_content and len(new_content) > 200:
-            preview_content += '...'
+        preview_content = truncate_for_telegram(new_content or "", PM_TEXT_CONTENT_LIMIT)
         safe_preview = html.escape(preview_content) if preview_content else ""
 
         header = f"<b>New Private Message</b>\n\nFrom: <b>{safe_sender_name}</b>\n\n"
@@ -12480,7 +12497,7 @@ def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_id=None, c
         safe_commenter = html.escape(commenter_name)
         safe_post_preview = html.escape(post_preview)
         media_labels = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🏷 Sticker', 'photo': '🖼 Photo'}
-        safe_comment = html.escape((comment_content or '')[:300]) if comment_content else media_labels.get(media_type, '')
+        safe_comment = html.escape(truncate_for_telegram(comment_content or '', COMMENT_TEXT_CONTENT_LIMIT)) if comment_content else media_labels.get(media_type, '')
 
         lines = ["💬 <b>New comment on your vent</b>", "", f"<b>{safe_commenter}</b> wrote:"]
         if safe_comment:
@@ -12532,7 +12549,7 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_commen
         safe_post_preview = html.escape(post_preview)
         safe_parent_preview = html.escape((parent_comment['content'] or '[media]')[:100])
         media_labels = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🏷 Sticker', 'photo': '🖼 Photo'}
-        safe_comment = html.escape((comment_content or '')[:300]) if comment_content else media_labels.get(media_type, '')
+        safe_comment = html.escape(truncate_for_telegram(comment_content or '', COMMENT_TEXT_CONTENT_LIMIT)) if comment_content else media_labels.get(media_type, '')
 
         lines = [f"↩ <b>{safe_replier_name}</b> replied to your comment", ""]
         if safe_comment:
