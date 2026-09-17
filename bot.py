@@ -872,6 +872,19 @@ def get_admin_conversation_transcript(user_a, user_b, limit=50):
         ORDER BY timestamp ASC
     """, (user_a, user_b, user_b, user_a, limit))
 
+
+def get_admin_conversation_message_count(user_a, user_b):
+    """Total number of messages ever exchanged between this pair, so the admin
+    monitor can tell whether there's older history left to load."""
+    row = db_fetch_one("""
+        SELECT COUNT(*) as cnt
+        FROM private_messages
+        WHERE (sender_id = %s AND receiver_id = %s)
+           OR (sender_id = %s AND receiver_id = %s)
+    """, (user_a, user_b, user_b, user_a))
+    return row['cnt'] if row else 0
+
+
 # -------------------- Unified conversational state (context.user_data only) --------------------
 # Single source of truth for "what input is this user's next message going to?".
 # This replaces the old waiting_for_post / waiting_for_comment / awaiting_name /
@@ -11805,6 +11818,9 @@ async function saveSettings(){
 let isAdminUser = false;
 let adminMonitorPoll = null;
 let adminViewingPair = null;
+let adminTranscriptLimit = 60;
+let adminTranscriptHasMore = false;
+let adminTranscriptLoadingOlder = false;
 
 async function checkAdminStatus(){
   try{
@@ -11872,6 +11888,8 @@ async function loadAdminChats(search=''){
 function openAdminTranscript(userA, userB, nameA, nameB){
   clearInterval(crPoll); crPoll = null; crPartnerId = null;
   adminViewingPair = [userA, userB];
+  adminTranscriptLimit = 60;
+  adminTranscriptHasMore = false;
   document.getElementById('cr-name').textContent = `🔴 ${nameA} ↔ ${nameB}`;
   document.getElementById('cr-ava').innerHTML = ICONS.shield;
   document.getElementById('chat-room').classList.add('open');
@@ -11881,7 +11899,15 @@ function openAdminTranscript(userA, userB, nameA, nameB){
   adminMonitorPoll = setInterval(fetchAdminTranscript, 4000);
 }
 
-async function fetchAdminTranscript(scroll=false){
+async function loadOlderAdminMessages(){
+  if(adminTranscriptLoadingOlder || !adminTranscriptHasMore) return;
+  adminTranscriptLoadingOlder = true;
+  adminTranscriptLimit += 60;
+  await fetchAdminTranscript(false, true);
+  adminTranscriptLoadingOlder = false;
+}
+
+async function fetchAdminTranscript(scroll=false, preserveAnchor=false){
   if(!adminViewingPair) return;
   const [a, b] = adminViewingPair;
   try{
@@ -11892,10 +11918,18 @@ async function fetchAdminTranscript(scroll=false){
     // playback and abandons an in-flight download before it can ever start.
     const isBusyVoice = ()=>Array.from(box.querySelectorAll('.voice-player-audio')).some(el=>!el.paused || el.dataset.loading==='1');
     if(isBusyVoice()) return;
-    const d = await api(`/api/mini-app/admin/chats/${a}/${b}?admin_id=${UID}&limit=100`);
+    const d = await api(`/api/mini-app/admin/chats/${a}/${b}?admin_id=${UID}&limit=${adminTranscriptLimit}`);
     if(isBusyVoice()) return; // re-check: user may have started playing while this request was in flight
+    adminTranscriptHasMore = !!d.has_more;
     const wasBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 80;
-    box.innerHTML = (d.data || []).map(m => {
+    // When prepending older history, anchor the viewport to what the admin was
+    // already looking at instead of jumping to the top or bottom.
+    const prevScrollHeight = box.scrollHeight;
+    const prevScrollTop = box.scrollTop;
+    const olderBtn = adminTranscriptHasMore
+      ? `<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderAdminMessages()" id="admin-load-older-btn">Load older messages</button></div>`
+      : '';
+    box.innerHTML = olderBtn + (d.data || []).map(m => {
       if(m.is_deleted){
         return `<div class="msg-row ${String(m.sender_id)===String(a) ? 'them' : 'me'}"><div class="msg-bubble msg-deleted">Message deleted</div><div class="msg-time">${esc(m.time_display||'')}</div></div>`;
       }
@@ -11906,9 +11940,14 @@ async function fetchAdminTranscript(scroll=false){
         <div class="msg-time">${esc(m.time_display||'')}${editedTag}</div>
       </div>`;
     }).join('');
-    if(scroll || wasBottom) box.scrollTop = box.scrollHeight;
+    if(preserveAnchor){
+      box.scrollTop = box.scrollHeight - prevScrollHeight + prevScrollTop;
+    } else if(scroll || wasBottom){
+      box.scrollTop = box.scrollHeight;
+    }
   }catch(e){}
 }
+
 
 async function loadChats(){
   const list=document.getElementById('chats-list');list.innerHTML=skelChats();
@@ -13843,6 +13882,7 @@ def mini_app_admin_chat_transcript(user_a, user_b):
 
     limit = int(request.args.get('limit', 100))
     msgs = get_admin_conversation_transcript(user_a, user_b, limit=limit)
+    total = get_admin_conversation_message_count(user_a, user_b)
 
     data = []
     for m in msgs:
@@ -13860,7 +13900,7 @@ def mini_app_admin_chat_transcript(user_a, user_b):
             'time_display': format_ethiopian_time(ts)
         })
 
-    return jsonify({'success': True, 'data': data})
+    return jsonify({'success': True, 'data': data, 'total': total, 'has_more': total > len(data)})
 
 @flask_app.route('/api/mini-app/admin/pending-posts', methods=['GET'])
 def mini_app_admin_pending_posts():
