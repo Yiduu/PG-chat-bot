@@ -26,7 +26,7 @@ import html
 from types import SimpleNamespace
 from functools import lru_cache
 
-# FIX: moved logger setup to top
+# moved logger setup to top
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -446,7 +446,7 @@ def init_db():
                             PRIMARY KEY (post_id, category_code)
                         )
                     ''')
-                    # FIX: added category migration
+                    # added category migration
                     c.execute("""
                         INSERT INTO post_categories (post_id, category_code)
                         SELECT post_id, category FROM posts 
@@ -504,7 +504,7 @@ def init_db():
                     logger.info("Adding missing column: thread_context_post_id to users table")
                     c.execute("ALTER TABLE users ADD COLUMN thread_context_post_id BIGINT DEFAULT NULL")
 
-                # FIX: Added telegram_message_id to comments for cross-page threading
+                # Added telegram_message_id to comments for cross-page threading
                 c.execute("""
                     SELECT column_name FROM information_schema.columns 
                     WHERE table_name='comments' AND column_name='telegram_message_id'
@@ -712,7 +712,7 @@ async def replace_with_error(loading_msg, error_text):
         return loading_msg
     except:
         return loading_msg
-# Database helper functions - FIXED VERSION
+# Database helper functions
 # -------------------- PostgreSQL Connection Pool --------------------
 from psycopg2 import pool
 
@@ -901,7 +901,7 @@ STATE_AWAITING_NAME = 'awaiting_name'
 STATE_AWAITING_BIO = 'awaiting_bio'
 STATE_AWAITING_REJECTION_REASON = 'awaiting_rejection_reason'
 STATE_REPORTING = 'reporting'
-# NEW: state entered when a user is editing the content of an already-published
+# state entered when a user is editing the content of an already-published
 # (approved) post from the "edit_published_<post_id>" flow in view_post/button_handler.
 STATE_AWAITING_EDIT_CONTENT = 'awaiting_edit_content'
 # State entered when a user tapped "Edit" on a private message they sent
@@ -1388,7 +1388,7 @@ def login_page():
             tg.ready();
             const userId = tg.initDataUnsafe.user.id;
             
-            // Show a premium temporary loading state
+            // Show a temporary loading state
             document.body.innerHTML = `
                 <div class="auth-container">
                     <div class="auth-spinner"></div>
@@ -1444,7 +1444,7 @@ def generate_token(user_id):
 # Verify token
 @flask_app.route('/api/verify-token/<token>')
 def verify_token(token):
-    """Verify JWT token - SIMPLIFIED VERSION"""
+    """Verify JWT token"""
     try:
         # Try to decode the token
         decoded = jwt.decode(token, TOKEN, algorithms=['HS256'])
@@ -3030,7 +3030,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start the broadcast process"""
     query = update.callback_query
-    # Redundant answer removed to fix mobile toast bugs
+    # No query.answer() here - the message edit below already dismisses the loading spinner
     
     user_id = str(query.from_user.id)
     
@@ -3085,7 +3085,7 @@ async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_broadcast_type(update: Update, context: ContextTypes.DEFAULT_TYPE, broadcast_type: str):
     """Handle broadcast type selection"""
     query = update.callback_query
-    # Redundant answer removed to fix mobile toast bugs
+    # Same as above - the edit_message_text below handles dismissing the spinner
     
     user_id = str(query.from_user.id)
     
@@ -3802,8 +3802,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         ))
         
         # =============================================
-        # CRITICAL FIX: Update the admin's original message to remove Approve/Reject buttons
-        # =============================================
+        # Update the admin's original message to remove the Approve/Reject buttons
         try:
             # Format categories for display
             categories_display = ', '.join(categories) if categories else 'None'
@@ -3832,9 +3831,6 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
                 parse_mode=ParseMode.MARKDOWN
             )
         
-        # =============================================
-        # END CRITICAL FIX
-        # =============================================
         
     except Exception as e:
         logger.error(f"Error approving post: {e}")
@@ -3904,19 +3900,8 @@ async def finalize_rejection(update: Update, context: ContextTypes.DEFAULT_TYPE,
             parse_mode=ParseMode.HTML if reason else None
         ))
 
-        # Note: In a real system we might want to ARCHIVE instead of DELETE to keep the reason.
-        # But the requirement says "Delete the post from DB (and optionally store rejection_reason)".
-        # To store the reason, we'd need to keep the row but mark it as 'rejected'.
-        # However, the current code deletes it. I will stick to deletion for consistency with existing code
-        # but if we wanted to store it, we'd need a 'status' column.
-        # Since I'm adding 'rejection_reason' column to 'posts', I should probably UPDATE it first if I want to keep it?
-        # But if I delete it, the column is useless.
-        # Let's assume the user wants to keep the post but MARK as rejected?
-        # "Delete the post from DB" is what the user guide says.
-        # I'll update it first, then delete? No, that makes no sense for the column.
-        # Maybe the user meant "Move to rejected_posts"? 
-        # I'll just follow the instruction: "Delete the post from DB".
-        
+        # Rejected posts are deleted outright rather than archived; if a status-based
+        # soft-rejection flow is ever needed, add a `status` column instead of reusing this.
         success = db_execute("DELETE FROM posts WHERE post_id = %s", (post_id,))
         
         # Clear context flags
@@ -5678,7 +5663,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
         reply_author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
     # Pass pre-fetched reaction data if available (e.g. from show_more_replies)
-    # FIX: Pass the full reply dict (already done, but ensured)
+    # Pass the full reply dict (already done, but ensured)
     return await send_comment_message(context, chat_id, reply, reply_author_text, reply_to_message_id, pre_fetched_data=pre_fetched_data)
 
 def _fetch_more_replies_data(comment_id, post_id, replies_per_page, offset, user_id):
@@ -5950,7 +5935,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     )
     following_count = following_row['count'] if following_row else 0
     
-    # PREMIUM Grid Layout
+    # Profile action grid
     kb = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("Name", callback_data='edit_name'),
@@ -6077,9 +6062,7 @@ async def show_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode=ParseMode.MARKDOWN_V2
     )
 
-# UPDATED: Function to show user's previous posts with NEW CLEAN UI
-# UPDATED: Function to show user's previous posts with CHRONOLOGICAL ORDER and NEW STRUCTURE
-# UPDATED: Function to show user's previous posts with CHRONOLOGICAL ORDER and NEW STRUCTURE
+# Builds the paginated "Thread to Previous Post" picker content
 def build_thread_pick_content(user_id, page=1):
     """Build the text + keyboard for one page of the 'Thread to Previous Post'
     picker. Previously this only ever showed the 6 most recent posts with no
@@ -6301,9 +6284,9 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
             except:
                 pass
 
-# NEW: Function to view a specific post
-# NEW: Function to view a specific post in detail
-# NEW: Function to show menu for My Content
+# Function to view a specific post
+# Function to view a specific post in detail
+# Function to show menu for My Content
 async def show_my_content_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show menu for My Content (Posts and Comments)"""
     
@@ -6348,7 +6331,7 @@ async def show_my_content_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("Error loading content menu. Please try again.")
 
-# NEW: Function to show a single post with action buttons
+# Function to show a single post with action buttons
 async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int, from_page=1):
     """Show a specific post with action buttons"""
     query = update.callback_query
@@ -6418,7 +6401,7 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
         [InlineKeyboardButton("Continue Thread", callback_data=f"continue_post_{post_id}")],
     ]
 
-    # NEW: Let the author edit their post's content once it has been approved
+    # Let the author edit their post's content once it has been approved
     # and published to the channel.
     if post.get('approved'):
         keyboard.append(
@@ -6447,7 +6430,7 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
     except Exception as e:
         logger.error(f"Error viewing post: {e}")
         await replace_with_error(loading_msg, "Error loading post")
-# NEW: Function to show user's comments
+# Function to show user's comments
 async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
     """Show user's previous comments with pagination"""
     
@@ -6973,7 +6956,7 @@ async def send_reaction_notification(context: ContextTypes.DEFAULT_TYPE, comment
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     # We will call query.answer() with specific text in the branches below
-    # to show the premium "black toast" loading animations.
+    # to show the dark-toast loading animations.
     
     user_id = str(query.from_user.id)
     
@@ -6982,7 +6965,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         # ... rest of your code
-        # FIXED: Handle noop callback (do nothing for separator buttons)
+        # Handle noop callback (do nothing for separator buttons)
         if query.data == 'noop':
             return  # Do nothing and exit the function
             
@@ -7415,7 +7398,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.HTML
                 )
                 return
-        # FIXED: Like/Dislike reaction handling
+        # Like/Dislike reaction handling
         elif query.data.startswith(("likecomment_", "dislikecomment_", "likereply_", "dislikereply_")):
             try:
                 parts = query.data.split('_')
@@ -7551,7 +7534,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error processing reaction: {e}")
                 await query.answer("Error updating reaction", show_alert=True)
 
-        # NEW: Handle edit comment
+        # Handle edit comment
         elif query.data.startswith("edit_comment_"):
             comment_id = int(query.data.split('_')[2])
             comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
@@ -7585,7 +7568,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.answer("You can only edit your own comments", show_alert=True)
 
-        # NEW: Handle delete comment
+        # Handle delete comment
         elif query.data.startswith("delete_comment_"):
             comment_id = int(query.data.split('_')[2])
             comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
@@ -7609,7 +7592,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.answer("You can only delete your own comments", show_alert=True)
 
-        # NEW: Handle delete post
+        # Handle delete post
         elif query.data.startswith("delete_post_"):
             try:
                 parts = query.data.split('_')
@@ -7720,7 +7703,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Fallback to post list
                 await show_previous_posts(update, context, 1)
 
-        # NEW: Let an author edit the content of a post that's already been
+        # Let an author edit the content of a post that's already been
         # approved and published to the channel.
         elif query.data.startswith("edit_published_"):
             try:
@@ -8025,7 +8008,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=cancel_menu,
                     parse_mode=ParseMode.HTML
                 )
-        # UPDATED: Handle Previous Posts pagination
+        # Handle Previous Posts pagination
         elif query.data.startswith('show_more_replies_'):
             try:
                 parts = query.data.split('_')
@@ -8042,7 +8025,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except (IndexError, ValueError):
                 await show_previous_posts(update, context, 1)
 
-        # UPDATED: Handle Previous Posts button
+        # Handle Previous Posts button
         elif query.data == 'my_content_menu':
             await show_my_content_menu(update, context)
 
@@ -8085,24 +8068,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif query.data == 'my_comments':
             await show_my_comments(update, context, 1)
-
-        # NEW: Handle My Content Menu
-        elif query.data == 'my_content_menu':
-            await show_my_content_menu(update, context)
         
-        # NEW: Handle My Comments pagination
-        elif query.data.startswith('my_comments_'):
-            try:
-                page = int(query.data.split('_')[2])
-                await show_my_comments(update, context, page)
-            except (IndexError, ValueError):
-                await show_my_comments(update, context, 1)
-        
-        # NEW: Handle My Comments button
-        elif query.data == 'my_comments':
-            await show_my_comments(update, context, 1)
-        
-        # NEW: Handle view comment details
         elif query.data.startswith('view_comment_'):
             try:
                 comment_id = int(query.data.split('_')[2])
@@ -8140,7 +8106,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error viewing comment: {e}")
                 await query.answer("Error viewing comment", show_alert=True)
 
-        # UPDATED: Handle continue post (threading) - renamed from elaborate
+        # Handle continue post (threading) - renamed from elaborate
         elif query.data.startswith("continue_post_"):
             post_id = int(query.data.split('_')[2])
             post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
@@ -8747,13 +8713,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error parsing delete_sent_msg: {e}")
                 await query.answer("Error", show_alert=True)
 
-        # Add this in the button_handler function where you handle other callbacks
         elif query.data == 'refresh_mini_app':
             await query.answer("Refreshing...")
             await mini_app_command(update, context)
-        elif query.data.startswith("viewpost_"):
-            post_id = int(query.data.split('_')[1])
-            await view_post(update, context, post_id)    
         elif query.data == 'select_avatar':
             await show_avatar_selection(update, context, page=0)
 
@@ -9271,7 +9233,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # For other main menu buttons (e.g. "Share"), we fall through 
         # so the handlers below can process the command with a clean state.
 
-    # NEW: Handle rejection reason capture from admin
+    # Handle rejection reason capture from admin
     if context.user_data.get('awaiting_rejection_reason'):
         if text in main_menu_buttons: return
         post_id = context.user_data.get('rejecting_post')
@@ -9280,7 +9242,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await finalize_rejection(update, context, post_id, reason=text)
             return
 
-    # NEW: Handle report reason capture from user
+    # Handle report reason capture from user
     # IMPORTANT: comment flow always wins. If the user is mid-comment
     # (state is STATE_AWAITING_COMMENT) a lingering 'reporting' state
     # must NOT hijack their message — fall through and let the
@@ -9348,7 +9310,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Rest of your handle_message code...
 
-    # NEW: Handle comment editing
+    # Handle comment editing
 
     if 'editing_comment' in context.user_data:
         if text in main_menu_buttons: return
@@ -9404,7 +9366,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-    # FIX: Handle pending post editing (NEW CODE STARTS HERE)
     if 'editing_post' in context.user_data and context.user_data['editing_post']:
         if text in main_menu_buttons: return
         pending_post = context.user_data.get('pending_post')
@@ -9446,9 +9407,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
             return
-    # FIX: Handle pending post editing (NEW CODE ENDS HERE)
 
-    # NEW: Handle editing of an already-published (approved) post's content
+    # Handle editing of an already-published (approved) post's content
     # (see the edit_published_<post_id> callback in button_handler)
     if get_state(context) == STATE_AWAITING_EDIT_CONTENT and context.user_data.get('editing_published_post'):
         if text in main_menu_buttons: return
@@ -9559,7 +9519,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # If user doesn't exist, create them
-    # FIX: only create user if not exists
+    # only create user if not exists
     if not user:
         anon = create_anonymous_name(user_id)
         is_admin = str(user_id) == str(ADMIN_ID)
@@ -9569,7 +9529,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         user = await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,))
 
-    # NEW: Check if we have a thread_from_post_id for continuation
+    # Check if we have a thread_from_post_id for continuation
     thread_from_post_id = context.user_data.get('thread_from_post_id')
 
     state = get_state(context)
@@ -10179,7 +10139,7 @@ def main():
 
 @flask_app.route('/mini_app')
 def mini_app_page():
-    """Complete Mini App - returns the premium UI."""
+    """Complete Mini App - returns the mini app UI."""
     _bot = BOT_USERNAME
     _primary = PRIMARY_COLOR
     _secondary = SECONDARY_COLOR
@@ -10237,7 +10197,8 @@ body{
   font-family:'Inter',sans-serif;
   background:var(--bg);
   color:var(--text);
-  font-size:15px;
+  font-size:16px;
+  line-height:1.5;
   -webkit-font-smoothing:antialiased;
   overscroll-behavior:none;
   transition:background 0.2s, color 0.2s;
@@ -10271,13 +10232,13 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .nav-item{
   flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:4px;background:none;border:none;cursor:pointer;
-  color:var(--text3);font-size:10px;font-weight:500;letter-spacing:0.3px;
+  color:var(--text3);font-size:11px;font-weight:600;letter-spacing:0.3px;
   font-family:'Inter',sans-serif;
   transition:color 0.2s;padding:8px 4px;
   -webkit-tap-highlight-color:transparent;
   text-transform:uppercase;
 }
-.nav-item svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;transition:transform 0.2s}
+.nav-item svg{width:23px;height:23px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:transform 0.2s}
 .icon{width:16px;height:16px;flex-shrink:0;vertical-align:-3px}
 .cat-chip .icon{width:15px;height:15px;color:var(--text3)}
 .cat-chip.on .icon{color:var(--gold2)}
@@ -10302,7 +10263,7 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   display:flex;align-items:center;justify-content:space-between;
 }
 .page-head h1{font-size:26px;font-weight:700;letter-spacing:-0.5px;color:var(--text)}
-.page-head-sub{font-size:13px;color:var(--text3);margin-top:2px}
+.page-head-sub{font-size:14px;color:var(--text3);margin-top:2px}
 .logo-img{width:48px;height:48px;border-radius:12px;object-fit:cover;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
 .card{
   background:var(--glass);
@@ -10317,11 +10278,11 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 }
 .pill{
   display:inline-flex;align-items:center;gap:5px;
-  padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;
+  padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;
   background:rgba(201,168,76,0.1);border:0.5px solid rgba(201,168,76,0.25);
   color:var(--gold2);
 }
-.pill-sm{padding:2px 8px;font-size:10px}
+.pill-sm{padding:2px 8px;font-size:11px}
 .pill-aura{
   display:inline-flex;align-items:center;gap:7px;
   padding:6px 14px;border-radius:24px;
@@ -10344,39 +10305,40 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .input-area{
   width:100%;background:var(--bg2);border:0.5px solid var(--border);
   border-radius:var(--radius-sm);padding:14px 16px;
-  color:var(--text);font-family:'Inter',sans-serif;font-size:15px;
+  color:var(--text);font-family:'Inter',sans-serif;font-size:16px;
   outline:none;resize:none;
   transition:border-color 0.2s;
 }
 .input-area:focus{border-color:rgba(201,168,76,0.4)}
 .input-area::placeholder{color:var(--text3)}
 .btn-gold{
-  width:100%;padding:15px;border-radius:var(--radius-sm);border:none;
+  width:100%;padding:16px;border-radius:var(--radius-sm);border:none;
   background:var(--gold);color:#0c0b09;
-  font-family:'Inter',sans-serif;font-size:15px;font-weight:700;
+  font-family:'Inter',sans-serif;font-size:16px;font-weight:700;
   cursor:pointer;letter-spacing:0.2px;
+  box-shadow:0 4px 14px rgba(201,168,76,0.3);
   transition:opacity 0.2s,transform 0.15s;
   -webkit-tap-highlight-color:transparent;
 }
 .btn-gold:active{transform:scale(0.98);opacity:0.9}
-.btn-gold:disabled{opacity:0.4;cursor:not-allowed}
+.btn-gold:disabled{opacity:0.4;cursor:not-allowed;box-shadow:none}
 .btn-ghost{
-  background:none;border:0.5px solid var(--border2);border-radius:var(--radius-xs);
-  color:var(--gold);padding:8px 14px;font-size:13px;font-weight:600;
+  background:none;border:1.5px solid var(--border2);border-radius:var(--radius-xs);
+  color:var(--gold);padding:10px 16px;font-size:14px;font-weight:700;
   font-family:'Inter',sans-serif;cursor:pointer;
   -webkit-tap-highlight-color:transparent;
 }
 .cat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:12px 0}
 .cat-chip{
-  padding:10px 12px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;
-  background:var(--bg2);border:0.5px solid var(--border);color:var(--text2);
+  padding:12px 14px;border-radius:var(--radius-sm);font-size:13.5px;font-weight:600;
+  background:var(--bg2);border:1px solid var(--border);color:var(--text2);
   cursor:pointer;display:flex;align-items:center;gap:8px;
   transition:all 0.15s;-webkit-tap-highlight-color:transparent;
 }
 .cat-chip:active{transform:scale(0.97)}
-.cat-chip.on{background:rgba(201,168,76,0.1);border-color:rgba(201,168,76,0.35);color:var(--gold2)}
+.cat-chip.on{background:rgba(201,168,76,0.12);border-color:var(--gold);color:var(--gold2)}
 .cat-check{width:16px;height:16px;
-  display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;
   color:transparent;transition:color 0.15s}
 .cat-chip.on .cat-check{color:var(--gold2)}
 .cat-chip.on .cat-check::after{content:'✓';font-weight:700}
@@ -10389,19 +10351,19 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 }
 .post-card:active{background:var(--glass2)}
 .post-meta{display:flex;align-items:center;gap:10px;margin-bottom:12px}
-.post-name{font-size:13px;font-weight:600;color:var(--text);cursor:pointer}
+.post-name{font-size:14px;font-weight:600;color:var(--text);cursor:pointer}
 .post-name:hover{color:var(--gold)}
-.post-time{font-size:11px;color:var(--text3);margin-left:auto}
-.post-body{font-size:14px;line-height:1.6;color:var(--text2);
+.post-time{font-size:12px;color:var(--text3);margin-left:auto}
+.post-body{font-size:16px;line-height:1.6;color:var(--text2);
   display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:12px}
 .post-footer{display:flex;align-items:center;justify-content:space-between;
   padding-top:12px;border-top:0.5px solid var(--border)}
 .post-footer-left{display:flex;align-items:center;gap:12px}
-.stat-btn{display:flex;align-items:center;gap:5px;color:var(--text3);font-size:12px;
-  font-weight:500;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;
+.stat-btn{display:flex;align-items:center;gap:5px;color:var(--text3);font-size:13px;
+  font-weight:600;background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;
   -webkit-tap-highlight-color:transparent;padding:0}
-.stat-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8}
-.read-more{font-size:12px;font-weight:600;color:var(--gold);display:flex;align-items:center;gap:3px}
+.stat-btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
+.read-more{font-size:13px;font-weight:700;color:var(--gold);display:flex;align-items:center;gap:3px}
 .lb-hero{
   margin:20px 16px 0;
   background:linear-gradient(135deg,rgba(201,168,76,0.1),rgba(201,168,76,0.04));
@@ -10414,29 +10376,29 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 }
 .lb-crown{font-size:36px;margin-bottom:6px;display:block}
 .lb-top-name{font-size:20px;font-weight:700;letter-spacing:-0.3px}
-.lb-top-pts{font-size:13px;color:var(--text3);margin-top:4px}
+.lb-top-pts{font-size:14px;color:var(--text3);margin-top:4px}
 .lb-medals{display:flex;gap:8px;margin-top:20px;justify-content:center}
 .lb-medal-card{
   flex:1;background:var(--bg2);border-radius:var(--radius-sm);
   border:0.5px solid var(--border);padding:14px 10px;text-align:center;
 }
 .lb-medal-rank{font-size:20px;margin-bottom:4px}
-.lb-medal-name{font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px;
+.lb-medal-name{font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lb-medal-pts{font-size:11px;color:var(--text3)}
+.lb-medal-pts{font-size:12px;color:var(--text3)}
 .lb-list{margin:0 16px}
 .lb-row{
   display:flex;align-items:center;gap:12px;padding:14px 0;
   border-bottom:0.5px solid var(--border);
 }
 .lb-row:last-child{border-bottom:none}
-.lb-rank{width:24px;text-align:center;font-size:13px;font-weight:700;color:var(--text3)}
+.lb-rank{width:24px;text-align:center;font-size:14px;font-weight:700;color:var(--text3)}
 .lb-info{flex:1;min-width:0}
-.lb-info-name{font-size:14px;font-weight:600;color:var(--text);
+.lb-info-name{font-size:15px;font-weight:600;color:var(--text);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
 .lb-info-name:hover{color:var(--gold)}
-.lb-info-aura{font-size:11px;color:var(--text3);margin-top:1px}
-.lb-pts{font-size:14px;font-weight:700;color:var(--gold)}
+.lb-info-aura{font-size:12px;color:var(--text3);margin-top:1px}
+.lb-pts{font-size:15px;font-weight:700;color:var(--gold)}
 .profile-hero{
   margin:20px 16px 0;
   background:linear-gradient(160deg,var(--bg3),var(--bg2));
@@ -10450,27 +10412,27 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   display:flex;align-items:center;justify-content:center;font-size:32px;
 }
 .profile-name{font-size:22px;font-weight:700;letter-spacing:-0.3px}
-.profile-pts{font-size:13px;color:var(--text3);margin-top:4px}
+.profile-pts{font-size:14px;color:var(--text3);margin-top:4px}
 .profile-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;
   margin-top:20px;border-top:0.5px solid var(--border);padding-top:16px}
 .profile-stat{text-align:center}
-.profile-stat-num{font-size:20px;font-weight:700;color:var(--gold)}
-.profile-stat-lbl{font-size:11px;color:var(--text3);margin-top:2px}
+.profile-stat-num{font-size:21px;font-weight:700;color:var(--gold)}
+.profile-stat-lbl{font-size:12px;color:var(--text3);margin-top:2px}
 .setting-row{
   display:flex;align-items:center;padding:16px 0;
   border-bottom:0.5px solid var(--border);gap:14px;
 }
 .setting-row:last-child{border-bottom:none}
 .setting-icon{
-  width:38px;height:38px;border-radius:10px;
-  background:rgba(201,168,76,0.1);border:0.5px solid var(--border2);
+  width:40px;height:40px;border-radius:10px;
+  background:rgba(201,168,76,0.12);border:1px solid var(--border2);
   display:flex;align-items:center;justify-content:center;flex-shrink:0;
 }
-.setting-icon svg{width:18px;height:18px;stroke:var(--gold);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.setting-icon svg{width:19px;height:19px;stroke:var(--gold);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .setting-label{flex:1}
-.setting-label-title{font-size:14px;font-weight:600;color:var(--text)}
-.setting-label-sub{font-size:12px;color:var(--text3);margin-top:2px}
-.toggle{position:relative;width:44px;height:25px;cursor:pointer;flex-shrink:0}
+.setting-label-title{font-size:15px;font-weight:600;color:var(--text)}
+.setting-label-sub{font-size:13px;color:var(--text3);margin-top:2px}
+.toggle{position:relative;width:46px;height:26px;cursor:pointer;flex-shrink:0}
 .toggle input{opacity:0;width:0;height:0;position:absolute}
 .toggle-track{
   position:absolute;inset:0;border-radius:25px;
@@ -10479,22 +10441,22 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 }
 .toggle input:checked + .toggle-track{background:rgba(201,168,76,0.3);border-color:var(--gold)}
 .toggle-thumb{
-  position:absolute;width:19px;height:19px;border-radius:50%;
+  position:absolute;width:20px;height:20px;border-radius:50%;
   top:3px;left:3px;
   background:var(--text3);transition:all 0.25s cubic-bezier(.4,0,.2,1);
 }
-.toggle input:checked ~ .toggle-thumb{left:22px;background:var(--gold)}
+.toggle input:checked ~ .toggle-thumb{left:23px;background:var(--gold)}
 .search-wrap{
   display:flex;align-items:center;gap:10px;
-  padding:12px 16px;background:var(--glass);
+  padding:13px 16px;background:var(--glass);
   border:0.5px solid var(--border);border-radius:var(--radius-sm);
   margin:14px 16px 0;
 }
-.search-wrap svg{width:17px;height:17px;stroke:var(--text3);fill:none;stroke-width:1.8;flex-shrink:0}
+.search-wrap svg{width:18px;height:18px;stroke:var(--text3);fill:none;stroke-width:1.8;flex-shrink:0}
 .search-wrap input{flex:1;background:none;border:none;outline:none;color:var(--text);
-  font-family:'Inter',sans-serif;font-size:14px}
+  font-family:'Inter',sans-serif;font-size:16px}
 .search-wrap input::placeholder{color:var(--text3)}
-.char-count{font-size:11px;color:var(--text3);text-align:right;margin:6px 0 12px}
+.char-count{font-size:12px;color:var(--text3);text-align:right;margin:6px 0 12px}
 .skel{
   background:linear-gradient(90deg,var(--bg2) 25%,var(--bg3) 50%,var(--bg2) 75%);
   background-size:200% 100%;animation:shimmer 1.4s infinite;
@@ -10503,8 +10465,8 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 #toast{
   position:fixed;bottom:calc(var(--nav-h) + 80px);left:50%;transform:translateX(-50%) translateY(10px);
-  background:var(--gold);color:#0c0b09;padding:10px 20px;border-radius:20px;
-  font-size:13px;font-weight:700;opacity:0;pointer-events:none;
+  background:var(--gold);color:#0c0b09;padding:11px 22px;border-radius:20px;
+  font-size:14px;font-weight:700;opacity:0;pointer-events:none;
   transition:all 0.25s;z-index:999;white-space:nowrap;
 }
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
@@ -10512,11 +10474,11 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .back-btn{
   display:flex;align-items:center;gap:6px;
   padding:20px 16px 10px;
-  color:var(--gold);font-size:14px;font-weight:600;
+  color:var(--gold);font-size:15px;font-weight:700;
   background:none;border:none;cursor:pointer;font-family:'Inter',sans-serif;
   -webkit-tap-highlight-color:transparent;
 }
-.back-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2}
+.back-btn svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:2.2}
 /* In light mode the gold-on-cream contrast is too weak for the icon stroke;
    darken it slightly and give the chat room its own explicit override so it
    isn't relying on the ambient --gold var alone. */
@@ -10526,12 +10488,12 @@ body.light .back-btn svg{stroke:#8a6d1f}
 .comment-item.reply{margin-left:32px}
 .comment-body{flex:1;background:var(--bg2);border:0.5px solid var(--border);
   border-radius:var(--radius-sm);padding:12px}
-.comment-name{font-size:12px;font-weight:600;color:var(--gold);margin-bottom:4px;cursor:pointer}
+.comment-name{font-size:13px;font-weight:600;color:var(--gold);margin-bottom:4px;cursor:pointer}
 .comment-name:hover{text-decoration:underline}
-.comment-text{font-size:13px;line-height:1.55;color:var(--text2)}
-.comment-actions{display:flex;gap:12px;margin-top:8px}
+.comment-text{font-size:15px;line-height:1.55;color:var(--text2)}
+.comment-actions{display:flex;gap:14px;margin-top:8px}
 .ca-btn{background:none;border:none;cursor:pointer;
-  font-size:12px;font-weight:500;color:var(--text3);font-family:'Inter',sans-serif;
+  font-size:13px;font-weight:600;color:var(--text3);font-family:'Inter',sans-serif;
   -webkit-tap-highlight-color:transparent;padding:0}
 .ca-btn:hover{color:var(--gold)}
 /* Fixed comment input bar above nav */
@@ -10547,35 +10509,36 @@ body.light .back-btn svg{stroke:#8a6d1f}
 body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .comment-input-bar textarea{
   flex:1;background:var(--bg2);border:0.5px solid var(--border);
-  border-radius:var(--radius-xs);padding:10px 12px;
-  color:var(--text);font-family:'Inter',sans-serif;font-size:13px;
-  outline:none;resize:none;max-height:100px;min-height:38px;
+  border-radius:var(--radius-xs);padding:11px 12px;
+  color:var(--text);font-family:'Inter',sans-serif;font-size:16px;
+  outline:none;resize:none;max-height:100px;min-height:42px;
 }
 .comment-input-bar textarea:focus{border-color:rgba(201,168,76,0.4)}
 .comment-input-bar button{
-  width:36px;height:36px;border-radius:50%;
+  width:40px;height:40px;border-radius:50%;
   background:var(--gold);border:none;cursor:pointer;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 8px rgba(201,168,76,0.35);
 }
-.comment-input-bar button svg{width:16px;height:16px;stroke:#0c0b09;fill:none;stroke-width:2.2}
+.comment-input-bar button svg{width:17px;height:17px;stroke:#0c0b09;fill:none;stroke-width:2.2}
 .media-attach-btn{
-  width:36px;height:36px;border-radius:50%;flex-shrink:0;
-  background:var(--bg2);border:0.5px solid var(--border);cursor:pointer;
+  width:40px;height:40px;border-radius:50%;flex-shrink:0;
+  background:var(--bg2);border:1px solid var(--border);cursor:pointer;
   display:flex;align-items:center;justify-content:center;position:relative;
   -webkit-tap-highlight-color:transparent;
 }
 .media-attach-btn:active{transform:scale(0.92)}
-.media-attach-btn svg{width:16px;height:16px;stroke:var(--text2);fill:none;stroke-width:2}
+.media-attach-btn svg{width:17px;height:17px;stroke:var(--text2);fill:none;stroke-width:2}
 .media-attach-btn.has-media{border-color:var(--gold)}
 .media-attach-btn.has-media svg{stroke:var(--gold)}
 .media-preview{
   display:flex;align-items:center;gap:8px;
   background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-xs);
-  padding:8px 10px;margin:8px 16px 0;font-size:12px;color:var(--text2);
+  padding:8px 10px;margin:8px 16px 0;font-size:13px;color:var(--text2);
 }
 .media-preview img{width:36px;height:36px;border-radius:8px;object-fit:cover;flex-shrink:0}
 .media-preview .mp-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.media-preview .mp-remove{background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0 4px}
+.media-preview .mp-remove{background:none;border:none;color:var(--text3);cursor:pointer;font-size:17px;padding:0 4px}
 .media-preview .mp-remove:hover{color:var(--gold)}
 #comment-media-preview.media-preview{margin:0 0 8px}
 .post-media, .comment-media{margin:10px 0;border-radius:var(--radius-sm);overflow:hidden}
@@ -10584,14 +10547,14 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .post-media audio, .comment-media audio{width:100%;display:block}
 .post-media .doc-link, .comment-media .doc-link{
   display:flex;align-items:center;gap:10px;background:var(--bg2);border:0.5px solid var(--border);
-  border-radius:var(--radius-sm);padding:12px;color:var(--text);text-decoration:none;font-size:13px;
+  border-radius:var(--radius-sm);padding:12px;color:var(--text);text-decoration:none;font-size:14px;
 }
 .post-media .doc-link svg{width:20px;height:20px;stroke:var(--gold);fill:none;stroke-width:2;flex-shrink:0}
 .post-media img.sticker-media, .comment-media img.sticker-media{width:100px;border-radius:0}
 /* ----- Compact voice player ----- */
 .voice-player{display:flex;align-items:center;gap:9px;background:var(--bg2);border:0.5px solid var(--border);border-radius:22px;padding:7px 12px;max-width:230px;margin:8px 0}
-.voice-player-btn{width:32px;height:32px;border-radius:50%;background:var(--gold);border:none;flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.voice-player-btn svg{width:14px;height:14px;fill:#0c0b09;stroke:#0c0b09}
+.voice-player-btn{width:34px;height:34px;border-radius:50%;background:var(--gold);border:none;flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.voice-player-btn svg{width:15px;height:15px;fill:#0c0b09;stroke:#0c0b09}
 .voice-player-btn svg.icon-spinner{fill:none;stroke-width:2.5;stroke-linecap:round;animation:voice-spin 0.8s linear infinite}
 @keyframes voice-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .voice-player-track{flex:1;height:4px;background:var(--border);border-radius:2px;position:relative;cursor:pointer}
@@ -10621,13 +10584,13 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 }
 /* ----- Voice recording button & UI ----- */
 .voice-record-btn{
-  width:36px;height:36px;border-radius:50%;flex-shrink:0;
-  background:var(--bg2);border:0.5px solid var(--border);cursor:pointer;
+  width:40px;height:40px;border-radius:50%;flex-shrink:0;
+  background:var(--bg2);border:1px solid var(--border);cursor:pointer;
   display:flex;align-items:center;justify-content:center;
   transition:background 0.15s, transform 0.15s, border-color 0.15s;
   -webkit-tap-highlight-color:transparent;
 }
-.voice-record-btn svg{width:16px;height:16px;fill:none;stroke:var(--gold);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.voice-record-btn svg{width:17px;height:17px;fill:none;stroke:var(--gold);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .voice-record-btn:active{transform:scale(0.92)}
 .voice-record-btn.recording{background:#e74c3c;border-color:#e74c3c;transform:scale(1.1)}
 .voice-record-btn.recording svg{stroke:#fff}
@@ -10638,7 +10601,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   display:none;z-index:999;backdrop-filter:blur(8px);
 }
 .voice-record-timer .cancel-hint{
-  font-size:11px;font-weight:400;opacity:0.7;margin-left:12px;
+  font-size:12px;font-weight:400;opacity:0.7;margin-left:12px;
 }
 .voice-record-timer.active{display:flex;align-items:center;gap:12px}
 
@@ -10647,12 +10610,12 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;
 }
 .reaction-btn{
-  display:flex;align-items:center;gap:4px;
-  padding:4px 10px;border-radius:20px;background:var(--bg2);
-  border:0.5px solid var(--border);cursor:pointer;font-size:13px;
+  display:flex;align-items:center;gap:5px;
+  padding:6px 12px;border-radius:20px;background:var(--bg2);
+  border:1px solid var(--border);cursor:pointer;font-size:14px;font-weight:600;
   transition:all 0.15s;font-family:'Inter',sans-serif;color:var(--text2);
 }
-.reaction-btn.on{background:rgba(201,168,76,0.12);border-color:var(--gold);color:var(--gold)}
+.reaction-btn.on{background:rgba(201,168,76,0.14);border-color:var(--gold);color:var(--gold)}
 .reaction-btn:active{transform:scale(0.92)}
 .chat-item{
   display:flex;align-items:center;gap:12px;
@@ -10663,13 +10626,13 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .chat-item:active{background:var(--glass)}
 .chat-item-right{flex:1;min-width:0}
 .chat-item-top{display:flex;justify-content:space-between;align-items:center}
-.chat-item-name{font-size:14px;font-weight:600;color:var(--text)}
-.chat-item-time{font-size:11px;color:var(--text3)}
-.chat-item-preview{font-size:12px;color:var(--text3);margin-top:2px;
+.chat-item-name{font-size:15px;font-weight:600;color:var(--text)}
+.chat-item-time{font-size:12px;color:var(--text3)}
+.chat-item-preview{font-size:13px;color:var(--text3);margin-top:2px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .unread-badge{
-  background:var(--gold);color:#0c0b09;font-size:10px;font-weight:800;
-  min-width:18px;height:18px;border-radius:9px;
+  background:var(--gold);color:#0c0b09;font-size:11px;font-weight:800;
+  min-width:19px;height:19px;border-radius:10px;
   display:flex;align-items:center;justify-content:center;padding:0 4px;
   flex-shrink:0;
 }
@@ -10689,18 +10652,18 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   display:flex;align-items:center;justify-content:center;
   -webkit-tap-highlight-color:transparent;
 }
-.cr-head button svg{width:22px;height:22px;stroke:var(--text);fill:none;stroke-width:2}
+.cr-head button svg{width:23px;height:23px;stroke:var(--text);fill:none;stroke-width:2}
 body.light .cr-head{background:rgba(245,243,240,0.97)}
 body.light .cr-head button svg{stroke:#1a1a1a}
-.cr-name{font-size:16px;font-weight:700}
+.cr-name{font-size:17px;font-weight:700}
 .cr-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
 .cr-msgs::-webkit-scrollbar{display:none}
 .msg-row{display:flex;flex-direction:column;max-width:75%}
 .msg-row.me{align-self:flex-end;align-items:flex-end}
 .msg-row.them{align-self:flex-start}
 .msg-bubble{
-  padding:10px 14px;border-radius:18px;font-size:13.5px;line-height:1.45;
-  word-break:break-word;
+  padding:11px 15px;border-radius:18px;font-size:15px;line-height:1.45;
+  word-break:break-word;position:relative;
 }
 .msg-row.me .msg-bubble{
   background:var(--gold);color:#0c0b09;font-weight:500;
@@ -10710,8 +10673,7 @@ body.light .cr-head button svg{stroke:#1a1a1a}
   background:var(--bg3);border:0.5px solid var(--border);color:var(--text);
   border-bottom-left-radius:4px;
 }
-.msg-time{font-size:10px;color:var(--text3);margin-top:4px;padding:0 4px}
-.msg-bubble{position:relative}
+.msg-time{font-size:11px;color:var(--text3);margin-top:4px;padding:0 4px}
 .msg-deleted{font-style:italic;opacity:0.6;background:var(--bg3)!important;color:var(--text3)!important;border:0.5px solid var(--border)!important;font-weight:400!important}
 .msg-menu-btn{margin-left:8px;cursor:pointer;opacity:0.6;font-weight:700;padding:0 2px}
 .msg-menu-btn:hover{opacity:1}
@@ -10727,18 +10689,19 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 }
 .cr-input textarea{
   flex:1;background:var(--bg2);border:0.5px solid var(--border);
-  border-radius:20px;padding:10px 16px;color:var(--text);
-  font-family:'Inter',sans-serif;font-size:14px;outline:none;
-  resize:none;min-height:40px;max-height:100px;
+  border-radius:20px;padding:11px 16px;color:var(--text);
+  font-family:'Inter',sans-serif;font-size:16px;outline:none;
+  resize:none;min-height:42px;max-height:100px;
 }
 .cr-input textarea:focus{border-color:rgba(201,168,76,0.4)}
 .cr-send{
-  width:40px;height:40px;border-radius:50%;
+  width:42px;height:42px;border-radius:50%;
   background:var(--gold);border:none;cursor:pointer;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 8px rgba(201,168,76,0.35);
   -webkit-tap-highlight-color:transparent;
 }
-.cr-send svg{width:17px;height:17px;stroke:#0c0b09;fill:none;stroke-width:2.2}
+.cr-send svg{width:18px;height:18px;stroke:#0c0b09;fill:none;stroke-width:2.2}
 #auth{
   position:fixed;inset:0;background:var(--bg);
   display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -10750,14 +10713,14 @@ body.light .cr-head button svg{stroke:#1a1a1a}
   animation:spin 1s linear infinite;
 }
 @keyframes spin{to{transform:rotate(360deg)}}
-.auth-label{font-size:15px;font-weight:600;color:var(--gold)}
+.auth-label{font-size:16px;font-weight:600;color:var(--gold)}
 .section-label{
-  font-size:11px;font-weight:700;letter-spacing:1.2px;
+  font-size:12px;font-weight:700;letter-spacing:1.2px;
   text-transform:uppercase;color:var(--text3);
   padding:18px 16px 8px;
 }
 .divider{height:0.5px;background:var(--border);margin:0}
-.input-label{font-size:12px;font-weight:600;color:var(--text3);margin-bottom:6px;display:block;letter-spacing:0.3px;text-transform:uppercase}
+.input-label{font-size:13px;font-weight:600;color:var(--text3);margin-bottom:6px;display:block;letter-spacing:0.3px;text-transform:uppercase}
 .emoji-picker{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:8px 0 0}
 .emoji-opt{
   aspect-ratio:1;background:var(--bg2);border:1.5px solid transparent;
@@ -10779,14 +10742,14 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 .rx-emoji:hover{transform:scale(1.3) translateY(-4px)}
 .rx-pill{
   display:inline-flex;align-items:center;gap:4px;
-  padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;
+  padding:5px 11px;border-radius:20px;font-size:13px;font-weight:600;
   background:var(--bg2);border:0.5px solid var(--border);color:var(--text2);
   cursor:pointer;transition:all 0.15s;
 }
 .rx-pill.on{background:rgba(201,168,76,0.12);border-color:var(--border2);color:var(--gold)}
 .reaction-trigger{
   background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;
-  padding:4px 12px;font-size:12px;color:var(--text3);cursor:pointer;
+  padding:5px 13px;font-size:13px;color:var(--text3);cursor:pointer;
 }
 .reaction-trigger:hover{color:var(--gold);border-color:var(--gold);}
 .page-head-wrap{
@@ -10806,19 +10769,19 @@ body.light .cr-head button svg{stroke:#1a1a1a}
   position:relative;box-shadow:0 20px 40px rgba(0,0,0,0.4);
 }
 .modal-close{
-  position:absolute;top:12px;right:16px;font-size:22px;cursor:pointer;color:var(--text3);
+  position:absolute;top:12px;right:16px;font-size:24px;cursor:pointer;color:var(--text3);
 }
 .modal-close:hover{color:var(--gold);}
 .modal-avatar{width:80px;height:80px;border-radius:50%;margin:0 auto 12px;background:var(--bg2);display:flex;align-items:center;justify-content:center;font-size:32px;border:2px solid var(--gold);}
 .modal-name{font-size:20px;font-weight:700;color:var(--gold);}
 .modal-stats{display:flex;justify-content:space-around;margin:16px 0;}
 .modal-stat{text-align:center;}
-.modal-stat-num{font-size:18px;font-weight:700;color:var(--text);}
-.modal-stat-lbl{font-size:11px;color:var(--text3);}
-.modal-btn{width:100%;padding:12px;margin-top:8px;border:none;border-radius:40px;font-weight:600;cursor:pointer;}
-.modal-btn-primary{background:var(--gold);color:#0c0b09;}
+.modal-stat-num{font-size:19px;font-weight:700;color:var(--text);}
+.modal-stat-lbl{font-size:12px;color:var(--text3);}
+.modal-btn{width:100%;padding:14px;margin-top:10px;border:none;border-radius:40px;font-size:15px;font-weight:700;cursor:pointer;}
+.modal-btn-primary{background:var(--gold);color:#0c0b09;box-shadow:0 4px 14px rgba(201,168,76,0.3);}
 .modal-btn-primary:active{transform:scale(0.97);}
-.modal-btn-secondary{background:var(--bg2);border:1px solid var(--border);color:var(--text);}
+.modal-btn-secondary{background:var(--bg2);border:1.5px solid var(--border);color:var(--text);}
 .modal-btn-secondary:active{background:var(--glass);}
 </style>
 </head>
@@ -10904,7 +10867,7 @@ body.light .cr-head button svg{stroke:#1a1a1a}
     <div style="display:flex;align-items:center;gap:8px">
       <button type="button" class="media-attach-btn" id="chat-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
       <input type="file" id="chat-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
-      <textarea id="cr-txt" placeholder="Message…" rows="1" style="flex:1;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:10px 16px;color:var(--text);font-family:'Inter',sans-serif;font-size:14px;outline:none;resize:none;min-height:40px;max-height:100px;"></textarea>
+      <textarea id="cr-txt" placeholder="Message…" rows="1" style="flex:1;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:11px 16px;color:var(--text);font-family:'Inter',sans-serif;font-size:16px;outline:none;resize:none;min-height:42px;max-height:100px;"></textarea>
       <button type="button" class="voice-record-btn" id="chat-voice-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
       <button class="cr-send" onclick="crSend()"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
     </div>
@@ -11577,7 +11540,7 @@ function renderPost(p){
     }
   }
   return `<div class="post-card">
-    <div class="post-meta"><div class="ava" style="width:34px;height:34px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name"${p.author?.is_admin ? '' : ` onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:12px">${esc(p.author?.aura||'')}</span></div></div><div class="post-time">${esc(p.time_ago||'')}</div></div>
+    <div class="post-meta"><div class="ava" style="width:34px;height:34px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name"${p.author?.is_admin ? '' : ` onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:13px">${esc(p.author?.aura||'')}</span></div></div><div class="post-time">${esc(p.time_ago||'')}</div></div>
     ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${cats}</div>`:''}
     <div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
     ${p.media_id?`<div onclick="openPost(${p.id})">${renderMedia(p.media_type,p.media_id)}</div>`:''}
@@ -11600,7 +11563,7 @@ async function openPost(id, reveal){
       currentPostAuthorId = null;
       document.getElementById('detail-post').innerHTML=`
         <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
-          <div style="font-size:15px;line-height:1.65;color:var(--text3);font-style:italic;padding:16px;display:flex;align-items:center;gap:8px;"><span style="width:18px;height:18px;flex-shrink:0;display:inline-flex">${ICONS.alert}</span> This post has been deleted by the author.</div>
+          <div style="font-size:16px;line-height:1.65;color:var(--text3);font-style:italic;padding:16px;display:flex;align-items:center;gap:8px;"><span style="width:18px;height:18px;flex-shrink:0;display:inline-flex">${ICONS.alert}</span> This post has been deleted by the author.</div>
         </div>`;
       const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}${revealParam}`);
       renderComments(cd.data||[],null);
@@ -11612,12 +11575,12 @@ async function openPost(id, reveal){
         <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
           <div style="padding:20px;text-align:center">
             <div style="width:32px;height:32px;margin:0 auto 8px;color:var(--gold)">${ICONS.alert}</div>
-            <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px">Explicit Content Warning</div>
-            <div style="font-size:13px;color:var(--text3);margin-bottom:14px">${esc(p.content)}</div>
+            <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">Explicit Content Warning</div>
+            <div style="font-size:14px;color:var(--text3);margin-bottom:14px">${esc(p.content)}</div>
             <button class="btn-gold" onclick="openPost(${id},true)">View Content</button>
           </div>
         </div>`;
-      document.getElementById('detail-comments').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px">Comments are hidden until you view the post.</div>';
+      document.getElementById('detail-comments').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3);font-size:14px">Comments are hidden until you view the post.</div>';
       return;
     }
     currentPostAuthorId = p.author_id;
@@ -11631,13 +11594,13 @@ async function openPost(id, reveal){
         }
       }
     }
-    const explicitTag=p.explicit?`<div style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--gold);border:1px solid var(--gold);border-radius:10px;padding:2px 8px;margin-bottom:8px">${ICONS.alert.replace('class="icon"','class="icon badge-icon"')} Explicit</div>`:'';
+    const explicitTag=p.explicit?`<div style="display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;color:var(--gold);border:1px solid var(--gold);border-radius:10px;padding:3px 9px;margin-bottom:8px">${ICONS.alert.replace('class="icon"','class="icon badge-icon"')} Explicit</div>`:'';
     document.getElementById('detail-post').innerHTML=`
       <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
-        <div class="post-meta"><div class="ava" style="width:38px;height:38px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name" style="font-size:14px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}')"`}>${ICONS.shield.replace('class="icon"','class="icon badge-icon"')} Vent author</div><div style="font-size:11px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
+        <div class="post-meta"><div class="ava" style="width:38px;height:38px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name" style="font-size:15px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}')"`}>${ICONS.shield.replace('class="icon"','class="icon badge-icon"')} Vent author</div><div style="font-size:12px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
         ${explicitTag}
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
-        <div style="font-size:15px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
+        <div style="font-size:17px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
         ${p.media_id?renderMedia(p.media_type,p.media_id):''}
         <div>
           ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
@@ -11668,7 +11631,7 @@ function renderComments(comments,postAuthorId){
         }
       }
     }
-    return `<div class="comment-item${dep>0?' reply':''}"><div class="ava" style="width:28px;height:28px;font-size:13px">${avaHtml(c.author?.sex)}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${nameBadge}${esc(name)} <span style="font-size:10px;color:var(--text3)">${esc(c.time_ago||'')}</span></div><div class="comment-text">${esc(c.content)}</div>${c.media_id?renderMedia(c.media_type,c.media_id):''}
+    return `<div class="comment-item${dep>0?' reply':''}"><div class="ava" style="width:30px;height:30px;font-size:14px">${avaHtml(c.author?.sex)}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${nameBadge}${esc(name)} <span style="font-size:11px;color:var(--text3)">${esc(c.time_ago||'')}</span></div><div class="comment-text">${esc(c.content)}</div>${c.media_id?renderMedia(c.media_type,c.media_id):''}
       ${renderReactionButtons(c.id, 'comment', c.reactions?.counts || {}, c.reactions?.user_reaction)}
       <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
   };
@@ -11768,12 +11731,12 @@ async function loadProfile(){
     const postsR=await api(`/api/mini-app/get-posts?user_id=${UID}&page=1`);
     const myPosts=(postsR.data||[]).filter(x=>x.author?.is_me);
     box.innerHTML=`
-      <div class="profile-hero"><div style="position:absolute;top:16px;right:16px"><button class="btn-ghost" onclick="setupEdit()" style="font-size:12px;padding:6px 12px">Edit</button></div>
+      <div class="profile-hero"><div style="position:absolute;top:16px;right:16px"><button class="btn-ghost" onclick="setupEdit()" style="font-size:13px;padding:8px 14px">Edit</button></div>
       <div class="profile-ava-wrap">${avaHtml(p.avatar||p.sex)}</div>
       <div class="profile-name">${esc(p.weekly_badge||'')} ${esc(p.name)}</div>
       <div style="margin-top:6px"><span class="pill-aura"><span class="pill-aura-badge">${esc(p.aura)}</span><svg class="bolt-icon" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg><span class="pill-aura-pts">${p.rating} pts</span></span></div>
       <div class="profile-stats"><div class="profile-stat"><div class="profile-stat-num">${p.stats?.posts||0}</div><div class="profile-stat-lbl">Vents</div></div><div class="profile-stat"><div class="profile-stat-num">${p.stats?.followers||0}</div><div class="profile-stat-lbl">Followers</div></div><div class="profile-stat"><div class="profile-stat-num">${p.stats?.comments||0}</div><div class="profile-stat-lbl">Replies</div></div></div></div>
-      ${myPosts.length?`<div class="section-label">My recent vents</div><div style="padding:0 16px">${myPosts.slice(0,3).map(p=>`<div class="post-card" onclick="openPost(${p.id})" style="margin:0 0 10px"><div class="post-body" style="-webkit-line-clamp:2">${esc(p.content)}</div><div style="font-size:11px;color:var(--text3);margin-top:6px">${esc(p.time_ago)}</div></div>`).join('')}</div>`:''}
+      ${myPosts.length?`<div class="section-label">My recent vents</div><div style="padding:0 16px">${myPosts.slice(0,3).map(p=>`<div class="post-card" onclick="openPost(${p.id})" style="margin:0 0 10px"><div class="post-body" style="-webkit-line-clamp:2">${esc(p.content)}</div><div style="font-size:12px;color:var(--text3);margin-top:6px">${esc(p.time_ago)}</div></div>`).join('')}</div>`:''}
     `;
   }catch(e){box.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">Could not load profile</div>'}
 }
