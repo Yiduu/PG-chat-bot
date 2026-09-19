@@ -3,7 +3,7 @@ import requests
 import os
 import logging
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_values
 from dotenv import load_dotenv
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -18,13 +18,23 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 import threading
 from waitress import serve as waitress_serve
-from flask import Flask, jsonify, request, redirect, send_from_directory
-from datetime import datetime, timedelta, timezone, time
+from flask import Flask, jsonify, request, redirect, send_from_directory, Response
+# NOTE: `time` used to be imported twice (datetime.time, then the `time` module), so the
+# module silently shadowed the class and `time(0, 0, tzinfo=...)` raised TypeError.
+# datetime.time is now imported as dt_time; `time` is always the stdlib module.
+from datetime import datetime, timedelta, timezone, time as dt_time
 import time
 import asyncio
 import html
-from types import SimpleNamespace
+from types import SimpleNamespace, MappingProxyType
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
+import json
+import re
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover - py<3.9
+    ZoneInfo = None
 
 # moved logger setup to top
 logging.basicConfig(
@@ -208,31 +218,30 @@ def init_db():
                 )
                 ''')
                 # ---------------- Database Schema Migration (Postgres Robust) ----------------
-                
-                # Check for 'bio' column in users
+                # ONE information_schema query for every column probe below (previously one
+                # round trip per column). Membership is checked in Python against this snapshot;
+                # each probed column is independent, so no probe depends on an earlier ALTER.
                 c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='users' AND column_name='bio'
+                    SELECT table_name, column_name FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name IN ('users', 'posts', 'comments', 'reactions',
+                                         'private_messages', 'blocks')
                 """)
-                if not c.fetchone():
+                existing_columns = {(r['table_name'], r['column_name']) if isinstance(r, dict) else (r[0], r[1])
+                                    for r in c.fetchall()}
+
+                # Check for 'bio' column in users
+                if ('users', 'bio') not in existing_columns:
                     logger.info("Adding missing column: bio to users table")
                     c.execute("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT 'No bio set.'")
 
                 # Check for 'awaiting_bio' column in users
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='users' AND column_name='awaiting_bio'
-                """)
-                if not c.fetchone():
+                if ('users', 'awaiting_bio') not in existing_columns:
                     logger.info("Adding missing column: awaiting_bio to users table")
                     c.execute("ALTER TABLE users ADD COLUMN awaiting_bio BOOLEAN DEFAULT FALSE")
 
                 # Check for 'avatar_emoji' column in users
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='users' AND column_name='avatar_emoji'
-                """)
-                if not c.fetchone():
+                if ('users', 'avatar_emoji') not in existing_columns:
                     logger.info("Adding missing column: avatar_emoji to users table")
                     c.execute("ALTER TABLE users ADD COLUMN avatar_emoji VARCHAR(10) DEFAULT NULL")
 
@@ -244,29 +253,17 @@ def init_db():
                     ('hide_role', 'BOOLEAN DEFAULT FALSE')
                 ]
                 for col_name, col_type in privacy_columns:
-                    c.execute(f"""
-                        SELECT column_name FROM information_schema.columns 
-                        WHERE table_name='users' AND column_name='{col_name}'
-                    """)
-                    if not c.fetchone():
+                    if ('users', col_name) not in existing_columns:
                         logger.info(f"Adding missing column: {col_name} to users table")
                         c.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
 
                 # Add timestamp to reactions
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='reactions' AND column_name='timestamp'
-                """)
-                if not c.fetchone():
+                if ('reactions', 'timestamp') not in existing_columns:
                     c.execute("ALTER TABLE reactions ADD COLUMN timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
                     logger.info("Added timestamp column to reactions table")
 
                 # Add post_id to reactions table and update indexes
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='reactions' AND column_name='post_id'
-                """)
-                if not c.fetchone():
+                if ('reactions', 'post_id') not in existing_columns:
                     c.execute("ALTER TABLE reactions ALTER COLUMN comment_id DROP NOT NULL")
                     c.execute("ALTER TABLE reactions ADD COLUMN post_id INTEGER REFERENCES posts(post_id) DEFAULT NULL")
                     logger.info("Added post_id column to reactions table")
@@ -311,11 +308,7 @@ def init_db():
                 """)
 
                 # Private messages media columns
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns
-                    WHERE table_name='private_messages' AND column_name='media_type'
-                """)
-                if not c.fetchone():
+                if ('private_messages', 'media_type') not in existing_columns:
                     logger.info("Adding missing media columns to private_messages table")
                     c.execute("ALTER TABLE private_messages ADD COLUMN media_type TEXT DEFAULT 'text'")
                     c.execute("ALTER TABLE private_messages ADD COLUMN media_id TEXT")
@@ -325,11 +318,7 @@ def init_db():
                 # Soft-delete (is_deleted flag) is used instead of a hard DELETE so the
                 # other side's thread keeps a "Message deleted" placeholder instead of
                 # a confusing gap.
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns
-                    WHERE table_name='private_messages' AND column_name='is_edited'
-                """)
-                if not c.fetchone():
+                if ('private_messages', 'is_edited') not in existing_columns:
                     logger.info("Adding edit/delete columns to private_messages table")
                     c.execute("ALTER TABLE private_messages ADD COLUMN is_edited BOOLEAN DEFAULT FALSE")
                     c.execute("ALTER TABLE private_messages ADD COLUMN edited_at TIMESTAMP")
@@ -340,11 +329,7 @@ def init_db():
                 # notification the bot delivered to the receiver's chat. Storing it lets
                 # us natively edit/delete that real Telegram message later (via the
                 # Bot API) instead of only updating our own DB copy.
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns
-                    WHERE table_name='private_messages' AND column_name='notif_message_id'
-                """)
-                if not c.fetchone():
+                if ('private_messages', 'notif_message_id') not in existing_columns:
                     logger.info("Adding notif_message_id column to private_messages table")
                     c.execute("ALTER TABLE private_messages ADD COLUMN notif_message_id INTEGER")
 
@@ -356,86 +341,56 @@ def init_db():
                 c.execute("DELETE FROM private_messages WHERE is_deleted = TRUE")
 
                 # Add timestamp to blocks
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='blocks' AND column_name='timestamp'
-                """)
-                if not c.fetchone():
+                if ('blocks', 'timestamp') not in existing_columns:
                     c.execute("ALTER TABLE blocks ADD COLUMN timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
                     logger.info("Added timestamp column to blocks table")
 
                 # Add weekly_badge to users
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='users' AND column_name='weekly_badge'
-                """)
-                if not c.fetchone():
+                if ('users', 'weekly_badge') not in existing_columns:
                     c.execute("ALTER TABLE users ADD COLUMN weekly_badge TEXT DEFAULT NULL")
                     logger.info("Added weekly_badge column to users table")
 
 
                 # ---------------- Database Schema Migration ----------------
                 # Check if thread_from_post_id column exists, if not add it
-                c.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name='posts' AND column_name='thread_from_post_id'
-                """)
-                if not c.fetchone():
+                if ('posts', 'thread_from_post_id') not in existing_columns:
                     logger.info("Adding missing column: thread_from_post_id to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN thread_from_post_id BIGINT DEFAULT NULL")
 
                 # Check if vent_number column exists, if not add it
-                c.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name='posts' AND column_name='vent_number'
-                """)
-                if not c.fetchone():
+                if ('posts', 'vent_number') not in existing_columns:
                     logger.info("Adding missing column: vent_number to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN vent_number INTEGER DEFAULT NULL")
                 
                 # Check for 'rejection_reason' column in posts
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='posts' AND column_name='rejection_reason'
-                """)
-                if not c.fetchone():
+                if ('posts', 'rejection_reason') not in existing_columns:
                     logger.info("Adding missing column: rejection_reason to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN rejection_reason TEXT DEFAULT NULL")
 
                 # Check for 'search_vector' column in posts
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='posts' AND column_name='search_vector'
-                """)
-                if not c.fetchone():
+                if ('posts', 'search_vector') not in existing_columns:
                     logger.info("Adding search_vector to posts table")
+                    c.execute("SAVEPOINT sp_search_vector")
                     try:
                         c.execute("""
                             ALTER TABLE posts ADD COLUMN search_vector tsvector
                             GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
                         """)
                         c.execute("CREATE INDEX idx_posts_search ON posts USING GIN(search_vector)")
+                        c.execute("RELEASE SAVEPOINT sp_search_vector")
                     except Exception as e:
+                        # Roll back just this step so the rest of init_db's transaction survives.
+                        c.execute("ROLLBACK TO SAVEPOINT sp_search_vector")
                         logger.error(f"Failed to add search_vector (maybe not Postgres?): {e}")
                 
                 # ---------------- Database Multi-Category Migration ----------------
                 # 1. Add selected_categories to users table
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='users' AND column_name='selected_categories'
-                """)
-                if not c.fetchone():
+                if ('users', 'selected_categories') not in existing_columns:
                     logger.info("Adding missing column: selected_categories to users table")
                     c.execute("ALTER TABLE users ADD COLUMN selected_categories TEXT DEFAULT NULL")
 
                 # 2. Check if posts still has 'category' column
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='posts' AND column_name='category'
-                """)
-                has_category_column = c.fetchone()
+                has_category_column = ('posts', 'category') in existing_columns
 
                 if has_category_column:
                     # Create junction table
@@ -487,50 +442,37 @@ def init_db():
                 ''')
 
                 # ---------------- warning_count column migration ----------------
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns
-                    WHERE table_name='users' AND column_name='warning_count'
-                """)
-                if not c.fetchone():
+                if ('users', 'warning_count') not in existing_columns:
                     logger.info("Adding missing column: warning_count to users table")
                     c.execute("ALTER TABLE users ADD COLUMN warning_count INTEGER DEFAULT 0")
 
                 # Check for 'thread_context_post_id' column in users
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='users' AND column_name='thread_context_post_id'
-                """)
-                if not c.fetchone():
+                if ('users', 'thread_context_post_id') not in existing_columns:
                     logger.info("Adding missing column: thread_context_post_id to users table")
                     c.execute("ALTER TABLE users ADD COLUMN thread_context_post_id BIGINT DEFAULT NULL")
 
                 # Added telegram_message_id to comments for cross-page threading
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name='comments' AND column_name='telegram_message_id'
-                """)
-                if not c.fetchone():
+                if ('comments', 'telegram_message_id') not in existing_columns:
                     logger.info("Adding telegram_message_id column to comments table")
                     c.execute("ALTER TABLE comments ADD COLUMN telegram_message_id BIGINT DEFAULT NULL")
                     c.execute("CREATE INDEX IF NOT EXISTS idx_comments_telegram_message_id ON comments(telegram_message_id)")
 
                 # Check for 'deleted' column in posts
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns
-                    WHERE table_name='posts' AND column_name='deleted'
-                """)
-                if not c.fetchone():
+                if ('posts', 'deleted') not in existing_columns:
                     logger.info("Adding missing column: deleted to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN deleted BOOLEAN DEFAULT FALSE")
 
                 # Check for 'explicit' column in posts
-                c.execute("""
-                    SELECT column_name FROM information_schema.columns
-                    WHERE table_name='posts' AND column_name='explicit'
-                """)
-                if not c.fetchone():
+                if ('posts', 'explicit') not in existing_columns:
                     logger.info("Adding missing column: explicit to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN explicit BOOLEAN DEFAULT FALSE")
+
+                # Partial index that lets the mini-app feed (approved, not deleted, newest first)
+                # read one page straight off the index instead of sorting every post.
+                c.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_posts_feed
+                    ON posts (timestamp DESC) WHERE approved = TRUE AND deleted = FALSE
+                """)
 
                 # ---------------- Create admin user if specified ----------------
                 if ADMIN_ID:
@@ -546,47 +488,37 @@ def init_db():
         logging.error(f"Database initialization failed: {e}")
 # ==================== LOADING ANIMATIONS ====================
 def assign_vent_numbers_to_existing_posts():
-    """Assign vent numbers to existing approved posts"""
+    """Give every approved post that has no vent_number the next free number, oldest
+    first (continuing after the current maximum, exactly like the old per-row loop).
+    Startup cost when nothing needs numbering: one cheap EXISTS query."""
     try:
-        # Get all approved posts without vent numbers
-        posts = db_fetch_all(
-            "SELECT post_id FROM posts WHERE approved = TRUE AND vent_number IS NULL ORDER BY timestamp ASC"
+        needs_numbers = db_fetch_one(
+            "SELECT EXISTS(SELECT 1 FROM posts WHERE approved = TRUE AND vent_number IS NULL) AS needs"
         )
-        
-        if not posts:
+        if not needs_numbers or not needs_numbers['needs']:
             return
-        
-        # Get current max vent number
-        max_vent = db_fetch_one("SELECT MAX(vent_number) as max_num FROM posts WHERE approved = TRUE")
-        next_vent_number = (max_vent['max_num'] or 0) + 1
-        
-        # Assign numbers sequentially
-        for post in posts:
-            db_execute(
-                "UPDATE posts SET vent_number = %s WHERE post_id = %s",
-                (next_vent_number, post['post_id'])
-            )
-            
-            # Try to update the channel post if it exists
-            post_data = db_fetch_one(
-                "SELECT content, category, channel_message_id FROM posts WHERE post_id = %s",
-                (post['post_id'],)
-            )
-            
-            if post_data and post_data['channel_message_id']:
-                logger.info(f"Post {post['post_id']} should be updated to Vent - {next_vent_number:03d}")
-            
-            next_vent_number += 1
-        
-        logger.info(f"Assigned vent numbers to {len(posts)} existing posts")
-        
+
+        # One set-based UPDATE instead of 2-3 queries per post. The scalar subquery is
+        # evaluated once against the pre-update snapshot, so numbers continue after MAX.
+        updated = db_execute("""
+            UPDATE posts
+            SET vent_number = t.rn + COALESCE((SELECT MAX(vent_number) FROM posts WHERE approved = TRUE), 0)
+            FROM (
+                SELECT post_id, ROW_NUMBER() OVER (ORDER BY timestamp ASC, post_id ASC) AS rn
+                FROM posts
+                WHERE approved = TRUE AND vent_number IS NULL
+            ) t
+            WHERE posts.post_id = t.post_id AND posts.vent_number IS NULL
+        """)
+        logger.info(f"Assigned vent numbers to existing approved posts (update ok={updated})")
+
     except Exception as e:
         logger.error(f"Error assigning vent numbers: {e}")
 
 async def fix_vent_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to fix vent numbers"""
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     
     if not user or not user['is_admin']:
         await update.message.reply_text("You don't have permission to use this command.")
@@ -596,19 +528,19 @@ async def fix_vent_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         # Reset all vent numbers first
-        db_execute("UPDATE posts SET vent_number = NULL WHERE approved = TRUE")
+        (await db_execute_async("UPDATE posts SET vent_number = NULL WHERE approved = TRUE"))
         
         # Get all approved posts in chronological order
-        posts = db_fetch_all(
+        posts = (await db_fetch_all_async(
             "SELECT post_id FROM posts WHERE approved = TRUE ORDER BY timestamp ASC"
-        )
+        ))
         
         count = 0
         for idx, post in enumerate(posts, start=1):
-            db_execute(
+            (await db_execute_async(
                 "UPDATE posts SET vent_number = %s WHERE post_id = %s",
                 (idx, post['post_id'])
-            )
+            ))
             count += 1
         
         await update.message.reply_text(f"Successfully assigned vent numbers to {count} posts.")
@@ -620,18 +552,19 @@ async def fix_vent_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def fix_missing_sex(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to fix missing sex emoji for users with avatars"""
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user.get('is_admin'):
         await update.message.reply_text("Admin only.")
         return
 
     # Fix users where sex is NULL or empty but avatar_emoji exists
-    rows_fixed = db_execute("""
+    rows_fixed = (await db_execute_async("""
         UPDATE users 
         SET sex = '👤' 
         WHERE (sex IS NULL OR sex = '') 
         AND avatar_emoji IS NOT NULL
-    """)
+    """))
+    _invalidate_user_cache()
     
     await update.message.reply_text(f"Fixed missing sex for {rows_fixed} users.")
 
@@ -639,7 +572,7 @@ async def fix_missing_sex(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reset_weekly_badges_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to manually trigger weekly badge awarding."""
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     
     if not user or not user['is_admin']:
         await update.message.reply_text("You don't have permission to use this command.")
@@ -677,40 +610,40 @@ async def show_loading(update_or_message, loading_text="Processing...", edit_mes
         logger.error(f"Error showing loading: {e}")
         return None
 
-async def typing_animation(context, chat_id, duration=1):
-    """Show typing indicator"""
+# SPEED: these helpers used to *sleep* on purpose (0.3-2s each, several per screen) so loading
+# "animations" could be seen. They are now instant; signatures are unchanged so every caller
+# still works. The typing indicator is fire-and-forget (it is cosmetic, never worth waiting on).
+async def _send_typing(context, chat_id):
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        await asyncio.sleep(duration)
-    except:
+    except Exception:
+        pass
+
+async def typing_animation(context, chat_id, duration=1):
+    """Show typing indicator (does not wait; `duration` kept for compatibility)."""
+    try:
+        asyncio.create_task(_send_typing(context, chat_id))
+    except Exception:
         pass
 
 async def animated_loading(loading_msg, text="Processing", steps=3):
-    """Show animated loading dots"""
-    try:
-        for i in range(steps):
-            dots = "." * (i + 1)
-            await loading_msg.edit_text(f"{text}{dots}")
-            await asyncio.sleep(0.3)
-    except:
-        pass
+    """Formerly animated dots with sleeps; now a no-op (the loading message is shown as-is
+    and replaced by the real content as soon as it's ready)."""
+    return None
 
 async def replace_with_success(loading_msg, success_text):
-    """Replace loading message with success message"""
+    """Replace loading message with success message (no artificial pause)"""
     try:
-        success_msg = await loading_msg.edit_text(f"{success_text}")
-        await asyncio.sleep(1)
-        return success_msg
-    except:
+        return await loading_msg.edit_text(f"{success_text}")
+    except Exception:
         return loading_msg
 
 async def replace_with_error(loading_msg, error_text):
-    """Replace loading message with error message"""
+    """Replace loading message with error message (no artificial pause)"""
     try:
         await loading_msg.edit_text(f"{error_text}")
-        await asyncio.sleep(2)
         return loading_msg
-    except:
+    except Exception:
         return loading_msg
 # Database helper functions
 # -------------------- PostgreSQL Connection Pool --------------------
@@ -734,9 +667,23 @@ except Exception as e:
     db_pool = None
 
 
+# ThreadedConnectionPool.getconn() RAISES "connection pool exhausted" the instant all 20
+# connections are busy instead of waiting. With handlers now running concurrently, a burst would
+# turn into errors, so callers first take a slot from this semaphore (same size as the pool) and
+# simply queue for a moment instead.
+_DB_MAX_CONNECTIONS = 20
+_db_slots = threading.BoundedSemaphore(_DB_MAX_CONNECTIONS)
+
+
+def _acquire_db_slot():
+    if not _db_slots.acquire(timeout=30):
+        raise RuntimeError("Timed out waiting for a free database connection")
+
+
 def db_execute(query, params=(), fetch=False, fetchone=False):
     """Execute a SQL query using the global connection pool. Raises on error."""
     conn = None
+    _acquire_db_slot()
     try:
         conn = db_pool.getconn()
         with conn.cursor() as cur:
@@ -757,6 +704,7 @@ def db_execute(query, params=(), fetch=False, fetchone=False):
     finally:
         if conn:
             db_pool.putconn(conn)
+        _db_slots.release()
 
 
 def db_fetch_one(query, params=()):
@@ -793,13 +741,364 @@ async def db_fetch_one_async(query, params=()):
 async def db_fetch_all_async(query, params=()):
     """Async version of db_fetch_all for use inside Telegram bot handlers."""
     return await db_execute_async(query, params, fetch=True)
+
+
+# ==================== SHARED PERF / CONSISTENCY HELPERS ====================
+
+def _clamp_int(raw, lo, hi, default):
+    """Parse `raw` (usually a query-string value) as an int and clamp it to [lo, hi].
+    Missing / non-numeric input falls back to `default` (which is clamped too)."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = default
+    return max(lo, min(hi, value))
+
+
+def _parse_positive_int(raw):
+    """Optional id-style query parameter: a positive int32, or None if absent/invalid.
+    (Not _clamp_int: a missing before_id must stay None, not get clamped up to 1.)"""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if 0 < value <= 2**31 - 1 else None
+
+
+def _escape_like(term):
+    """Escape LIKE/ILIKE wildcards so user input is matched literally.
+    Use together with `ESCAPE '\\'` in the SQL."""
+    return (term or '').replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+
+
+# ---- user row cache (only the columns hot paths actually need) ----
+_USER_CACHE_COLUMNS = (
+    "user_id, is_admin, notifications_enabled, anonymous_name, sex, avatar_emoji, bio, "
+    "weekly_badge, hide_aura, hide_bio, hide_follower_count, hide_role"
+)
+# lru_cache cannot evict a single key, and a plain cache_clear() races with a reader that
+# fetched the old row just before an UPDATE committed (it would re-store stale data right
+# after the clear). Putting a generation number in the cache key fixes both: invalidation
+# bumps the generation, so every entry (and any in-flight stale read) becomes unreachable.
+_user_cache_gen = 0
+_user_cache_lock = threading.Lock()
+
+
+@lru_cache(maxsize=4096)
+def _user_row_cached(user_id, gen):
+    row = db_fetch_one(f"SELECT {_USER_CACHE_COLUMNS} FROM users WHERE user_id = %s", (user_id,))
+    if row is None:
+        # lru_cache never caches exceptions, so "user not found" is not remembered and a
+        # user created a moment later is picked up on the very next call.
+        raise LookupError(user_id)
+    return MappingProxyType(dict(row))  # read-only: callers share this object
+
+
+def get_user_cached(user_id):
+    """Small cached replacement for `SELECT * FROM users WHERE user_id = ...` on hot paths.
+    Returns a read-only mapping with the columns in _USER_CACHE_COLUMNS, or None if the
+    user does not exist. BLOCKING (may hit the DB): from async code use
+    `await asyncio.to_thread(get_user_cached, uid)`."""
+    try:
+        return _user_row_cached(str(user_id), _user_cache_gen)
+    except LookupError:
+        return None
+
+
+@lru_cache(maxsize=2048)
+def _user_display_name_cached(user_id, gen):
+    row = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_id,))
+    if row is None:
+        raise LookupError(user_id)
+    return row['anonymous_name'] or 'Anon'
+
+
+def get_user_display_name(user_id, default='Anon'):
+    """Cached anonymous_name lookup (used by the 8-second admin live monitor tick)."""
+    try:
+        return _user_display_name_cached(str(user_id), _user_cache_gen)
+    except LookupError:
+        return default
+
+
+def _invalidate_user_cache(user_id=None):
+    """Drop cached user rows / display names. Call AFTER the UPDATE has committed.
+    `user_id` is accepted for readability at call sites; invalidation is global."""
+    global _user_cache_gen
+    with _user_cache_lock:
+        _user_cache_gen += 1
+    _user_row_cached.cache_clear()
+    _user_display_name_cached.cache_clear()
+
+
+_USER_COLUMN_RE = re.compile(r'^[a-z_][a-z0-9_]*$')
+
+
+def db_update_user(user_id, **fields):
+    """UPDATE users SET <col>=<val>, ... WHERE user_id = <user_id>, then invalidate the
+    user caches. The single place user-row writes should go through. Column names are
+    identifiers (never user input) and are validated; values are always parameters."""
+    if not fields:
+        return False
+    for col in fields:
+        if not _USER_COLUMN_RE.match(col):
+            raise ValueError(f"Invalid users column name: {col!r}")
+    assignments = ", ".join(f"{col} = %s" for col in fields)
+    result = db_execute(
+        f"UPDATE users SET {assignments} WHERE user_id = %s",
+        tuple(fields.values()) + (str(user_id),)
+    )
+    _invalidate_user_cache(user_id)
+    return result
+
+
+async def db_update_user_async(user_id, **fields):
+    """Async wrapper of db_update_user for Telegram handlers."""
+    return await asyncio.to_thread(db_update_user, user_id, **fields)
+
+
+# ---- keep-alive HTTP session for Telegram Bot API calls made from Flask/worker threads ----
+# requests.post() opens a brand-new TLS connection every call (~100-300ms of handshake). One
+# shared Session with a connection pool reuses them.
+_tg_session = requests.Session()
+_tg_adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=20)
+_tg_session.mount("https://", _tg_adapter)
+
+
+# ---- fire-and-forget Telegram HTTP notifications ----
+_NOTIFY_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="tg-notify")
+
+
+def _fire_and_forget(fn, *args, **kwargs):
+    """Run fn(*args, **kwargs) on the notification pool and return immediately.
+    Errors are logged, never raised into the request thread."""
+    def _log_outcome(fut):
+        if fut.cancelled():
+            return
+        exc = fut.exception()
+        if exc is not None:
+            logger.error(f"Background notification failed: {exc}")
+    try:
+        _NOTIFY_EXECUTOR.submit(fn, *args, **kwargs).add_done_callback(_log_outcome)
+    except RuntimeError as e:  # pool already shut down (interpreter exiting)
+        logger.error(f"Could not queue background notification: {e}")
+
+
+# ---- main-menu JWT cache ----
+_MENU_JWT_TTL_SECONDS = 25 * 24 * 3600   # token itself is valid for 30 days
+_menu_jwt_cache = {}
+_menu_jwt_lock = threading.Lock()
+
+
+def _get_menu_jwt(user_id):
+    uid = str(user_id)
+    now = time.time()
+    with _menu_jwt_lock:
+        hit = _menu_jwt_cache.get(uid)
+        if hit and hit[1] > now:
+            return hit[0]
+    token = jwt.encode(
+        {'user_id': uid, 'exp': datetime.now(timezone.utc) + timedelta(days=30)},
+        TOKEN,
+        algorithm='HS256'
+    )
+    with _menu_jwt_lock:
+        if len(_menu_jwt_cache) > 50000:  # keep memory bounded: drop expired entries
+            for k in [k for k, v in _menu_jwt_cache.items() if v[1] <= now]:
+                _menu_jwt_cache.pop(k, None)
+        _menu_jwt_cache[uid] = (token, now + _MENU_JWT_TTL_SECONDS)
+    return token
+
+
+def _clear_menu_jwt_cache(user_id=None):
+    """Forget cached mini-app tokens (one user, or all). Call on logout / token rebuild."""
+    with _menu_jwt_lock:
+        if user_id is None:
+            _menu_jwt_cache.clear()
+        else:
+            _menu_jwt_cache.pop(str(user_id), None)
+
+
+# ---- reaction weights + ONE scoring query shared by every aura/leaderboard path ----
+# Emoji are written as escapes on purpose: the previous dict literal lost its emoji
+# somewhere along the way and collapsed into duplicate '' keys.
+REACTION_WEIGHTS = {
+    'like': 1,                 # legacy text types
+    'dislike': -2,
+    'heart': 2,
+    '\U0001F44D': 1,           # 👍
+    '\U0001F44E': -2,          # 👎
+    '\U0001F621': -2,          # 😡
+    '\u2764\ufe0f': 2,         # ❤️
+    '\u2764': 2,               # ❤ (no variation selector)
+    '\U0001F64F': 2,           # 🙏
+    '\U0001F525': 2,           # 🔥
+    '\U0001F622': 1,           # 😢
+}
+DEFAULT_REACTION_WEIGHT = 1    # any type not listed above (same default as before)
+
+WEEKLY_BADGES = ["\U0001F947", "\U0001F948", "\U0001F949"]  # 🥇 🥈 🥉
+
+
+def _reaction_weight_case_sql(type_col):
+    """SQL CASE expression mapping reactions.type -> weight, built from REACTION_WEIGHTS.
+    Keys are code constants; anything that could break out of a SQL literal is rejected."""
+    whens = []
+    for key, weight in REACTION_WEIGHTS.items():
+        if "'" in key or '%' in key or '\\' in key:
+            raise ValueError(f"Unsafe reaction key for SQL: {key!r}")
+        whens.append(f"WHEN '{key}' THEN {int(weight)}")
+    return f"(CASE {type_col} {' '.join(whens)} ELSE {int(DEFAULT_REACTION_WEIGHT)} END)"
+
+
+# Requires a preceding CTE:  score_authors(author_id TEXT)  - the set of users to score.
+# Each component is aggregated once over that set (no per-user correlated subqueries) and
+# the result `author_scores(author_id, score)` matches calculate_user_rating() exactly:
+#   approved posts*10 + comments*2 + weighted reactions on their comments AND posts
+#   + followers*2 - blocks received*10
+_SCORE_CTES_SQL = f"""
+    a_posts AS (
+        SELECT p.author_id, COUNT(*) AS n
+        FROM posts p JOIN score_authors sa ON sa.author_id = p.author_id
+        WHERE p.approved = TRUE
+        GROUP BY p.author_id
+    ),
+    a_comments AS (
+        SELECT c.author_id, COUNT(*) AS n
+        FROM comments c JOIN score_authors sa ON sa.author_id = c.author_id
+        GROUP BY c.author_id
+    ),
+    a_comment_rx AS (
+        SELECT c.author_id, SUM({_reaction_weight_case_sql('r.type')}) AS pts
+        FROM comments c
+        JOIN score_authors sa ON sa.author_id = c.author_id
+        JOIN reactions r ON r.comment_id = c.comment_id
+        GROUP BY c.author_id
+    ),
+    a_post_rx AS (
+        SELECT p.author_id, SUM({_reaction_weight_case_sql('r.type')}) AS pts
+        FROM posts p
+        JOIN score_authors sa ON sa.author_id = p.author_id
+        JOIN reactions r ON r.post_id = p.post_id
+        GROUP BY p.author_id
+    ),
+    a_blocks AS (
+        SELECT b.blocked_id AS author_id, COUNT(*) AS n
+        FROM blocks b JOIN score_authors sa ON sa.author_id = b.blocked_id
+        GROUP BY b.blocked_id
+    ),
+    a_followers AS (
+        SELECT f.followed_id AS author_id, COUNT(*) AS n
+        FROM followers f JOIN score_authors sa ON sa.author_id = f.followed_id
+        GROUP BY f.followed_id
+    ),
+    author_scores AS (
+        SELECT sa.author_id,
+               (COALESCE(ap.n, 0) * 10 + COALESCE(ac.n, 0) * 2
+                + COALESCE(acr.pts, 0) + COALESCE(apr.pts, 0)
+                + COALESCE(af.n, 0) * 2 - COALESCE(ab.n, 0) * 10) AS score
+        FROM score_authors sa
+        LEFT JOIN a_posts ap ON ap.author_id = sa.author_id
+        LEFT JOIN a_comments ac ON ac.author_id = sa.author_id
+        LEFT JOIN a_comment_rx acr ON acr.author_id = sa.author_id
+        LEFT JOIN a_post_rx apr ON apr.author_id = sa.author_id
+        LEFT JOIN a_blocks ab ON ab.author_id = sa.author_id
+        LEFT JOIN a_followers af ON af.author_id = sa.author_id
+    )
+"""
+
+
+# ---- leaderboard cache (60s, busted whenever anything that moves a score changes) ----
+_LEADERBOARD_TTL_SECONDS = 60
+_leaderboard_gen = 0
+_leaderboard_lock = threading.Lock()
+
+
+def _leaderboard_cache_bust():
+    """Invalidate the cached leaderboard. Cheap and safe to call from any thread."""
+    global _leaderboard_gen
+    with _leaderboard_lock:
+        _leaderboard_gen += 1
+    _leaderboard_rows_cached.cache_clear()
+
+
+@lru_cache(maxsize=16)
+def _leaderboard_rows_cached(top_n, gen, bucket):
+    rows = db_fetch_all(f"""
+        WITH score_authors AS (
+            SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
+        ),
+        {_SCORE_CTES_SQL}
+        SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge, s.score AS total
+        FROM author_scores s
+        JOIN users u ON u.user_id = s.author_id
+        ORDER BY s.score DESC, u.user_id
+        LIMIT %s
+    """, (top_n,))
+    return tuple(dict(r) for r in (rows or []))
+
+
+def get_leaderboard_rows(top_n=10):
+    """Top `top_n` non-admin users by aura score, cached for ~60s per top_n.
+    Returns fresh dict copies (safe for callers to mutate). BLOCKING on a cache miss."""
+    top_n = _clamp_int(top_n, 1, 100, 10)
+    bucket = int(time.time() // _LEADERBOARD_TTL_SECONDS)
+    return [dict(r) for r in _leaderboard_rows_cached(top_n, _leaderboard_gen, bucket)]
+
+# ---- channel text for a post its author deleted ----
+# Telegram has no text alignment, so "centered" is done the only reliable way: the notice block is
+# monospace (<code>, which is also tap-to-copy) and each line is left-padded to the block's width.
+# The first line is the widest, so nothing is ever leading-space-trimmed. Hashtags/links stay
+# outside <code> (they'd lose their link/hashtag behaviour inside it) and are centered
+# approximately with em-spaces. Tweak DELETED_POST_* below if it looks off on your clients.
+DELETED_POST_ICON = "\u26A0\uFE0F"                       # ⚠️  yellow warning sign
+DELETED_POST_NOTICE = ("This content has been", "deleted by the author.")
+_EM_SPACE = "\u2003"
+
+
+def _mono_cells(text):
+    """Approximate width of `text` in a monospace font (the warning sign is 2 cells wide)."""
+    return len(text.replace(DELETED_POST_ICON, "##"))
+
+
+def _center_mono(text, width):
+    if not text:
+        return text
+    return " " * max(0, (width - _mono_cells(text)) // 2) + text
+
+
+def _center_prop(visible_text, width_cells):
+    """Leading em-spaces that roughly center proportional-font text under a monospace block."""
+    pad_em = (width_cells * 0.6 - len(visible_text) * 0.52) / 2
+    return _EM_SPACE * max(0, round(pad_em))
+
+
+def build_deleted_channel_text(vent_display, hashtags):
+    """HTML for the channel message of a deleted post: warning sign first, whole notice
+    centered and tap-to-copy (single <code> block), then hashtags and footer links centered."""
+    first = f"{DELETED_POST_ICON} {DELETED_POST_NOTICE[0]}"
+    lines = [first, DELETED_POST_NOTICE[1], "", vent_display, "\u2501" * 15]
+    width = max(_mono_cells(first), max(_mono_cells(l) for l in lines))
+    block = "\n".join(_center_mono(l, width) if i else l for i, l in enumerate(lines))
+    if _mono_cells(first) < width:
+        block = _center_mono(first, width) + block[len(first):]
+    tag_pad = _center_prop(hashtags, width)
+    link_pad = _center_prop("Telegram | Bot", width)
+    return (
+        f"<code>{html.escape(block)}</code>\n\n"
+        f"{tag_pad}{html.escape(hashtags)}\n"
+        f"{link_pad}<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
+    )
+
+
 def get_admin_conversations(limit=20, offset=0, search=None):
     """List distinct conversation pairs, most recently active first."""
     where_extra = ""
     params = []
     if search:
-        where_extra = "WHERE ua.anonymous_name ILIKE %s OR ub.anonymous_name ILIKE %s OR p.user_a = %s OR p.user_b = %s"
-        like = f"%{search}%"
+        where_extra = ("WHERE ua.anonymous_name ILIKE %s ESCAPE '\\' OR ub.anonymous_name ILIKE %s ESCAPE '\\' "
+                       "OR p.user_a = %s OR p.user_b = %s")
+        like = f"%{_escape_like(search)}%"  # wildcards in the term are matched literally
         params = [like, like, search, search]
 
     query = f"""
@@ -837,8 +1136,9 @@ def get_admin_conversations_count(search=None):
     where_extra = ""
     params = []
     if search:
-        where_extra = "WHERE ua.anonymous_name ILIKE %s OR ub.anonymous_name ILIKE %s OR p.user_a = %s OR p.user_b = %s"
-        like = f"%{search}%"
+        where_extra = ("WHERE ua.anonymous_name ILIKE %s ESCAPE '\\' OR ub.anonymous_name ILIKE %s ESCAPE '\\' "
+                       "OR p.user_a = %s OR p.user_b = %s")
+        like = f"%{_escape_like(search)}%"  # wildcards in the term are matched literally
         params = [like, like, search, search]
 
     query = f"""
@@ -857,8 +1157,9 @@ def get_admin_conversations_count(search=None):
     return row['cnt'] if row else 0
 
 
-def get_admin_conversation_transcript(user_a, user_b, limit=50):
-    """Most recent `limit` messages between two users, returned oldest-first."""
+def get_admin_conversation_transcript(user_a, user_b, limit=50, offset=0):
+    """`limit` messages between two users, returned oldest-first. offset=0 is the newest
+    window; offset=limit is the window before that, and so on (offset counts from newest)."""
     return db_fetch_all("""
         SELECT * FROM (
             SELECT pm.*, u.anonymous_name as sender_name
@@ -866,11 +1167,11 @@ def get_admin_conversation_transcript(user_a, user_b, limit=50):
             JOIN users u ON pm.sender_id = u.user_id
             WHERE (pm.sender_id = %s AND pm.receiver_id = %s)
                OR (pm.sender_id = %s AND pm.receiver_id = %s)
-            ORDER BY pm.timestamp DESC
-            LIMIT %s
+            ORDER BY pm.timestamp DESC, pm.message_id DESC
+            LIMIT %s OFFSET %s
         ) sub
-        ORDER BY timestamp ASC
-    """, (user_a, user_b, user_b, user_a, limit))
+        ORDER BY timestamp ASC, message_id ASC
+    """, (user_a, user_b, user_b, user_a, limit, offset))
 
 
 def get_admin_conversation_message_count(user_a, user_b):
@@ -1002,13 +1303,13 @@ def fix_orphaned_comments_for_post(post_id: int):
 
 async def adopt_orphaned_replies(context: ContextTypes.DEFAULT_TYPE, post_id: int):
     """Helper to fix orphans and update channel count"""
-    fixed_count = fix_orphaned_comments_for_post(post_id)
+    fixed_count = (await asyncio.to_thread(fix_orphaned_comments_for_post, post_id))
     
     # Recalculate total count
-    new_count = count_all_comments(post_id)
+    new_count = (await asyncio.to_thread(count_all_comments, post_id))
     
     # Update DB column
-    db_execute("UPDATE posts SET comment_count = %s WHERE post_id = %s", (new_count, post_id))
+    (await db_execute_async("UPDATE posts SET comment_count = %s WHERE post_id = %s", (new_count, post_id)))
     
     # Update channel button
     await update_channel_post_comment_count(context, post_id)
@@ -1018,7 +1319,7 @@ async def adopt_orphaned_replies(context: ContextTypes.DEFAULT_TYPE, post_id: in
 async def recount_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to fix orphans and update comment counts for all posts"""
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     
     if not user or not user['is_admin']:
         if update.message:
@@ -1029,7 +1330,7 @@ async def recount_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         # Get all approved posts
-        posts = db_fetch_all("SELECT post_id FROM posts WHERE approved = TRUE")
+        posts = (await db_fetch_all_async("SELECT post_id FROM posts WHERE approved = TRUE"))
         
         posts_scanned = len(posts)
         posts_fixed = 0
@@ -1039,20 +1340,20 @@ async def recount_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
             post_id = post['post_id']
             
             # Adopt orphans for this post
-            fixed = fix_orphaned_comments_for_post(post_id)
+            fixed = (await asyncio.to_thread(fix_orphaned_comments_for_post, post_id))
             if fixed > 0:
                 orphans_adopted += fixed
                 
             # Recalculate count
-            actual_count = count_all_comments(post_id)
+            actual_count = (await asyncio.to_thread(count_all_comments, post_id))
             
             # Get current DB count
-            db_post = db_fetch_one("SELECT comment_count FROM posts WHERE post_id = %s", (post_id,))
+            db_post = (await db_fetch_one_async("SELECT comment_count FROM posts WHERE post_id = %s", (post_id,)))
             current_db_count = db_post['comment_count'] if db_post else 0
             
             if actual_count != current_db_count or fixed > 0:
                 # Update DB
-                db_execute("UPDATE posts SET comment_count = %s WHERE post_id = %s", (actual_count, post_id))
+                (await db_execute_async("UPDATE posts SET comment_count = %s WHERE post_id = %s", (actual_count, post_id)))
                 posts_fixed += 1
                 
                 # Update channel button if possible
@@ -1511,15 +1812,9 @@ def static_files(filename):
 def get_main_menu(user_id: str):
     """Generate the main menu keyboard with a dynamic user token for the Web App"""
     try:
-        # Generate a secure JWT token (valid for 30 days)
-        token = jwt.encode(
-            {
-                'user_id': str(user_id),
-                'exp': datetime.now(timezone.utc) + timedelta(days=30)
-            },
-            TOKEN,
-            algorithm='HS256'
-        )
+        # Secure JWT (valid for 30 days), cached per user for 25 days so the menu isn't
+        # re-signed on every single message. See _get_menu_jwt / _clear_menu_jwt_cache.
+        token = _get_menu_jwt(user_id)
         
         render_url = os.getenv('RENDER_URL', 'https://your-render-url.onrender.com')
         mini_app_url = f"{render_url}/?token={token}"
@@ -1582,117 +1877,36 @@ def create_anonymous_name(user_id):
 
 @lru_cache(maxsize=1024)
 def calculate_user_rating(user_id):
-    # Weighted Scoring Logic:
-    # Approved Posts: +10 | Comments: +2 | Likes: +1 | Dislikes: -2 | Blocks: -10
-    
-    # 1. Post Points (+10 per approved post)
-    post_res = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE", (user_id,))
-    post_points = (post_res['count'] if post_res else 0) * 10
-    
-    # 2. Comment Points (+2 per comment)
-    comm_res = db_fetch_one("SELECT COUNT(*) as count FROM comments WHERE author_id = %s", (user_id,))
-    comm_points = (comm_res['count'] if comm_res else 0) * 2
-    
-    # 3. Reactions Points (Dynamic Weights on both Comments and Posts)
-    comment_rx = db_fetch_all("""
-        SELECT r.type, COUNT(*) as count
-        FROM reactions r
-        JOIN comments c ON r.comment_id = c.comment_id
-        WHERE c.author_id = %s AND r.comment_id IS NOT NULL
-        GROUP BY r.type
-    """, (user_id,))
-    
-    post_rx = db_fetch_all("""
-        SELECT r.type, COUNT(*) as count
-        FROM reactions r
-        JOIN posts p ON r.post_id = p.post_id
-        WHERE p.author_id = %s AND r.post_id IS NOT NULL
-        GROUP BY r.type
-    """, (user_id,))
-    
-    weights = {
-        'like': 1,
-        'dislike': -2,
-        '': 2,
-        '': 2,
-        '': 2,
-        '': 1,
-        '': -2,
-        '': -2
-    }
-    
-    rx_points = 0
-    for row in (comment_rx or []) + (post_rx or []):
-        r_type = row['type']
-        r_count = row['count']
-        rx_points += r_count * weights.get(r_type, 1)
-    
-    # 4. Block Points (-10 per block received)
-    block_res = db_fetch_one("SELECT COUNT(*) as count FROM blocks WHERE blocked_id = %s", (user_id,))
-    block_points = (block_res['count'] if block_res else 0) * -10
-    
-    # 5. Follower Bonus (+2 per follower)
-    follower_res = db_fetch_one("SELECT COUNT(*) as cnt FROM followers WHERE followed_id = %s", (user_id,))
-    follower_points = (follower_res['cnt'] if follower_res else 0) * 2
-
-    return post_points + comm_points + rx_points + block_points + follower_points
+    # Weighted scoring (single query, shared with the batch/leaderboard/rank paths via
+    # _SCORE_CTES_SQL so every screen agrees):
+    #   Approved posts +10 | Comments +2 | Reactions per REACTION_WEIGHTS (on comments and
+    #   posts) | Followers +2 | Blocks received -10
+    row = db_fetch_one(
+        f"WITH score_authors AS (SELECT %s::text AS author_id), {_SCORE_CTES_SQL} "
+        "SELECT score FROM author_scores",
+        (str(user_id),)
+    )
+    return int(row['score']) if row and row['score'] is not None else 0
 
 def get_user_ratings_batch(user_ids):
-    """Same scoring as calculate_user_rating(), but for many users at once.
-    Runs 5 GROUP-BY queries total instead of 5 queries PER user, which is what
-    was happening every time a comments page rendered (calculate_user_rating
-    was called once per comment, inside the render loop)."""
-    uids = tuple({uid for uid in user_ids if uid is not None})
-    if not uids:
+    """Same scoring as calculate_user_rating(), for many users in ONE query (it used to be
+    5 GROUP-BY queries). Returns {user_id: score} keyed by the ids passed in."""
+    originals = {}
+    for uid in user_ids:
+        if uid is not None:
+            originals[str(uid)] = uid
+    if not originals:
         return {}
-    ratings = {uid: 0 for uid in uids}
-
-    for row in db_fetch_all(
-        "SELECT author_id, COUNT(*) as cnt FROM posts WHERE author_id IN %s AND approved = TRUE GROUP BY author_id",
-        (uids,)
-    ):
-        ratings[row['author_id']] += row['cnt'] * 10
-
-    for row in db_fetch_all(
-        "SELECT author_id, COUNT(*) as cnt FROM comments WHERE author_id IN %s GROUP BY author_id",
-        (uids,)
-    ):
-        ratings[row['author_id']] += row['cnt'] * 2
-
-    # NOTE: kept identical to calculate_user_rating()'s weights dict, bug for bug —
-    # that dict has several duplicate '' keys which collapse to one, so in practice
-    # only 'like'/'dislike' get an explicit weight and everything else falls back
-    # to the default of 1. Worth fixing separately, but not silently here.
-    weights = {'like': 1, 'dislike': -2}
-
-    for row in db_fetch_all("""
-        SELECT c.author_id, r.type, COUNT(*) as cnt
-        FROM reactions r JOIN comments c ON r.comment_id = c.comment_id
-        WHERE c.author_id IN %s AND r.comment_id IS NOT NULL
-        GROUP BY c.author_id, r.type
-    """, (uids,)):
-        ratings[row['author_id']] += row['cnt'] * weights.get(row['type'], 1)
-
-    for row in db_fetch_all("""
-        SELECT p.author_id, r.type, COUNT(*) as cnt
-        FROM reactions r JOIN posts p ON r.post_id = p.post_id
-        WHERE p.author_id IN %s AND r.post_id IS NOT NULL
-        GROUP BY p.author_id, r.type
-    """, (uids,)):
-        ratings[row['author_id']] += row['cnt'] * weights.get(row['type'], 1)
-
-    for row in db_fetch_all(
-        "SELECT blocked_id, COUNT(*) as cnt FROM blocks WHERE blocked_id IN %s GROUP BY blocked_id",
-        (uids,)
-    ):
-        ratings[row['blocked_id']] += row['cnt'] * -10
-
-    for row in db_fetch_all(
-        "SELECT followed_id, COUNT(*) as cnt FROM followers WHERE followed_id IN %s GROUP BY followed_id",
-        (uids,)
-    ):
-        ratings[row['followed_id']] += row['cnt'] * 2
-
+    ratings = {orig: 0 for orig in originals.values()}
+    rows = db_fetch_all(
+        f"WITH score_authors AS (SELECT UNNEST(%s::text[]) AS author_id), {_SCORE_CTES_SQL} "
+        "SELECT author_id, score FROM author_scores",
+        (list(originals.keys()),)
+    )
+    for row in rows or []:
+        orig = originals.get(str(row['author_id']))
+        if orig is not None:
+            ratings[orig] = int(row['score'] or 0)
     return ratings
 
 def calculate_top_weekly_contributors():
@@ -1742,6 +1956,60 @@ def calculate_top_weekly_contributors():
 
 
 
+def _persist_weekly_badges(top_users, today):
+    """All DB work for award_weekly_badges in one worker-thread call: clear old badges,
+    then write history + current badges for every winner with one round trip each
+    (execute_values) inside a single transaction. Returns [(user_id, name, points, badge)]."""
+    winners = []
+    rows = []
+    for idx, user_data in enumerate(top_users[:len(WEEKLY_BADGES)]):
+        rank = idx + 1
+        badge = WEEKLY_BADGES[idx]
+        winners.append((user_data['user_id'], user_data['weekly_points'], badge))
+        rows.append((user_data['user_id'], today, rank, user_data['weekly_points'], badge))
+
+    conn = None
+    _acquire_db_slot()
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor() as cur:
+            # Clear previous badges first (same order of operations as before).
+            cur.execute("UPDATE users SET weekly_badge = NULL")
+            if rows:
+                execute_values(cur, """
+                    INSERT INTO weekly_rankings (user_id, week_start, rank, points_earned, badge_emoji)
+                    VALUES %s
+                    ON CONFLICT (user_id, week_start) DO UPDATE
+                    SET rank = EXCLUDED.rank, points_earned = EXCLUDED.points_earned,
+                        badge_emoji = EXCLUDED.badge_emoji
+                """, rows)
+                execute_values(cur, """
+                    UPDATE users AS u SET weekly_badge = v.badge
+                    FROM (VALUES %s) AS v(user_id, badge)
+                    WHERE u.user_id = v.user_id
+                """, [(w[0], w[2]) for w in winners])
+                cur.execute(
+                    "SELECT user_id, anonymous_name FROM users WHERE user_id = ANY(%s)",
+                    ([w[0] for w in winners],)
+                )
+                names = {r['user_id']: r['anonymous_name'] for r in cur.fetchall()}
+            else:
+                names = {}
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+        _db_slots.release()
+
+    _invalidate_user_cache()   # weekly_badge changed for many users
+    _leaderboard_cache_bust()  # leaderboard rows carry weekly_badge
+    return [(uid, names.get(uid) or "Contributor", points, badge) for uid, points, badge in winners]
+
+
 async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
     """
     Weekly job to announce top contributors.
@@ -1757,42 +2025,22 @@ async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
     
     try:
         logger.info("Starting weekly contributor announcement job...")
-        
-        # Clear previous badges
-        db_execute("UPDATE users SET weekly_badge = NULL")
-        
-        top_users = calculate_top_weekly_contributors()
-        if not top_users:
+
+        top_users = await asyncio.to_thread(calculate_top_weekly_contributors)
+        today = datetime.now(timezone.utc).date()
+
+        # NOTE: previously the old badges were cleared BEFORE calculating winners; they are
+        # now cleared together with the new ones in a single transaction, so a crash in
+        # between can no longer leave the community with no badges at all.
+        winners = await asyncio.to_thread(_persist_weekly_badges, top_users or [], today)
+        if not winners:
             logger.info("No users earned points this week.")
             summary['success'] = True
             return summary
 
-        badges = ["", "", ""]
         winners_info = []
-        today = datetime.now(timezone.utc).date()
-        
-        for idx, user_data in enumerate(top_users):
-            user_id = user_data['user_id']
-            points = user_data['weekly_points']
-            rank = idx + 1
-            badge_emoji = badges[rank-1]
-            
-            # Store in history
-            db_execute("""
-                INSERT INTO weekly_rankings (user_id, week_start, rank, points_earned, badge_emoji)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (user_id, week_start) DO UPDATE 
-                SET rank = EXCLUDED.rank, points_earned = EXCLUDED.points_earned, badge_emoji = EXCLUDED.badge_emoji
-            """, (user_id, today, rank, points, badge_emoji))
-            
-            # Update current badge in users table
-            db_execute("UPDATE users SET weekly_badge = %s WHERE user_id = %s", (badge_emoji, user_id))
-            
-            # Get user info for announcement
-            user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_id,))
-            name = user['anonymous_name'] if user else "Contributor"
+        for user_id, name, points, badge_emoji in winners:
             winners_info.append(f"{badge_emoji} {name} – {points} pts")
-            
             summary['winners_count'] += 1
             
             # DM winner
@@ -1834,7 +2082,9 @@ async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
 
 @lru_cache(maxsize=128)
 def format_aura(rating):
-    """Create aura based on weighted contribution points."""
+    """Create an aura emoji from weighted contribution points (see calculate_user_rating).
+
+    The weekly top-3 badges are separate: WEEKLY_BADGES = 🥇 🥈 🥉 (users.weekly_badge)."""
     if rating < 0:
         return "🔴"  # Red aura for negative rank (Shame)
     elif rating >= 500:
@@ -1916,29 +2166,19 @@ def format_time_ago(timestamp):
         return timestamp.strftime('%b %d')
 
 def get_user_rank(user_id):
-    users = db_fetch_all('''
-        SELECT user_id, 
-               (
-                (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
-                (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
-                COALESCE((
-                    SELECT SUM(CASE WHEN r.type = 'like' THEN 1 WHEN r.type = 'dislike' THEN -2 ELSE 0 END)
-                    FROM reactions r
-                    JOIN comments c2 ON r.comment_id = c2.comment_id
-                    WHERE c2.author_id = u.user_id
-                ), 0) -
-                (SELECT COUNT(*) FROM blocks b WHERE b.blocked_id = u.user_id) * 10
-               ) as total
-        FROM users u
-        WHERE u.is_admin = FALSE
-        ORDER BY total DESC
-    ''')
-
-    
-    for rank, user in enumerate(users, start=1):
-        if user['user_id'] == user_id:
-            return rank
-    return None
+    """1-based leaderboard rank of a (non-admin) user, or None. One query: the shared score
+    CTE plus RANK() over it - no more loading every user into Python to find one position."""
+    row = db_fetch_one(f"""
+        WITH score_authors AS (
+            SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
+        ),
+        {_SCORE_CTES_SQL},
+        ranked AS (
+            SELECT author_id, RANK() OVER (ORDER BY score DESC) AS rnk FROM author_scores
+        )
+        SELECT rnk FROM ranked WHERE author_id = %s
+    """, (str(user_id),))
+    return int(row['rnk']) if row else None
 
 def build_channel_post_keyboard(post_id: int, comment_count: int, explicit: bool = False):
     """Inline keyboard attached to a post in the channel.
@@ -1963,15 +2203,15 @@ async def update_channel_post_comment_count(context: ContextTypes.DEFAULT_TYPE, 
     """Update the comment count on the channel post"""
     try:
         # Get the post details
-        post = db_fetch_one("SELECT channel_message_id, comment_count, explicit FROM posts WHERE post_id = %s", (post_id,))
+        post = (await db_fetch_one_async("SELECT channel_message_id, comment_count, explicit FROM posts WHERE post_id = %s", (post_id,)))
         if not post or not post['channel_message_id']:
             return
         
         # Count all comments for this post
-        total_comments = count_all_comments(post_id)
+        total_comments = (await asyncio.to_thread(count_all_comments, post_id))
         
         # Update the database with the new count
-        db_execute("UPDATE posts SET comment_count = %s WHERE post_id = %s", (total_comments, post_id))
+        (await db_execute_async("UPDATE posts SET comment_count = %s WHERE post_id = %s", (total_comments, post_id)))
         
         # Update the channel message button
         keyboard = build_channel_post_keyboard(post_id, total_comments, post.get('explicit', False))
@@ -2010,25 +2250,9 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if loading_msg:
         await animated_loading(loading_msg, "Loading leaderboard", 3)
     
-    # Get top 10 users with weighted aura
-    top_users = db_fetch_all('''
-        SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge,
-               (
-                (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
-                (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
-                COALESCE((
-                    SELECT SUM(CASE WHEN r.type = 'like' THEN 1 WHEN r.type = 'dislike' THEN -2 ELSE 0 END)
-                    FROM reactions r
-                    JOIN comments c2 ON r.comment_id = c2.comment_id
-                    WHERE c2.author_id = u.user_id
-                ), 0) -
-                (SELECT COUNT(*) FROM blocks b WHERE b.blocked_id = u.user_id) * 10
-               ) as total
-        FROM users u
-        WHERE u.is_admin = FALSE
-        ORDER BY total DESC
-        LIMIT 10
-    ''')
+    # Top 10 users with weighted aura: one shared CTE query, cached for ~60s
+    # (see get_leaderboard_rows / _leaderboard_cache_bust), run off the event loop.
+    top_users = await asyncio.to_thread(get_leaderboard_rows, 10)
 
     
     # Create clean header
@@ -2068,12 +2292,12 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Add current user's rank
     user_id = str(update.effective_user.id)
-    user_rank = get_user_rank(user_id)
+    user_rank = await asyncio.to_thread(get_user_rank, user_id)
     
     if user_rank:
-        user_data = db_fetch_one("SELECT anonymous_name, sex, is_admin FROM users WHERE user_id = %s", (user_id,))
+        user_data = await db_fetch_one_async("SELECT anonymous_name, sex, is_admin FROM users WHERE user_id = %s", (user_id,))
         if user_data:
-            user_contributions = calculate_user_rating(user_id)
+            user_contributions = await asyncio.to_thread(calculate_user_rating, user_id)
             safe_user_name = escape_markdown(user_data['anonymous_name'], version=2)
             user_sex_val = user_data['sex'] if user_data['sex'] in ('👨', '👩') else ""
             safe_user_sex = escape_markdown(user_sex_val, version=2)
@@ -2142,7 +2366,7 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
     try:
-        user = db_fetch_one("SELECT notifications_enabled, privacy_public, is_admin FROM users WHERE user_id = %s", (user_id,))
+        user = (await db_fetch_one_async("SELECT notifications_enabled, privacy_public, is_admin FROM users WHERE user_id = %s", (user_id,)))
         
         if not user:
             if update.message:
@@ -2154,10 +2378,10 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         notifications_status = "ON" if user['notifications_enabled'] else "OFF"
         privacy_status = "Public" if user['privacy_public'] else "Private"
 
-        pending_requests_row = db_fetch_one(
+        pending_requests_row = (await db_fetch_one_async(
             "SELECT COUNT(*) as cnt FROM chat_requests WHERE receiver_id = %s AND status = 'pending'",
             (user_id,)
-        )
+        ))
         pending_requests = pending_requests_row['cnt'] if pending_requests_row else 0
         requests_label = f"Chat Requests ({pending_requests})" if pending_requests else "Chat Requests"
         
@@ -2217,10 +2441,10 @@ async def show_privacy_settings(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = str(update.effective_user.id)
     query = update.callback_query
     
-    user = db_fetch_one("""
+    user = (await db_fetch_one_async("""
         SELECT hide_aura, hide_bio, hide_follower_count, hide_role 
         FROM users WHERE user_id = %s
-    """, (user_id,))
+    """, (user_id,)))
     
     if not user:
         await query.answer("User not found.", show_alert=True)
@@ -2278,7 +2502,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     
     thread_text = ""
     if thread_from_post_id:
-        thread_post = db_fetch_one("SELECT content, channel_message_id FROM posts WHERE post_id = %s", (thread_from_post_id,))
+        thread_post = (await db_fetch_one_async("SELECT content, channel_message_id FROM posts WHERE post_id = %s", (thread_from_post_id,)))
         if thread_post:
             thread_preview = thread_post['content'][:100] + '...' if len(thread_post['content']) > 100 else thread_post['content']
             if thread_post['channel_message_id']:
@@ -2425,7 +2649,7 @@ async def send_telegram_media_async(context: ContextTypes.DEFAULT_TYPE, chat_id,
 async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post_id: int, commenter_id: str, comment_id: int = None, comment_content: str = None, comment_type: str = 'text', media_id: str = None):
     """Notify the post author when a new top‑level comment is added."""
     try:
-        post = db_fetch_one("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,))
+        post = (await db_fetch_one_async("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,)))
         if not post:
             return
         
@@ -2433,11 +2657,11 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
         if author_id == commenter_id:
             return
         
-        author = db_fetch_one("SELECT user_id, notifications_enabled FROM users WHERE user_id = %s", (author_id,))
+        author = (await db_fetch_one_async("SELECT user_id, notifications_enabled FROM users WHERE user_id = %s", (author_id,)))
         if not author or not author['notifications_enabled']:
             return
         
-        commenter = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (commenter_id,))
+        commenter = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (commenter_id,)))
         commenter_name = get_display_name(commenter)
         
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
@@ -2489,15 +2713,15 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
         logger.error(f"Error notifying vent author: {e}")
 async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, comment_id: int, replier_id: str, new_comment_id: int = None, comment_content: str = None, comment_type: str = 'text', media_id: str = None):
     try:
-        comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
+        comment = (await db_fetch_one_async("SELECT * FROM comments WHERE comment_id = %s", (comment_id,)))
         if not comment:
             return
         
-        original_author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (comment['author_id'],))
+        original_author = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (comment['author_id'],)))
         if not original_author or not original_author['notifications_enabled']:
             return
         
-        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+        post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
         if not post:
             return
             
@@ -2506,7 +2730,7 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
             replier_display = "Vent author"
             safe_replier_name = replier_display
         else:
-            replier = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (replier_id,))
+            replier = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (replier_id,)))
             replier_name = get_display_name(replier)
             safe_replier_name = escape_markdown(replier_name, version=2)
         
@@ -2560,11 +2784,11 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
     if not ADMIN_ID:
         return
     
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
     if not post:
         return
     
-    author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (post['author_id'],))
+    author = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (post['author_id'],)))
     author_name = get_display_name(author)
     
     media_type = post.get('media_type') or 'text'
@@ -2619,27 +2843,27 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
 # Update the submit vent endpoint to use this
 async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sender_id: str, receiver_id: str, message_content: str, message_id: int):
     try:
-        is_blocked = db_fetch_one(
+        is_blocked = (await db_fetch_one_async(
             "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
             (receiver_id, sender_id)
-        )
+        ))
         if is_blocked:
             return
 
-        receiver = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (receiver_id,))
+        receiver = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (receiver_id,)))
         if not receiver or not receiver['notifications_enabled']:
             return
 
-        sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
+        sender = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (sender_id,)))
         sender_name = get_display_name(sender)
         safe_sender_name = escape_markdown(sender_name, version=2)
 
         media_type, media_id = 'text', None
         if message_id:
-            media_row = db_fetch_one(
+            media_row = (await db_fetch_one_async(
                 "SELECT media_type, media_id FROM private_messages WHERE message_id = %s",
                 (message_id,)
-            )
+            ))
             if media_row:
                 media_type = media_row.get('media_type') or 'text'
                 media_id = media_row.get('media_id')
@@ -2698,10 +2922,10 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         # Remember the live notification's message_id so a later edit/delete of
         # this private message can be applied natively to the real Telegram message.
         if sent_msg and message_id:
-            db_execute(
+            (await db_execute_async(
                 "UPDATE private_messages SET notif_message_id = %s WHERE message_id = %s",
                 (sent_msg.message_id, message_id)
-            )
+            ))
     except Exception as e:
         logger.error("Error sending private message notification: " + str(e))
 
@@ -2713,7 +2937,7 @@ async def edit_native_pm_notification(context: ContextTypes.DEFAULT_TYPE, receiv
     the change in place (with Telegram's own "edited" tag) instead of only our
     DB copy changing underneath them."""
     try:
-        sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
+        sender = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (sender_id,)))
         sender_name = get_display_name(sender) if sender else "Someone"
         safe_sender_name = escape_markdown(sender_name, version=2)
 
@@ -2792,15 +3016,15 @@ async def weekly_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer("Calculating...")
     
-    top_users = calculate_top_weekly_contributors()
+    top_users = (await asyncio.to_thread(calculate_top_weekly_contributors))
     if not top_users:
         await query.message.reply_text("No users earned points in the last 7 days.")
         return
 
     winners_info = []
-    badges = ["", "", ""]
+    badges = WEEKLY_BADGES
     for idx, user_data in enumerate(top_users):
-        u = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_data['user_id'],))
+        u = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (user_data['user_id'],)))
         name = u['anonymous_name'] if u else "Anonymous"
         winners_info.append(f"{badges[idx]} {name} – {user_data['weekly_points']} pts")
 
@@ -2818,7 +3042,7 @@ async def weekly_force_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if summary['success']:
         report = (
             "*Weekly job completed.*\n"
-            f"• Winners announced: {'' if summary['announcement_sent'] else ''}\n"
+            f"• Winners announced: {'\u2705' if summary['announcement_sent'] else '\u274C'}\n"
             f"• DMs sent: {summary['dms_sent']}\n"
             f"• Badges updated: {summary['winners_count']}"
         )
@@ -2832,7 +3056,7 @@ async def weekly_last_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
-    last_date, winners = get_last_week_winners()
+    last_date, winners = (await asyncio.to_thread(get_last_week_winners))
     if not winners:
         await query.message.reply_text("No winners recorded in weekly_rankings.")
         return
@@ -2850,7 +3074,7 @@ async def weekly_fix_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     
     user_id = str(query.from_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         await query.edit_message_text("Admin only.")
         return
@@ -2870,7 +3094,7 @@ async def weekly_fix_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Reschedule
     job_queue.run_daily(
         award_weekly_badges,
-        time=time(0, 0, tzinfo=timezone.utc),
+        time=dt_time(0, 0, tzinfo=timezone.utc),
         days=(0,),
         name="weekly_badges"
     )
@@ -2906,17 +3130,17 @@ async def weekly_status_callback(update: Update, context: ContextTypes.DEFAULT_T
 # Re-implement command versions (proxies to callbacks logic or vice versa)
 async def test_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']: return
     
-    top_users = calculate_top_weekly_contributors()
+    top_users = (await asyncio.to_thread(calculate_top_weekly_contributors))
     if not top_users:
         await update.message.reply_text("No users earned points in the last 7 days.")
         return
     winners_info = []
-    badges = ["", "", ""]
+    badges = WEEKLY_BADGES
     for idx, user_data in enumerate(top_users):
-        u = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_data['user_id'],))
+        u = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (user_data['user_id'],)))
         name = u['anonymous_name'] if u else "Anonymous"
         winners_info.append(f"{badges[idx]} {name} – {user_data['weekly_points']} pts")
     text = "*Weekly Points (Last 7 days)*\n\n" + "\n".join(winners_info) + "\n\n_Admin only – no announcement sent._"
@@ -2924,7 +3148,7 @@ async def test_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def force_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']: return
     status_msg = await update.message.reply_text("Forcing weekly announcement job...")
     summary = await award_weekly_badges(context)
@@ -2936,7 +3160,7 @@ async def force_weekly_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def weekly_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']: return
     job = next((j for j in context.application.job_queue.jobs() if j.name == "weekly_badges"), None)
     if job:
@@ -2962,7 +3186,7 @@ def get_last_week_winners():
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         if update.message:
             await update.message.reply_text("You don't have permission to access this.")
@@ -2971,20 +3195,20 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Get statistics for display
-    pending_posts = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE approved = FALSE")
+    pending_posts = (await db_fetch_one_async("SELECT COUNT(*) as count FROM posts WHERE approved = FALSE"))
     pending_count = pending_posts['count'] if pending_posts else 0
     
-    total_users = db_fetch_one("SELECT COUNT(*) as count FROM users")
+    total_users = (await db_fetch_one_async("SELECT COUNT(*) as count FROM users"))
     users_count = total_users['count'] if total_users else 0
     
-    active_today = db_fetch_one('''
+    active_today = (await db_fetch_one_async('''
         SELECT COUNT(DISTINCT user_id) as count 
         FROM (
             SELECT author_id as user_id FROM posts WHERE DATE(timestamp) = CURRENT_DATE
             UNION 
             SELECT author_id as user_id FROM comments WHERE DATE(timestamp) = CURRENT_DATE
         ) AS active_users
-    ''')
+    '''))
     active_count = active_today['count'] if active_today else 0
     
     keyboard = [
@@ -3035,7 +3259,7 @@ async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(query.from_user.id)
     
     # Verify admin permissions
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         await query.answer("You don't have permission to access this.", show_alert=True)
         return
@@ -3090,7 +3314,7 @@ async def handle_broadcast_type(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = str(query.from_user.id)
     
     # Verify admin permissions
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         await query.answer("You don't have permission to access this.", show_alert=True)
         return
@@ -3147,7 +3371,7 @@ async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Verify admin permissions
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         if is_callback:
             await update.callback_query.answer("You don't have permission to access this.", show_alert=True)
@@ -3156,7 +3380,7 @@ async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Get user count for confirmation
-    total_users = db_fetch_one("SELECT COUNT(*) as count FROM users")
+    total_users = (await db_fetch_one_async("SELECT COUNT(*) as count FROM users"))
     users_count = total_users['count'] if total_users else 0
     
     text = (
@@ -3226,7 +3450,7 @@ async def execute_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # Get all users (exclude the sender)
-    all_users = db_fetch_all("SELECT user_id FROM users WHERE user_id != %s", (user_id,))
+    all_users = (await db_fetch_all_async("SELECT user_id FROM users WHERE user_id != %s", (user_id,)))
     total_users = len(all_users)
     
     if total_users == 0:
@@ -3369,21 +3593,21 @@ async def advanced_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = str(query.from_user.id)
     
     # Verify admin permissions
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         await query.answer("You don't have permission to access this.", show_alert=True)
         return
     
     # Get user statistics for targeting
-    total_users = db_fetch_one("SELECT COUNT(*) as count FROM users")
-    active_users = db_fetch_one('''
+    total_users = (await db_fetch_one_async("SELECT COUNT(*) as count FROM users"))
+    active_users = (await db_fetch_one_async('''
         SELECT COUNT(DISTINCT user_id) as count 
         FROM (
             SELECT author_id as user_id FROM posts WHERE DATE(timestamp) >= CURRENT_DATE - INTERVAL '7 days'
             UNION 
             SELECT author_id as user_id FROM comments WHERE DATE(timestamp) >= CURRENT_DATE - INTERVAL '7 days'
         ) AS active_users
-    ''')
+    '''))
     
     text = (
         "*Advanced Broadcast*\n\n"
@@ -3423,7 +3647,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE,
     user_id = str(update.effective_user.id)
     
     # Verify admin permissions
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         if update.message:
             await update.message.reply_text("You don't have permission to access this.")
@@ -3435,7 +3659,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE,
         page = 1
     per_page = ADMIN_PENDING_PAGE_SIZE
 
-    total_row = db_fetch_one("SELECT COUNT(*) as cnt FROM posts WHERE approved = FALSE")
+    total_row = (await db_fetch_one_async("SELECT COUNT(*) as cnt FROM posts WHERE approved = FALSE"))
     total = total_row['cnt'] if total_row else 0
     total_pages = max(1, (total + per_page - 1) // per_page)
     if page > total_pages:
@@ -3443,7 +3667,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE,
     offset = (page - 1) * per_page
 
     # Get pending posts for this page (simplified - no JOIN with pending_notifications)
-    posts = db_fetch_all("""
+    posts = (await db_fetch_all_async("""
         SELECT p.post_id, p.content, u.anonymous_name, p.media_type, p.media_id, p.explicit,
                STRING_AGG(pc.category_code, ', ') as categories
         FROM posts p
@@ -3453,7 +3677,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE,
         GROUP BY p.post_id, u.anonymous_name, p.media_type, p.media_id, p.content, p.timestamp, p.explicit
         ORDER BY p.timestamp
         LIMIT %s OFFSET %s
-    """, (per_page, offset))
+    """, (per_page, offset)))
     
     if not posts:
         if update.callback_query:
@@ -3590,23 +3814,23 @@ async def toggle_post_explicit(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     user_id = str(update.effective_user.id)
 
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         await query.answer("You don't have permission to do this.", show_alert=True)
         return
 
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
     if not post:
         await query.answer("Post not found.", show_alert=True)
         return
 
     new_explicit = not post.get('explicit')
-    db_execute("UPDATE posts SET explicit = %s WHERE post_id = %s", (new_explicit, post_id))
+    (await db_execute_async("UPDATE posts SET explicit = %s WHERE post_id = %s", (new_explicit, post_id)))
 
     # If already live in the channel, update the channel message content + keyboard too
     if post.get('approved') and post.get('channel_message_id'):
         try:
-            cats_row = db_fetch_all("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,))
+            cats_row = (await db_fetch_all_async("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,)))
             categories = [row['category_code'] for row in cats_row]
             hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
             safe_hashtags = html.escape(hashtags)
@@ -3671,7 +3895,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
     user_id = str(update.effective_user.id)
     
     # Verify admin permissions
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         try:
             await query.answer("You don't have permission to do this.", show_alert=True)
@@ -3680,7 +3904,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         return
     
     # Get the post
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
     if not post:
         try:
             await query.answer("Post not found.", show_alert=True)
@@ -3690,11 +3914,11 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
     
     try:
         # Get the next vent number FIRST
-        max_vent = db_fetch_one("SELECT MAX(vent_number) as max_num FROM posts WHERE approved = TRUE")
+        max_vent = (await db_fetch_one_async("SELECT MAX(vent_number) as max_num FROM posts WHERE approved = TRUE"))
         next_vent_number = (max_vent['max_num'] or 0) + 1
         
         # Get categories for this post
-        cats_row = db_fetch_all("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,))
+        cats_row = (await db_fetch_all_async("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,)))
         categories = [row['category_code'] for row in cats_row]
         hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
         
@@ -3716,10 +3940,10 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         reply_to_message_id = None
         if post['thread_from_post_id']:
             # Get the original post's channel message ID
-            original_post = db_fetch_one(
+            original_post = (await db_fetch_one_async(
                 "SELECT channel_message_id FROM posts WHERE post_id = %s", 
                 (post['thread_from_post_id'],)
-            )
+            ))
             if original_post and original_post['channel_message_id']:
                 reply_to_message_id = original_post['channel_message_id']
         
@@ -3781,13 +4005,14 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             return
         
         # Update the post in database with vent number
-        success = db_execute(
+        success = (await db_execute_async(
             "UPDATE posts SET approved = TRUE, admin_approved_by = %s, channel_message_id = %s, vent_number = %s WHERE post_id = %s",
             (user_id, msg.message_id, next_vent_number, post_id)
-        )
+        ))
         
         # Clear Aura Cache for real-time accuracy
         calculate_user_rating.cache_clear()
+        _leaderboard_cache_bust()
         format_aura.cache_clear()
 
         
@@ -3874,7 +4099,7 @@ async def finalize_rejection(update: Update, context: ContextTypes.DEFAULT_TYPE,
     user_id = str(update.effective_user.id)
     
     # Get the post details before deleting
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
     if not post:
         logger.warning(f"Post {post_id} not found during finalize_rejection")
         return
@@ -3902,7 +4127,7 @@ async def finalize_rejection(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
         # Rejected posts are deleted outright rather than archived; if a status-based
         # soft-rejection flow is ever needed, add a `status` column instead of reusing this.
-        success = db_execute("DELETE FROM posts WHERE post_id = %s", (post_id,))
+        success = (await db_execute_async("DELETE FROM posts WHERE post_id = %s", (post_id,)))
         
         # Clear context flags
         context.user_data.pop('rejecting_post', None)
@@ -3918,8 +4143,7 @@ async def finalize_rejection(update: Update, context: ContextTypes.DEFAULT_TYPE,
         else:
             await update.message.reply_text(confirm_text)
             
-        # Return to admin panel after a short delay
-        await asyncio.sleep(1)
+        # Return to admin panel right away (used to wait 1s)
         await admin_panel(update, context)
 
     except Exception as e:
@@ -3934,7 +4158,7 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
     user_id = str(update.effective_user.id)
     
     # Verify admin permissions
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         try:
             await query.answer("You don't have permission to do this.", show_alert=True)
@@ -3943,7 +4167,7 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
         return
     
     # Get the post
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
     if not post:
         try:
             await query.answer("Post not found.", show_alert=True)
@@ -3958,14 +4182,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
     # Check if user exists and create if not
-    user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,)))
     if not user:
         anon = create_anonymous_name(user_id)
         is_admin = str(user_id) == str(ADMIN_ID)
-        success = db_execute(
+        success = (await db_execute_async(
             "INSERT INTO users (user_id, anonymous_name, sex, is_admin) VALUES (%s, %s, %s, %s)",
             (user_id, anon, '👤', is_admin)
-        )
+        ))
         if not success:
             await update.message.reply_text("Error creating user profile. Please try again.")
             return
@@ -4021,19 +4245,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 target_user_id = parts[1]
                 post_id = parts[2] if len(parts) >= 3 else None
 
-                user_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (target_user_id,))
+                user_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (target_user_id,)))
                 if not user_data:
                     await update.message.reply_text("User not found.")
                     return
 
-                followers = db_fetch_all("SELECT * FROM followers WHERE followed_id = %s", (user_data['user_id'],))
-                rating = calculate_user_rating(user_data['user_id'])
+                followers = (await db_fetch_all_async("SELECT * FROM followers WHERE followed_id = %s", (user_data['user_id'],)))
+                rating = (await asyncio.to_thread(calculate_user_rating, user_data['user_id']))
                 current_user_id = user_id
 
                 # Determine if this is a vent author context (viewing from a post)
                 is_vent_author = False
                 if post_id:
-                    post_info = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
+                    post_info = (await db_fetch_one_async("SELECT author_id FROM posts WHERE post_id = %s", (post_id,)))
                     if post_info and str(post_info['author_id']) == str(target_user_id) and str(target_user_id) != str(current_user_id):
                         is_vent_author = True
 
@@ -4041,11 +4265,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 btn = []
                 if user_data['user_id'] != current_user_id:
                     # Check chat request status
-                    accepted_request = db_fetch_one(
+                    accepted_request = (await db_fetch_one_async(
                         "SELECT status FROM chat_requests WHERE "
                         "((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s)) AND status = 'accepted'",
                         (current_user_id, user_data['user_id'], user_data['user_id'], current_user_id)
-                    )
+                    ))
 
                     chat_btn_text = "Chat" if accepted_request else "Request to Chat"
                     chat_btn_callback = f'message_{user_data["user_id"]}' if accepted_request else f'chatrequest_{user_data["user_id"]}'
@@ -4054,17 +4278,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if is_vent_author:
                         btn.append([InlineKeyboardButton(chat_btn_text, callback_data=chat_btn_callback)])
                         # Check block status
-                        is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id']))
+                        is_blocked = (await db_fetch_one_async("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id'])))
                         if is_blocked:
                             btn.append([InlineKeyboardButton("Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
                         else:
                             btn.append([InlineKeyboardButton("Block User", callback_data=f'block_user_{user_data["user_id"]}')])
                     else:
                         # Normal profile: show follow/unfollow, chat, block
-                        is_following = db_fetch_one(
+                        is_following = (await db_fetch_one_async(
                             "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
                             (current_user_id, user_data['user_id'])
-                        )
+                        ))
                         if is_following:
                             btn.append([InlineKeyboardButton("Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
                         else:
@@ -4072,7 +4296,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         btn.append([InlineKeyboardButton(chat_btn_text, callback_data=chat_btn_callback)])
 
-                        is_blocked = db_fetch_one("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id']))
+                        is_blocked = (await db_fetch_one_async("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id'])))
                         if is_blocked:
                             btn.append([InlineKeyboardButton("Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
                         else:
@@ -4102,7 +4326,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     level = (rating // 10) + 1
 
                     # Privacy filters
-                    viewer_data = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (current_user_id,))
+                    viewer_data = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (current_user_id,)))
                     is_viewer_admin = viewer_data['is_admin'] if viewer_data else False
 
                     if not is_viewer_admin and not is_owner:
@@ -4124,9 +4348,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             following_count = "Hidden"
                         else:
                             follower_count = str(len(followers))
-                            following_row = db_fetch_one(
+                            following_row = (await db_fetch_one_async(
                                 "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
-                            )
+                            ))
                             following_count = str(following_row['count'] if following_row else 0)
 
                         hide_role = user_data.get('hide_role')
@@ -4136,9 +4360,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         is_target_admin = user_data.get('is_admin', False)
                         aura_str = "" if is_target_admin else format_aura(rating)
                         follower_count = str(len(followers))
-                        following_row = db_fetch_one(
+                        following_row = (await db_fetch_one_async(
                             "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
-                        )
+                        ))
                         following_count = str(following_row['count'] if following_row else 0)
                         hide_role = False
 
@@ -4214,10 +4438,10 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
         await animated_loading(loading_msg, "Loading", 1)
 
     # Get unread messages count (across all conversations)
-    unread_count_row = db_fetch_one(
+    unread_count_row = (await db_fetch_one_async(
         "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = %s AND is_read = FALSE",
         (user_id,)
-    )
+    ))
     unread_count = unread_count_row['count'] if unread_count_row else 0
 
     # Pagination settings — one row per conversation partner
@@ -4225,7 +4449,7 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
     offset = (page - 1) * per_page
 
     # Group messages by sender so each row represents one person, not one message
-    conversations = db_fetch_all('''
+    conversations = (await db_fetch_all_async('''
         SELECT pm.sender_id,
                u.anonymous_name AS sender_name,
                u.sex AS sender_sex,
@@ -4238,12 +4462,12 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
         GROUP BY pm.sender_id, u.anonymous_name, u.sex
         ORDER BY last_timestamp DESC
         LIMIT %s OFFSET %s
-    ''', (user_id, per_page, offset))
+    ''', (user_id, per_page, offset)))
 
-    total_conv_row = db_fetch_one(
+    total_conv_row = (await db_fetch_one_async(
         "SELECT COUNT(DISTINCT sender_id) as count FROM private_messages WHERE receiver_id = %s",
         (user_id,)
-    )
+    ))
     total_conversations = total_conv_row['count'] if total_conv_row else 0
     total_pages = max(1, (total_conversations + per_page - 1) // per_page)
 
@@ -4251,7 +4475,6 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
         # No messages - clean empty state
         if loading_msg:
             await replace_with_success(loading_msg, "No messages")
-            await asyncio.sleep(0.5)
 
         text = (
             "*Your Inbox is Empty*\n\n"
@@ -4415,9 +4638,12 @@ async def show_chat_requests(update: Update, context: ContextTypes.DEFAULT_TYPE,
         page = 1
     offset = (page - 1) * per_page
 
-    requests = db_fetch_all(
+    # One round trip (off the event loop); the total rides along as a window count. An empty
+    # page has no row to carry it, but then we either fall back a page or show "no requests".
+    requests = await db_fetch_all_async(
         """
-        SELECT cr.sender_id, cr.timestamp, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge
+        SELECT cr.sender_id, cr.timestamp, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge,
+               COUNT(*) OVER () AS total_count
         FROM chat_requests cr
         JOIN users u ON u.user_id = cr.sender_id
         WHERE cr.receiver_id = %s AND cr.status = 'pending'
@@ -4426,12 +4652,7 @@ async def show_chat_requests(update: Update, context: ContextTypes.DEFAULT_TYPE,
         """,
         (user_id, per_page, offset)
     )
-
-    total_row = db_fetch_one(
-        "SELECT COUNT(*) as cnt FROM chat_requests WHERE receiver_id = %s AND status = 'pending'",
-        (user_id,)
-    )
-    total = total_row['cnt'] if total_row else 0
+    total = int(requests[0]['total_count']) if requests else 0
     total_pages = max(1, (total + per_page - 1) // per_page)
 
     # If this page is now empty (e.g. the last item on it was just accepted/rejected)
@@ -4513,25 +4734,25 @@ async def show_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     user_id = str(update.effective_user.id)
 
-    sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
+    sender = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (sender_id,)))
     sender_name = get_display_name(sender) if sender else "Unknown User"
 
     per_page = 6
     offset = (page - 1) * per_page
 
-    messages = db_fetch_all('''
+    messages = (await db_fetch_all_async('''
         SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex
         FROM private_messages pm
         JOIN users u ON pm.sender_id = u.user_id
         WHERE pm.receiver_id = %s AND pm.sender_id = %s
         ORDER BY pm.timestamp DESC
         LIMIT %s OFFSET %s
-    ''', (user_id, sender_id, per_page, offset))
+    ''', (user_id, sender_id, per_page, offset)))
 
-    total_row = db_fetch_one(
+    total_row = (await db_fetch_one_async(
         "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = %s AND sender_id = %s",
         (user_id, sender_id)
-    )
+    ))
     total_messages = total_row['count'] if total_row else 0
     total_pages = max(1, (total_messages + per_page - 1) // per_page)
 
@@ -4549,10 +4770,10 @@ async def show_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             logger.error(f"Error showing empty conversation: {e}")
         return
 
-    is_blocked = db_fetch_one(
+    is_blocked = (await db_fetch_one_async(
         "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
         (user_id, sender_id)
-    )
+    ))
 
     text = f"*Conversation with {safe_name}*\n"
     text += f"_{total_messages} message{'s' if total_messages != 1 else ''}_\n\n"
@@ -4640,12 +4861,12 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
     user_id = str(query.from_user.id)
     await typing_animation(context, query.message.chat_id, 0.3)
 
-    message = db_fetch_one('''
+    message = (await db_fetch_one_async('''
         SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex, u.user_id as sender_id
         FROM private_messages pm
         JOIN users u ON pm.sender_id = u.user_id
         WHERE pm.message_id = %s AND pm.receiver_id = %s
-    ''', (message_id, user_id))
+    ''', (message_id, user_id)))
 
     if not message:
         try:
@@ -4657,7 +4878,7 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
             await query.message.reply_text("Message not found.")
         return
 
-    db_execute("UPDATE private_messages SET is_read = TRUE WHERE message_id = %s", (message_id,))
+    (await db_execute_async("UPDATE private_messages SET is_read = TRUE WHERE message_id = %s", (message_id,)))
 
     if isinstance(message['timestamp'], str):
         timestamp = datetime.strptime(message['timestamp'], '%Y-%m-%d %H:%M:%S')
@@ -4702,10 +4923,10 @@ async def view_individual_message(update: Update, context: ContextTypes.DEFAULT_
     ]
     text = "\n".join(text_lines)
 
-    is_blocked = db_fetch_one(
+    is_blocked = (await db_fetch_one_async(
         "SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s",
         (user_id, message['sender_id'])
-    )
+    ))
     block_btn = (
         InlineKeyboardButton("Unblock", callback_data=f"unblock_user_{message['sender_id']}")
         if is_blocked else
@@ -4775,12 +4996,12 @@ async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
     user_id = str(query.from_user.id)
 
     # Get message preview for confirmation
-    message = db_fetch_one('''
+    message = (await db_fetch_one_async('''
         SELECT pm.content, u.anonymous_name as sender_name
         FROM private_messages pm
         JOIN users u ON pm.sender_id = u.user_id
         WHERE pm.message_id = %s AND pm.receiver_id = %s
-    ''', (message_id, user_id))
+    ''', (message_id, user_id)))
 
     if not message:
         await query.answer("Message not found", show_alert=True)
@@ -4815,16 +5036,16 @@ async def confirm_delete_message(update: Update, context: ContextTypes.DEFAULT_T
 
     user_id = str(query.from_user.id)
 
-    msg = db_fetch_one(
+    msg = (await db_fetch_one_async(
         "SELECT notif_message_id FROM private_messages WHERE message_id = %s AND receiver_id = %s",
         (message_id, user_id)
-    )
+    ))
 
     # Delete the message
-    success = db_execute(
+    success = (await db_execute_async(
         "DELETE FROM private_messages WHERE message_id = %s AND receiver_id = %s",
         (message_id, user_id)
-    )
+    ))
 
     if success:
         # Also remove the original notification bubble from this chat, if it's
@@ -4843,10 +5064,10 @@ async def edit_sent_message_prompt(update: Update, context: ContextTypes.DEFAULT
     await query.answer()
 
     user_id = str(query.from_user.id)
-    msg = db_fetch_one(
+    msg = (await db_fetch_one_async(
         "SELECT sender_id, content, is_deleted FROM private_messages WHERE message_id = %s",
         (message_id,)
-    )
+    ))
 
     if not msg or str(msg['sender_id']) != str(user_id):
         await query.answer("That message is no longer available to edit.", show_alert=True)
@@ -4873,10 +5094,10 @@ async def delete_sent_message_prompt(update: Update, context: ContextTypes.DEFAU
     await query.answer()
 
     user_id = str(query.from_user.id)
-    msg = db_fetch_one(
+    msg = (await db_fetch_one_async(
         "SELECT sender_id, is_deleted FROM private_messages WHERE message_id = %s",
         (message_id,)
-    )
+    ))
 
     if not msg or str(msg['sender_id']) != str(user_id):
         await query.answer("That message is no longer available.", show_alert=True)
@@ -4903,10 +5124,10 @@ async def delete_sent_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     user_id = str(query.from_user.id)
-    msg = db_fetch_one(
+    msg = (await db_fetch_one_async(
         "SELECT sender_id, receiver_id, is_deleted, notif_message_id FROM private_messages WHERE message_id = %s",
         (message_id,)
-    )
+    ))
 
     if not msg or str(msg['sender_id']) != str(user_id):
         await query.answer("That message is no longer available.", show_alert=True)
@@ -4919,7 +5140,7 @@ async def delete_sent_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if msg.get('notif_message_id'):
         await delete_native_pm_notification(context, msg['receiver_id'], msg['notif_message_id'])
 
-    db_execute("DELETE FROM private_messages WHERE message_id = %s", (message_id,))
+    (await db_execute_async("DELETE FROM private_messages WHERE message_id = %s", (message_id,)))
     await query.message.edit_text("Message deleted.")
 
 
@@ -4931,10 +5152,10 @@ async def mark_all_read(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(query.from_user.id)
 
     # Mark all as read
-    db_execute(
+    (await db_execute_async(
         "UPDATE private_messages SET is_read = TRUE WHERE receiver_id = %s",
         (user_id,)
-    )
+    ))
 
     await query.answer("All messages marked as read")
     await show_inbox(update, context, 1)  # Refresh inbox
@@ -4942,28 +5163,28 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     user_id = str(update.effective_user.id)
     
     # Mark messages as read when viewing
-    db_execute(
+    (await db_execute_async(
         "UPDATE private_messages SET is_read = TRUE WHERE receiver_id = %s",
         (user_id,)
-    )
+    ))
     
     # Get messages with pagination
     per_page = 5
     offset = (page - 1) * per_page
     
-    messages = db_fetch_all('''
+    messages = (await db_fetch_all_async('''
         SELECT pm.*, u.anonymous_name as sender_name, u.sex as sender_sex
         FROM private_messages pm
         JOIN users u ON pm.sender_id = u.user_id
         WHERE pm.receiver_id = %s
         ORDER BY pm.timestamp DESC
         LIMIT %s OFFSET %s
-    ''', (user_id, per_page, offset))
+    ''', (user_id, per_page, offset)))
     
-    total_messages_row = db_fetch_one(
+    total_messages_row = (await db_fetch_one_async(
         "SELECT COUNT(*) as count FROM private_messages WHERE receiver_id = %s",
         (user_id,)
-    )
+    ))
     total_messages = total_messages_row['count'] if total_messages_row else 0
     total_pages = (total_messages + per_page - 1) // per_page
     
@@ -5038,13 +5259,13 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
     warning) with "View Comments" / "Write Comment" buttons. Comments are only loaded
     once the user taps "View Comments" (or immediately if auto_show_comments=True,
     which is used right after a user posts a new comment so they can see it land)."""
-    post = db_fetch_one("""
+    post = (await db_fetch_one_async("""
         SELECT p.*, STRING_AGG(pc.category_code, ', ') as categories
         FROM posts p
         LEFT JOIN post_categories pc ON p.post_id = pc.post_id
         WHERE p.post_id = %s
         GROUP BY p.post_id
-    """, (post_id,))
+    """, (post_id,)))
     if not post:
         if hasattr(update, 'message') and update.message:
             viewer_id = str(update.effective_user.id) if update.effective_user else None
@@ -5052,7 +5273,7 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
         return
 
     viewer_id = str(update.effective_user.id) if update.effective_user else None
-    viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (viewer_id,)) if viewer_id else None
+    viewer_row = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (viewer_id,))) if viewer_id else None
     is_admin_viewer = bool(viewer_row and viewer_row.get('is_admin'))
     is_owner = viewer_id is not None and str(post['author_id']) == viewer_id
 
@@ -5065,7 +5286,7 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
     # Explicit-content gate: authors and admins see it directly; everyone else must
     # tap through a warning first. Deleted posts skip the gate (nothing to reveal).
     if post.get('explicit') and not post.get('deleted') and not is_owner and not is_admin_viewer and not force_reveal:
-        comment_count = count_all_comments(post_id)
+        comment_count = (await asyncio.to_thread(count_all_comments, post_id))
         reveal_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("View Post & Comments", callback_data=f"revealexplicit_{post_id}_{page}")]
         ])
@@ -5104,7 +5325,7 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
         f"{escaped_text}"
     )
 
-    comment_count = count_all_comments(post_id)
+    comment_count = (await asyncio.to_thread(count_all_comments, post_id))
     header_kb = [
         [InlineKeyboardButton(f"View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_1")],
         [InlineKeyboardButton("Write Comment", callback_data=f"writecomment_{post_id}")]
@@ -5263,22 +5484,22 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
         # Fallback to individual DB queries if no pre-fetched data
         user_reaction = None
         if user_id:
-            user_reaction = db_fetch_one(
+            user_reaction = (await db_fetch_one_async(
                 "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
                 (comment_id, user_id)
-            )
+            ))
         user_reaction_type = user_reaction['type'] if user_reaction else None
         
-        likes_row = db_fetch_one(
+        likes_row = (await db_fetch_one_async(
             "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type NOT IN ('dislike', '👎', '😡')",
             (comment_id,)
-        )
+        ))
         likes = likes_row['cnt'] if likes_row else 0
         
-        dislikes_row = db_fetch_one(
+        dislikes_row = (await db_fetch_one_async(
             "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type IN ('dislike', '👎', '😡')",
             (comment_id,)
-        )
+        ))
         dislikes = dislikes_row['cnt'] if dislikes_row else 0
 
     like_emoji = "👍"
@@ -5389,7 +5610,9 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 sticker=file_id,
                 reply_to_message_id=target_reply_id
             )
-            await context.bot.send_message(
+            # The text message carries the buttons and is what replies thread under, so it (not
+            # the bare sticker) is the message whose id gets stored and returned.
+            text_msg = await context.bot.send_message(
                 chat_id=chat_id,
                 text=message_text if use_markdown else author_text,
                 reply_markup=kb,
@@ -5397,7 +5620,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 reply_to_message_id=st_msg.message_id,
                 disable_web_page_preview=True
             )
-            return st_msg
+            return text_msg
         else:
             return await context.bot.send_message(
                 chat_id=chat_id,
@@ -5447,7 +5670,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             logger.error(f"Absolute final fallback failed for comment {comment_id}: {e_final}")
 
     if msg:
-        db_execute(
+        await db_execute_async(
             "UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s",
             (msg.message_id, comment_id)
         )
@@ -5509,6 +5732,19 @@ def _fetch_comments_page_data(post_id, per_page, offset, user_id):
             for row in p_rows: parent_msg_ids[row['comment_id']] = row['telegram_message_id']
 
         ratings_map = get_user_ratings_batch([c['author_id'] for c in comments])
+
+        # Clear "unread" only up to the newest comment on this page (GREATEST: never move the
+        # marker backwards when the user pages through older comments).
+        if user_id and comments and comments[-1].get('timestamp'):
+            try:
+                db_execute("""
+                    INSERT INTO post_views (user_id, post_id, last_viewed)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, post_id)
+                    DO UPDATE SET last_viewed = GREATEST(post_views.last_viewed, EXCLUDED.last_viewed)
+                """, (str(user_id), post_id, comments[-1]['timestamp']))
+            except Exception as pv_err:
+                logger.warning(f"Could not update post_views for {user_id}/{post_id}: {pv_err}")
 
     return {
         'post': post, 'comments': comments, 'total_comments': total_comments,
@@ -5627,7 +5863,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     # Use joined data if available, else fetch
     is_admin = reply.get('is_admin')
     if is_admin is None: # Not pre-fetched
-        reply_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (reply['author_id'],))
+        reply_user = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (reply['author_id'],)))
         is_admin = reply_user.get('is_admin', False) if reply_user else False
         display_sex = get_display_sex(reply_user) if reply_user else '👤'
         display_name = get_display_name(reply_user) if reply_user else 'Anonymous'
@@ -5641,7 +5877,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
 
     # rating_override lets callers pass a pre-batched rating (see show_more_replies)
     # instead of triggering a fresh 5-query calculate_user_rating() call per reply.
-    rating_reply = rating_override if rating_override is not None else calculate_user_rating(reply['author_id'])
+    rating_reply = rating_override if rating_override is not None else (await asyncio.to_thread(calculate_user_rating, reply['author_id']))
     reply_profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{reply['author_id']}_{post_id}"
     if show_aura is None:
         show_aura = not hide_aura
@@ -5745,7 +5981,7 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     chat_id = update.effective_chat.id
     
     # Get the comment to find its post and telegram_message_id
-    comment = db_fetch_one("SELECT post_id, telegram_message_id FROM comments WHERE comment_id = %s", (comment_id,))
+    comment = (await db_fetch_one_async("SELECT post_id, telegram_message_id FROM comments WHERE comment_id = %s", (comment_id,)))
     if not comment:
         await query.answer("Comment not found", show_alert=True)
         return
@@ -5779,6 +6015,7 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     msg_ids = {comment_id: base_reply_to_id}
 
     for reply in replies:
+        reply_msg_id = None  # defined before the try so the except fallback can never hit UnboundLocalError
         try:
             pid = reply.get('parent_comment_id')
             target_msg_id = msg_ids.get(pid) or parent_msg_ids.get(pid) or base_reply_to_id
@@ -5795,8 +6032,6 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             
             if reply_msg_id:
                 msg_ids[reply['comment_id']] = reply_msg_id
-        except Exception as e:
-            logger.error(f"Error sending reply {reply.get('comment_id')}: {e}")
     
     # If there are more replies, show another "Show more" button
     if page < total_pages:
@@ -5906,13 +6141,13 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE):
-    user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,)))
     if not user:
         return
     
     display_name = get_display_name(user)
     display_sex = get_display_sex(user)
-    rating = calculate_user_rating(user_id)
+    rating = (await asyncio.to_thread(calculate_user_rating, user_id))
     
     weekly_badge = user.get('weekly_badge')
     if weekly_badge:
@@ -5920,19 +6155,19 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
 
     
     
-    followers = db_fetch_all(
+    followers = (await db_fetch_all_async(
         "SELECT * FROM followers WHERE followed_id = %s",
         (user_id,)
-    )
+    ))
     
     bio = user.get('bio', 'No bio set.')
     level = (rating // 10) + 1
     follower_count = len(followers)
 
     # Fetch following count (users this person follows)
-    following_row = db_fetch_one(
+    following_row = (await db_fetch_one_async(
         "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (user_id,)
-    )
+    ))
     following_count = following_row['count'] if following_row else 0
     
     # Profile action grid
@@ -6135,15 +6370,15 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
     offset = (page - 1) * per_page
     
     # Get user's posts with pagination (newest first)
-    posts = db_fetch_all(
+    posts = (await db_fetch_all_async(
         "SELECT * FROM posts WHERE author_id = %s AND approved = TRUE AND deleted = FALSE ORDER BY timestamp DESC LIMIT %s OFFSET %s",
         (user_id, per_page, offset)
-    )
+    ))
     
-    total_posts_row = db_fetch_one(
+    total_posts_row = (await db_fetch_one_async(
         "SELECT COUNT(*) as count FROM posts WHERE author_id = %s AND approved = TRUE AND deleted = FALSE",
         (user_id,)
-    )
+    ))
     total_posts = total_posts_row['count'] if total_posts_row else 0
     total_pages = (total_posts + per_page - 1) // per_page
     
@@ -6151,7 +6386,6 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Show empty state
         if loading_msg:
             await replace_with_success(loading_msg, "No posts found")
-            await asyncio.sleep(0.5)
         
         text = "*My Posts*\n\nYou haven't posted anything yet or your posts are pending approval."
         keyboard = [
@@ -6347,13 +6581,13 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
     await animated_loading(loading_msg, "Loading", 2)
     
     # Get post details with categories
-    post = db_fetch_one("""
+    post = (await db_fetch_one_async("""
         SELECT p.*, STRING_AGG(pc.category_code, ', ') as categories
         FROM posts p
         LEFT JOIN post_categories pc ON p.post_id = pc.post_id
         WHERE p.post_id = %s
         GROUP BY p.post_id
-    """, (post_id,))
+    """, (post_id,)))
     
     if not post:
         await replace_with_error(loading_msg, "Post not found")
@@ -6377,7 +6611,7 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
         timestamp = post['timestamp'].strftime('%b %d, %Y at %H:%M')
     
     # Get comment count
-    comment_count = count_all_comments(post_id)
+    comment_count = (await asyncio.to_thread(count_all_comments, post_id))
     
     # Build the post detail text
     text = (
@@ -6454,19 +6688,19 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     offset = (page - 1) * per_page
     
     # Get user's comments with post info (p.category removed - multi-category migration)
-    comments = db_fetch_all('''
+    comments = (await db_fetch_all_async('''
         SELECT c.*, p.content as post_content, p.post_id
         FROM comments c
         JOIN posts p ON c.post_id = p.post_id
         WHERE c.author_id = %s
         ORDER BY c.timestamp DESC
         LIMIT %s OFFSET %s
-    ''', (user_id, per_page, offset))
+    ''', (user_id, per_page, offset)))
     
-    total_comments_row = db_fetch_one(
+    total_comments_row = (await db_fetch_one_async(
         "SELECT COUNT(*) as count FROM comments WHERE author_id = %s",
         (user_id,)
-    )
+    ))
     total_comments = total_comments_row['count'] if total_comments_row else 0
     total_pages = (total_comments + per_page - 1) // per_page
     
@@ -6474,7 +6708,6 @@ async def show_my_comments(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         # Show empty state
         if loading_msg:
             await replace_with_success(loading_msg, "No comments found")
-            await asyncio.sleep(0.5)
         
         text = "*My Comments*\n\nYou haven't made any comments yet\\."
         keyboard = [
@@ -6629,7 +6862,7 @@ LIVE_MONITOR_JOBS = {}
 async def show_admin_chats_list(update, context, page=1):
     query = update.callback_query
     admin_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (admin_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (admin_id,)))
     if not user or not user['is_admin']:
         if query:
             await query.answer("No permission.", show_alert=True)
@@ -6637,8 +6870,8 @@ async def show_admin_chats_list(update, context, page=1):
 
     per_page = 8
     offset = (page - 1) * per_page
-    convos = get_admin_conversations(limit=per_page, offset=offset)
-    total = get_admin_conversations_count()
+    convos = (await asyncio.to_thread(get_admin_conversations, limit=per_page, offset=offset))
+    total = (await asyncio.to_thread(get_admin_conversations_count))
     total_pages = max(1, (total + per_page - 1) // per_page)
 
     kb = []
@@ -6679,17 +6912,25 @@ async def show_admin_chats_list(update, context, page=1):
         logger.error(f"Error showing admin chats: {e}")
 
 
-def _format_transcript_text(user_a, user_b, live=False):
-    msgs = get_admin_conversation_transcript(user_a, user_b, limit=40)
-    name_a_row = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_a,))
-    name_b_row = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_b,))
-    name_a = name_a_row['anonymous_name'] if name_a_row else 'Anon'
-    name_b = name_b_row['anonymous_name'] if name_b_row else 'Anon'
+TRANSCRIPT_PAGE_SIZE = 40
+
+
+def _format_transcript_text(user_a, user_b, live=False, page=1, total_pages=1):
+    page = max(1, int(page or 1))
+    msgs = get_admin_conversation_transcript(
+        user_a, user_b, limit=TRANSCRIPT_PAGE_SIZE, offset=(page - 1) * TRANSCRIPT_PAGE_SIZE
+    )
+    # Names come from an LRU (invalidated by db_update_user): the live monitor calls this
+    # every 8 seconds and used to run two user lookups on every tick.
+    name_a = get_user_display_name(user_a)
+    name_b = get_user_display_name(user_b)
 
     header = "*LIVE*" if live else "*Transcript*"
     lines = [f"{header}: {escape_markdown(name_a, version=2)} ↔ {escape_markdown(name_b, version=2)}\n"]
     if live:
         lines.append("_auto\\-refreshing every 8s_\n")
+    elif total_pages > 1:
+        lines.append(f"_Page {page}/{total_pages} \\(page 1 = newest\\)_\n")
     if not msgs:
         lines.append("_No messages yet\\._")
     else:
@@ -6706,23 +6947,44 @@ def _format_transcript_text(user_a, user_b, live=False):
     return text[-4000:] if len(text) > 4000 else text
 
 
+def _transcript_view_data(user_a, user_b, page):
+    """Sync helper (run via to_thread): total page count + the rendered text for one page."""
+    total = get_admin_conversation_message_count(user_a, user_b)
+    total_pages = max(1, (total + TRANSCRIPT_PAGE_SIZE - 1) // TRANSCRIPT_PAGE_SIZE)
+    page = max(1, min(page, total_pages))
+    return page, total_pages, _format_transcript_text(user_a, user_b, live=False, page=page, total_pages=total_pages)
+
+
 async def show_admin_chat_transcript(update, context, user_a, user_b, page=1, live=False):
     query = update.callback_query
     admin_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (admin_id,))
+    user = await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (admin_id,))
     if not user or not user['is_admin']:
         if query:
             await query.answer("No permission.", show_alert=True)
         return
 
-    text = _format_transcript_text(user_a, user_b, live=live)
+    total_pages = 1
+    if live:
+        text = await asyncio.to_thread(_format_transcript_text, user_a, user_b, True)
+        page = 1
+    else:
+        # `page` is real now: page 1 = newest 40 messages, higher pages walk back in time.
+        page, total_pages, text = await asyncio.to_thread(_transcript_view_data, user_a, user_b, page)
     live_label = "Stop Live" if live else "Go Live"
     live_cb = f"admin_chat_stoplive_{user_a}_{user_b}" if live else f"admin_chat_golive_{user_a}_{user_b}"
     kb = [
         [InlineKeyboardButton("Refresh", callback_data=f"admin_chat_view_{user_a}_{user_b}_{page}"),
-         InlineKeyboardButton(live_label, callback_data=live_cb)],
-        [InlineKeyboardButton("Chat List", callback_data='admin_chats_1')]
+         InlineKeyboardButton(live_label, callback_data=live_cb)]
     ]
+    if not live and total_pages > 1:
+        nav = []
+        if page < total_pages:
+            nav.append(InlineKeyboardButton("◀ Older", callback_data=f"admin_chat_view_{user_a}_{user_b}_{page + 1}"))
+        if page > 1:
+            nav.append(InlineKeyboardButton("Newer ▶", callback_data=f"admin_chat_view_{user_a}_{user_b}_{page - 1}"))
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("Chat List", callback_data='admin_chats_1')])
     try:
         if query:
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN_V2)
@@ -6736,7 +6998,7 @@ async def show_admin_chat_transcript(update, context, user_a, user_b, page=1, li
 async def _live_monitor_tick(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     d = job.data
-    text = _format_transcript_text(d['user_a'], d['user_b'], live=True)
+    text = await asyncio.to_thread(_format_transcript_text, d['user_a'], d['user_b'], True)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Stop Live", callback_data=f"admin_chat_stoplive_{d['user_a']}_{d['user_b']}")],
         [InlineKeyboardButton("Chat List", callback_data='admin_chats_1')]
@@ -6762,7 +7024,7 @@ async def _live_monitor_tick(context: ContextTypes.DEFAULT_TYPE):
 async def start_live_monitor(update, context, user_a, user_b):
     query = update.callback_query
     admin_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (admin_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (admin_id,)))
     if not user or not user['is_admin']:
         await query.answer("No permission.", show_alert=True)
         return
@@ -6798,7 +7060,7 @@ async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE,
     query = update.callback_query
     user_id = str(update.effective_user.id)
 
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         if query:
             await query.answer("No permission.", show_alert=True)
@@ -6806,9 +7068,9 @@ async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     per_page = 5
     offset = (page - 1) * per_page
-    reports = get_pending_reports(offset=offset, limit=per_page)
+    reports = (await asyncio.to_thread(get_pending_reports, offset=offset, limit=per_page))
 
-    total_row = db_fetch_one("SELECT COUNT(*) as cnt FROM reports WHERE status = 'pending'")
+    total_row = (await db_fetch_one_async("SELECT COUNT(*) as cnt FROM reports WHERE status = 'pending'"))
     total = total_row['cnt'] if total_row else 0
     total_pages = max(1, (total + per_page - 1) // per_page)
 
@@ -6830,7 +7092,7 @@ async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE,
     keyboard = []
 
     for rep in reports:
-        preview, _ = get_report_content_preview(rep['target_type'], rep['target_id'])
+        preview, _ = (await asyncio.to_thread(get_report_content_preview, rep['target_type'], rep['target_id']))
         preview = (preview or '[deleted]')[:60]
         type_label = "Post" if rep['target_type'] == 'post' else "Comment"
         reporter_name = rep.get('reporter_name') or 'Anonymous'
@@ -6889,7 +7151,7 @@ async def notify_admin_of_new_report(
     if not ADMIN_ID:
         return
     try:
-        reporter = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (reporter_id,))
+        reporter = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (reporter_id,)))
         reporter_name = reporter['anonymous_name'] if reporter else 'Anonymous'
         type_label = "Post" if target_type == 'post' else "Comment"
         safe_reason = escape_markdown(reason, version=2)
@@ -6916,8 +7178,8 @@ async def send_reaction_notification(context: ContextTypes.DEFAULT_TYPE, comment
     """Background helper to send interaction notification"""
     try:
         # Resolve identities
-        post = db_fetch_one("SELECT content, author_id FROM posts WHERE post_id = %s", (post_id,))
-        comment_author = db_fetch_one("SELECT user_id, anonymous_name FROM users WHERE user_id = %s", (comment['author_id'],))
+        post = (await db_fetch_one_async("SELECT content, author_id FROM posts WHERE post_id = %s", (post_id,)))
+        comment_author = (await db_fetch_one_async("SELECT user_id, anonymous_name FROM users WHERE user_id = %s", (comment['author_id'],)))
         
         # Don't notify yourself
         if str(reactor_id) == str(comment['author_id']):
@@ -6927,7 +7189,7 @@ async def send_reaction_notification(context: ContextTypes.DEFAULT_TYPE, comment
         if post and str(reactor_id) == str(post['author_id']):
             reactor_display = "Vent author"
         else:
-            reactor = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (reactor_id,))
+            reactor = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (reactor_id,)))
             reactor_display = reactor['anonymous_name'] if reactor else "Anonymous"
         
         # Content formatting
@@ -7133,23 +7395,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_settings(update, context)
 
         elif query.data == 'toggle_notifications':
-            current = db_fetch_one("SELECT notifications_enabled FROM users WHERE user_id = %s", (user_id,))
+            current = (await db_fetch_one_async("SELECT notifications_enabled FROM users WHERE user_id = %s", (user_id,)))
             if current:
                 new_value = not current['notifications_enabled']
-                db_execute(
-                    "UPDATE users SET notifications_enabled = %s WHERE user_id = %s",
-                    (new_value, user_id)
-                )
+                await db_update_user_async(user_id, notifications_enabled=new_value)
             await show_settings(update, context)
         
         elif query.data == 'toggle_privacy':
-            current = db_fetch_one("SELECT privacy_public FROM users WHERE user_id = %s", (user_id,))
+            current = (await db_fetch_one_async("SELECT privacy_public FROM users WHERE user_id = %s", (user_id,)))
             if current:
                 new_value = not current['privacy_public']
-                db_execute(
-                    "UPDATE users SET privacy_public = %s WHERE user_id = %s",
-                    (new_value, user_id)
-                )
+                await db_update_user_async(user_id, privacy_public=new_value)
             await show_settings(update, context)
 
         elif query.data == 'privacy_settings':
@@ -7160,10 +7416,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             col = f"hide_{metric}"
             
             # Simple toggle logic
-            current = db_fetch_one(f"SELECT {col} FROM users WHERE user_id = %s", (user_id,))
+            current = (await db_fetch_one_async(f"SELECT {col} FROM users WHERE user_id = %s", (user_id,)))
             if current:
                 new_val = not current[col]
-                db_execute(f"UPDATE users SET {col} = %s WHERE user_id = %s", (new_val, user_id))
+                await db_update_user_async(user_id, **{col: new_val})
                 status = "Hidden" if new_val else "Visible"
                 await query.answer(f"{metric.replace('_', ' ').title()} is now {status}", show_alert=False)
             
@@ -7230,10 +7486,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 sex = '👤'  # fallback
             
-            db_execute(
-                "UPDATE users SET sex = %s WHERE user_id = %s",
-                (sex, user_id)
-            )
+            await db_update_user_async(user_id, sex=sex)
             await query.message.reply_text("Sex updated!")
             await send_updated_profile(user_id, query.message.chat.id, context)
 
@@ -7242,18 +7495,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_uid = query.data.split('_', 1)[1]
             if query.data.startswith('follow_'):
                 try:
-                    db_execute(
+                    (await db_execute_async(
                         "INSERT INTO followers (follower_id, followed_id) VALUES (%s, %s)",
                         (user_id, target_uid)
-                    )
+                    ))
+                    calculate_user_rating.cache_clear()  # followers add aura points
+                    _leaderboard_cache_bust()
                     # Notify the followed user if they have notifications enabled
-                    followed_user = db_fetch_one(
+                    followed_user = (await db_fetch_one_async(
                         "SELECT notifications_enabled FROM users WHERE user_id = %s", (target_uid,)
-                    )
+                    ))
                     if followed_user and followed_user['notifications_enabled']:
-                        follower_data = db_fetch_one(
+                        follower_data = (await db_fetch_one_async(
                             "SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (user_id,)
-                        )
+                        ))
                         if follower_data:
                             follower_name = follower_data.get('avatar_emoji') or ''
                             follower_name = f"{follower_name} {follower_data['anonymous_name']}".strip()
@@ -7272,11 +7527,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except psycopg2.IntegrityError:
                     pass
             else:
-                db_execute(
+                (await db_execute_async(
                     "DELETE FROM followers WHERE follower_id = %s AND followed_id = %s",
                     (user_id, target_uid)
-                )
+                ))
             calculate_user_rating.cache_clear()
+            _leaderboard_cache_bust()
             await query.message.reply_text("Successfully updated!")
             await send_updated_profile(target_uid, query.message.chat.id, context)
         
@@ -7288,15 +7544,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 page = 1
             per_page = 10
             offset = (page - 1) * per_page
-            rows = db_fetch_all(
+            rows = (await db_fetch_all_async(
                 "SELECT u.user_id, u.anonymous_name, u.avatar_emoji FROM followers f "
                 "JOIN users u ON f.follower_id = u.user_id "
                 "WHERE f.followed_id = %s ORDER BY u.anonymous_name LIMIT %s OFFSET %s",
                 (user_id, per_page, offset)
-            )
-            total_row = db_fetch_one(
+            ))
+            total_row = (await db_fetch_one_async(
                 "SELECT COUNT(*) as cnt FROM followers WHERE followed_id = %s", (user_id,)
-            )
+            ))
             total = total_row['cnt'] if total_row else 0
             total_pages = max(1, (total + per_page - 1) // per_page)
 
@@ -7329,15 +7585,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 page = 1
             per_page = 10
             offset = (page - 1) * per_page
-            rows = db_fetch_all(
+            rows = (await db_fetch_all_async(
                 "SELECT u.user_id, u.anonymous_name, u.avatar_emoji FROM followers f "
                 "JOIN users u ON f.followed_id = u.user_id "
                 "WHERE f.follower_id = %s ORDER BY u.anonymous_name LIMIT %s OFFSET %s",
                 (user_id, per_page, offset)
-            )
-            total_row = db_fetch_one(
+            ))
+            total_row = (await db_fetch_one_async(
                 "SELECT COUNT(*) as cnt FROM followers WHERE follower_id = %s", (user_id,)
-            )
+            ))
             total = total_row['cnt'] if total_row else 0
             total_pages = max(1, (total + per_page - 1) // per_page)
 
@@ -7406,54 +7662,55 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reaction_type = 'like' if parts[0] in ('likecomment', 'likereply') else 'dislike'
 
                 # Check if user already has a reaction on this comment
-                existing_reaction = db_fetch_one(
+                existing_reaction = (await db_fetch_one_async(
                     "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
                     (comment_id, user_id)
-                )
+                ))
 
                 if existing_reaction:
                     is_existing_like = existing_reaction['type'] not in ('dislike', '👎', '😡')
                     is_new_like = reaction_type == 'like'
                     if is_existing_like == is_new_like:
                         # User is clicking the same reaction group - remove it (toggle off)
-                        db_execute(
+                        (await db_execute_async(
                             "DELETE FROM reactions WHERE comment_id = %s AND user_id = %s",
                             (comment_id, user_id)
-                        )
+                        ))
                     else:
                         # User is changing reaction group - update it
-                        db_execute(
+                        (await db_execute_async(
                             "UPDATE reactions SET type = %s WHERE comment_id = %s AND user_id = %s",
                             (reaction_type, comment_id, user_id)
-                        )
+                        ))
                 else:
                     # User is adding a new reaction
-                    db_execute(
+                    (await db_execute_async(
                         "INSERT INTO reactions (comment_id, user_id, type) VALUES (%s, %s, %s)",
                         (comment_id, user_id, reaction_type)
-                    )
+                    ))
                 
                 # Clear Aura Cache
                 calculate_user_rating.cache_clear()
+                _leaderboard_cache_bust()
                 format_aura.cache_clear()
 
                 # Get updated counts
-                likes_row = db_fetch_one(
+                likes_row = (await db_fetch_one_async(
                     "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type NOT IN ('dislike', '👎', '😡')",
                     (comment_id,)
-                )
+                ))
                 likes = likes_row['cnt'] if likes_row else 0
                 
-                dislikes_row = db_fetch_one(
+                dislikes_row = (await db_fetch_one_async(
                     "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type IN ('dislike', '👎', '😡')",
                     (comment_id,)
-                )
+                ))
                 dislikes = dislikes_row['cnt'] if dislikes_row else 0
 
-                comment = db_fetch_one(
+                comment = (await db_fetch_one_async(
                     "SELECT post_id, parent_comment_id, author_id, type, content FROM comments WHERE comment_id = %s",
                     (comment_id,)
-                )
+                ))
                 if not comment:
                     await query.answer("Comment not found", show_alert=True)
                     return
@@ -7462,10 +7719,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parent_comment_id = comment['parent_comment_id']
 
                 # Get user's current reaction after update
-                user_reaction = db_fetch_one(
+                user_reaction = (await db_fetch_one_async(
                     "SELECT type FROM reactions WHERE comment_id = %s AND user_id = %s",
                     (comment_id, user_id)
-                )
+                ))
 
                 like_emoji = "👍"
                 dislike_emoji = "👎"
@@ -7537,7 +7794,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Handle edit comment
         elif query.data.startswith("edit_comment_"):
             comment_id = int(query.data.split('_')[2])
-            comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
+            comment = (await db_fetch_one_async("SELECT * FROM comments WHERE comment_id = %s", (comment_id,)))
             
             if comment and comment['author_id'] == user_id:
                 if comment['type'] != 'text':
@@ -7571,18 +7828,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Handle delete comment
         elif query.data.startswith("delete_comment_"):
             comment_id = int(query.data.split('_')[2])
-            comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
+            comment = (await db_fetch_one_async("SELECT * FROM comments WHERE comment_id = %s", (comment_id,)))
             
             if comment and comment['author_id'] == user_id:
                 # Get post_id before deleting for updating comment count
                 post_id = comment['post_id']
                 
                 # Orphan Adoption: Become top-level first
-                db_execute("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (comment_id,))
+                (await db_execute_async("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (comment_id,)))
                 
                 # Delete the comment and its reactions
-                db_execute("DELETE FROM reactions WHERE comment_id = %s", (comment_id,))
-                db_execute("DELETE FROM comments WHERE comment_id = %s", (comment_id,))
+                (await db_execute_async("DELETE FROM reactions WHERE comment_id = %s", (comment_id,)))
+                (await db_execute_async("DELETE FROM comments WHERE comment_id = %s", (comment_id,)))
+                calculate_user_rating.cache_clear()
+                _leaderboard_cache_bust()
                 
                 await query.answer("Comment deleted")
                 await query.message.delete()
@@ -7603,7 +7862,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if len(parts) > 3:
                     from_page = int(parts[3])
                 
-                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+                post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
                 
                 if post and post['author_id'] == user_id:
                     # Ask for confirmation with page info
@@ -7631,7 +7890,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 post_id = int(parts[3])
                 from_page = int(parts[4]) if len(parts) > 4 else 1
                 
-                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+                post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
                 
                 if post and post['author_id'] == user_id:
                     if post['channel_message_id']:
@@ -7641,19 +7900,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             else:
                                 vent_display = "Vent"
 
-                            cats_row = db_fetch_all("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,))
+                            cats_row = (await db_fetch_all_async("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,)))
                             categories = [row['category_code'] for row in cats_row]
                             hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
-                            safe_hashtags = html.escape(hashtags)
-                            deletion_notice = "This content has been deleted by the author."
 
-                            channel_text = (
-                                f"<code>{vent_display}</code>\n\n"
-                                f"{deletion_notice}\n\n"
-                                f"━━━━━━━━━━━━━━━\n"
-                                f"{safe_hashtags}\n"
-                                f"<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
-                            )
+                            channel_text = build_deleted_channel_text(vent_display, hashtags)
 
                             comment_count = post.get('comment_count') or 0
                             keyboard = InlineKeyboardMarkup([
@@ -7675,7 +7926,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception as e:
                             logger.error(f"Error editing channel message: {e}")
                     
-                    db_execute("UPDATE posts SET deleted = TRUE WHERE post_id = %s", (post_id,))
+                    (await db_execute_async("UPDATE posts SET deleted = TRUE WHERE post_id = %s", (post_id,)))
                     
                     await query.answer("Post deleted successfully")
                     await query.message.edit_text(
@@ -7708,7 +7959,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith("edit_published_"):
             try:
                 post_id = int(query.data.split('_')[2])
-                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+                post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
 
                 # Permission check: only the author can edit their own post
                 if not post or post['author_id'] != user_id:
@@ -7753,10 +8004,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             # Check for existing request
-            existing = db_fetch_one(
+            existing = (await db_fetch_one_async(
                 "SELECT status, timestamp FROM chat_requests WHERE sender_id = %s AND receiver_id = %s",
                 (user_id, target_id)
-            )
+            ))
             
             if existing:
                 if existing['status'] == 'accepted':
@@ -7791,13 +8042,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
                 # Cooldown has passed — bump the timestamp and re-notify as a reminder.
-                db_execute(
+                (await db_execute_async(
                     "UPDATE chat_requests SET timestamp = CURRENT_TIMESTAMP WHERE sender_id = %s AND receiver_id = %s",
                     (user_id, target_id)
-                )
+                ))
                 await query.answer("🔔 Reminder sent!", show_alert=False)
 
-                sender_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+                sender_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,)))
                 sender_name = get_display_name(sender_data)
                 reminder_text = (
                     f"*Chat Request Reminder\\!*\n"
@@ -7823,14 +8074,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Create new request
             try:
-                db_execute(
+                (await db_execute_async(
                     "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (%s, %s, 'pending')",
                     (user_id, target_id)
-                )
+                ))
                 await query.answer("Chat request sent!", show_alert=False)
                 
                 # Notify receiver
-                sender_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+                sender_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,)))
                 sender_name = get_display_name(sender_data)
                 
                 receiver_text = (
@@ -7858,20 +8109,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data.startswith('acceptchat_'):
             sender_id = query.data.split('_')[1]
-            db_execute(
+            (await db_execute_async(
                 "UPDATE chat_requests SET status = 'accepted' WHERE sender_id = %s AND receiver_id = %s",
                 (sender_id, user_id)
-            )
+            ))
             # Mutual chat permission
-            db_execute(
+            (await db_execute_async(
                 "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (%s, %s, 'accepted') ON CONFLICT DO NOTHING",
                 (user_id, sender_id)
-            )
+            ))
             
             await query.answer("✅ Request accepted!", show_alert=False)
             await query.message.edit_text("✅ *You accepted the chat request\\!*", parse_mode=ParseMode.MARKDOWN_V2)
             
-            receiver_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+            receiver_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,)))
             receiver_name = get_display_name(receiver_data)
             try:
                 await context.bot.send_message(
@@ -7883,7 +8134,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data.startswith('declinechat_'):
             sender_id = query.data.split('_')[1]
-            db_execute("DELETE FROM chat_requests WHERE sender_id = %s AND receiver_id = %s", (sender_id, user_id))
+            (await db_execute_async("DELETE FROM chat_requests WHERE sender_id = %s AND receiver_id = %s", (sender_id, user_id)))
             await query.answer("Request ignored.", show_alert=False)
             await query.message.edit_text("❌ *Chat request ignored\\.*", parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -7911,18 +8162,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
                 if is_accept:
-                    db_execute(
+                    (await db_execute_async(
                         "UPDATE chat_requests SET status = 'accepted' WHERE sender_id = %s AND receiver_id = %s",
                         (sender_id, user_id)
-                    )
+                    ))
                     # Mutual chat permission, mirroring the acceptchat_ flow
-                    db_execute(
+                    (await db_execute_async(
                         "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (%s, %s, 'accepted') ON CONFLICT DO NOTHING",
                         (user_id, sender_id)
-                    )
+                    ))
                     await query.answer("✅ Request accepted!", show_alert=False)
 
-                    receiver_data = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+                    receiver_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,)))
                     receiver_name = get_display_name(receiver_data)
                     try:
                         await context.bot.send_message(
@@ -7933,10 +8184,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception:
                         pass
                 else:
-                    db_execute(
+                    (await db_execute_async(
                         "DELETE FROM chat_requests WHERE sender_id = %s AND receiver_id = %s",
                         (sender_id, user_id)
-                    )
+                    ))
                     await query.answer("❌ Request rejected.", show_alert=False)
 
                 # Refresh the list in place so the user can keep working through it
@@ -7947,7 +8198,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data.startswith('message_'):
             target_id = query.data.split('_')[1]
-            check = db_fetch_one("SELECT status FROM chat_requests WHERE sender_id = %s AND receiver_id = %s", (user_id, target_id))
+            check = (await db_fetch_one_async("SELECT status FROM chat_requests WHERE sender_id = %s AND receiver_id = %s", (user_id, target_id)))
             
             if not check or check['status'] != 'accepted':
                 await query.answer("You must send a chat request first!", show_alert=True)
@@ -7964,23 +8215,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("Invalid ID", show_alert=True)
                 return
                 
-            check = db_fetch_one("""
+            check = (await db_fetch_one_async("""
                 SELECT 1 FROM chat_requests 
                 WHERE (sender_id = %s AND receiver_id = %s AND status = 'accepted')
                    OR (sender_id = %s AND receiver_id = %s AND status = 'accepted')
-            """, (user_id, target_id, target_id, user_id))
-            pm_check = db_fetch_one("""
+            """, (user_id, target_id, target_id, user_id)))
+            pm_check = (await db_fetch_one_async("""
                 SELECT 1 FROM private_messages 
                 WHERE (sender_id = %s AND receiver_id = %s)
                    OR (sender_id = %s AND receiver_id = %s)
-            """, (user_id, target_id, target_id, user_id))
+            """, (user_id, target_id, target_id, user_id)))
             
             if not check and not pm_check:
                 await query.answer("No active chat permission.", show_alert=True)
                 return
 
             set_state(context, STATE_AWAITING_PRIVATE_MESSAGE, private_message_target=target_id)
-            target_user = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,))
+            target_user = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (target_id,)))
             await query.message.reply_text(f"*Replying to {target_user['anonymous_name']}*\n\nPlease send your text,voice or picturemessage:", parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_menu)
 
         elif query.data.startswith("reply_"):
@@ -8072,10 +8323,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('view_comment_'):
             try:
                 comment_id = int(query.data.split('_')[2])
-                comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
+                comment = (await db_fetch_one_async("SELECT * FROM comments WHERE comment_id = %s", (comment_id,)))
                 
                 if comment and comment['author_id'] == user_id:
-                    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (comment['post_id'],))
+                    post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (comment['post_id'],)))
                     
                     if post:
                         keyboard = [
@@ -8109,7 +8360,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Handle continue post (threading) - renamed from elaborate
         elif query.data.startswith("continue_post_"):
             post_id = int(query.data.split('_')[2])
-            post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+            post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
             
             if post and post['author_id'] == user_id:
                 context.user_data['thread_from_post_id'] = post_id
@@ -8225,7 +8476,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-            text, reply_markup, _ = build_thread_pick_content(user_id, page=1)
+            text, reply_markup, _ = (await asyncio.to_thread(build_thread_pick_content, user_id, page=1))
             if not reply_markup:
                 await query.message.reply_text(
                     "You don't have any previous posts yet to thread from.",
@@ -8244,10 +8495,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 page = 1
             await query.answer()
-            text, reply_markup, _ = build_thread_pick_content(user_id, page=page)
+            text, reply_markup, _ = (await asyncio.to_thread(build_thread_pick_content, user_id, page=page))
             if not reply_markup:
                 # Page emptied out (e.g. a post got deleted between clicks) - fall back to page 1
-                text, reply_markup, _ = build_thread_pick_content(user_id, page=1)
+                text, reply_markup, _ = (await asyncio.to_thread(build_thread_pick_content, user_id, page=1))
             if reply_markup:
                 try:
                     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
@@ -8301,10 +8552,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 new_thread_id = None
             elif choice.isdigit():
                 candidate_id = int(choice)
-                owned_post = db_fetch_one(
+                owned_post = (await db_fetch_one_async(
                     "SELECT post_id FROM posts WHERE post_id = %s AND author_id = %s AND approved = TRUE AND deleted = FALSE",
                     (candidate_id, user_id)
-                )
+                ))
                 if owned_post:
                     new_thread_id = candidate_id
                 else:
@@ -8423,17 +8674,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Insert post (without 'category' column which was dropped)
                 if thread_from_post_id:
-                    post_row = db_execute(
+                    post_row = (await db_execute_async(
                         "INSERT INTO posts (content, author_id, media_type, media_id, thread_from_post_id, explicit) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
                         (post_content, user_id, media_type, media_id, thread_from_post_id, explicit_flag),
                         fetchone=True
-                    )
+                    ))
                 else:
-                    post_row = db_execute(
+                    post_row = (await db_execute_async(
                         "INSERT INTO posts (content, author_id, media_type, media_id, explicit) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
                         (post_content, user_id, media_type, media_id, explicit_flag),
                         fetchone=True
-                    )
+                    ))
                 
                 if post_row:
                     post_id = post_row['post_id']
@@ -8441,10 +8692,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Insert categories into junction table
                     category_list = category.split(',') if category else []
                     for cat_code in category_list:
-                        db_execute(
+                        (await db_execute_async(
                             "INSERT INTO post_categories (post_id, category_code) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                             (post_id, cat_code.strip())
-                        )
+                        ))
                 
                 # Clean up user data
                 if 'pending_post' in context.user_data:
@@ -8464,7 +8715,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except:
                         success_msg = await loading_msg.edit_caption("Post submitted for approval!")
                     
-                    await asyncio.sleep(1)
                     
                     keyboard = [[InlineKeyboardButton("Main Menu", callback_data='menu')]]
                     try:
@@ -8728,23 +8978,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data.startswith('set_avatar_'):
             emoji = query.data.split('_', 2)[2]
-            db_execute("UPDATE users SET avatar_emoji = %s WHERE user_id = %s", (emoji, user_id))
+            await db_update_user_async(user_id, avatar_emoji=emoji)
             await query.answer(f"Avatar set to {emoji}!", show_alert=True)
             await send_updated_profile(user_id, query.message.chat.id, context)
             
         elif query.data == 'clear_avatar':
-            db_execute("UPDATE users SET avatar_emoji = NULL WHERE user_id = %s", (user_id,))
+            await db_update_user_async(user_id, avatar_emoji=None)
             await query.answer("Avatar removed!", show_alert=True)
             await send_updated_profile(user_id, query.message.chat.id, context)
             
         elif query.data == 'list_blocked':
             await query.answer("Loading blocked users...", show_alert=False)
-            blocked = db_fetch_all(
+            blocked = (await db_fetch_all_async(
                 """SELECT u.user_id, u.anonymous_name, u.sex 
                 FROM blocks b JOIN users u ON b.blocked_id = u.user_id 
                 WHERE b.blocker_id = %s""",
                 (user_id,)
-            )
+            ))
             
             if not blocked:
                 await query.message.edit_text(
@@ -8766,10 +9016,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data.startswith('unblock_user_'):
             target_id = query.data.split('_', 2)[2]
-            db_execute("DELETE FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (user_id, target_id))
+            (await db_execute_async("DELETE FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (user_id, target_id)))
             
             # Clear Aura Cache for real-time accuracy
             calculate_user_rating.cache_clear()
+            _leaderboard_cache_bust()
             format_aura.cache_clear()
             
             await query.answer("User unblocked!", show_alert=False)
@@ -8777,10 +9028,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Refresh view (either profiles or list)
             if "Blocked Users" in query.message.text:
                 # If we are in the list, refresh the list
-                blocked = db_fetch_all(
+                blocked = (await db_fetch_all_async(
                     "SELECT u.user_id, u.anonymous_name, u.sex FROM blocks b JOIN users u ON b.blocked_id = u.user_id WHERE b.blocker_id = %s",
                     (user_id,)
-                )
+                ))
                 if not blocked:
                     await query.message.edit_text("List empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data='settings')]]))
                 else:
@@ -8801,7 +9052,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_id = query.data.split('_', 2)[2]
 
             # Don't block silently — ask for confirmation first
-            target_user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (target_id,))
+            target_user = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (target_id,)))
             target_name = get_display_name(target_user) if target_user else "this user"
             safe_name = escape_markdown(target_name, version=2)
 
@@ -8823,13 +9074,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Add to blocks table
             try:
-                db_execute(
+                (await db_execute_async(
                     "INSERT INTO blocks (blocker_id, blocked_id) VALUES (%s, %s)",
                     (user_id, target_id)
-                )
+                ))
                 
                 # Clear Aura Cache for real-time accuracy
                 calculate_user_rating.cache_clear()
+                _leaderboard_cache_bust()
                 format_aura.cache_clear()
 
                 await query.answer("User blocked", show_alert=False)
@@ -8848,7 +9100,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('report_post_'):
             try:
                 post_id = int(query.data.split('_')[2])
-                post = db_fetch_one("SELECT post_id FROM posts WHERE post_id = %s", (post_id,))
+                post = (await db_fetch_one_async("SELECT post_id FROM posts WHERE post_id = %s", (post_id,)))
                 if not post:
                     await query.answer("Post not found.", show_alert=True)
                     return
@@ -8872,7 +9124,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('report_comment_'):
             try:
                 comment_id = int(query.data.split('_')[2])
-                comment = db_fetch_one("SELECT comment_id FROM comments WHERE comment_id = %s", (comment_id,))
+                comment = (await db_fetch_one_async("SELECT comment_id FROM comments WHERE comment_id = %s", (comment_id,)))
                 if not comment:
                     await query.answer("Comment not found.", show_alert=True)
                     return
@@ -8967,15 +9219,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('report_view_'):
             try:
                 report_id = int(query.data.split('_')[2])
-                report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+                report = (await db_fetch_one_async("SELECT * FROM reports WHERE report_id = %s", (report_id,)))
                 if not report:
                     await query.answer("Report not found.", show_alert=True)
                     return
-                preview, author_id = get_report_content_preview(report['target_type'], report['target_id'])
+                preview, author_id = (await asyncio.to_thread(get_report_content_preview, report['target_type'], report['target_id']))
                 type_label = "Post" if report['target_type'] == 'post' else "Comment"
                 preview_text = html.escape(preview or '[Content deleted]')
                 safe_reason = html.escape(report['reason'])
-                reporter = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (report['reporter_id'],))
+                reporter = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (report['reporter_id'],)))
                 reporter_name = html.escape(reporter['anonymous_name'] if reporter else 'Anonymous')
                 view_text = (
                     f"<b>Report #{report_id}</b>\n"
@@ -9003,7 +9255,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('report_dismiss_'):
             try:
                 report_id = int(query.data.split('_')[2])
-                resolve_report(report_id, user_id, 'dismissed', None)
+                (await asyncio.to_thread(resolve_report, report_id, user_id, 'dismissed', None))
                 await query.answer("Report dismissed.", show_alert=False)
                 await show_admin_reports(update, context, page=1)
             except Exception as e:
@@ -9013,7 +9265,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('report_delete_'):
             try:
                 report_id = int(query.data.split('_')[2])
-                report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+                report = (await db_fetch_one_async("SELECT * FROM reports WHERE report_id = %s", (report_id,)))
                 if not report:
                     await query.answer("Report not found.", show_alert=True)
                     return
@@ -9024,7 +9276,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
                 if target_type == 'post':
                     # ---------- DELETE POST ----------
-                    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (target_id,))
+                    post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (target_id,)))
                     if not post:
                         await query.answer("Post already deleted.", show_alert=True)
                         return
@@ -9052,11 +9304,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 logger.error(f"Also failed to edit channel message: {edit_err}")
         
                     # 2. Delete all associated data (comments, reactions, categories)
-                    db_execute("DELETE FROM reactions WHERE comment_id IN (SELECT comment_id FROM comments WHERE post_id = %s)", (target_id,))
-                    db_execute("DELETE FROM comments WHERE post_id = %s", (target_id,))
-                    db_execute("DELETE FROM post_categories WHERE post_id = %s", (target_id,))
+                    (await db_execute_async("DELETE FROM reactions WHERE comment_id IN (SELECT comment_id FROM comments WHERE post_id = %s)", (target_id,)))
+                    (await db_execute_async("DELETE FROM comments WHERE post_id = %s", (target_id,)))
+                    (await db_execute_async("DELETE FROM post_categories WHERE post_id = %s", (target_id,)))
                     # 3. Delete the post itself, verify it's gone
-                    deleted = db_execute("DELETE FROM posts WHERE post_id = %s RETURNING post_id", (target_id,), fetchone=True)
+                    deleted = (await db_execute_async("DELETE FROM posts WHERE post_id = %s RETURNING post_id", (target_id,), fetchone=True))
+                    calculate_user_rating.cache_clear()
+                    _leaderboard_cache_bust()
                     if not deleted:
                         raise Exception("Post deletion from database failed (no rows returned)")
         
@@ -9065,17 +9319,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
                 elif target_type == 'comment':
                     # ---------- DELETE COMMENT ----------
-                    comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (target_id,))
+                    comment = (await db_fetch_one_async("SELECT * FROM comments WHERE comment_id = %s", (target_id,)))
                     if not comment:
                         await query.answer("Comment already deleted.", show_alert=True)
                         return
         
                     post_id = comment['post_id']
                     # 1. Re‑parent child comments to top level
-                    db_execute("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (target_id,))
+                    (await db_execute_async("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (target_id,)))
                     # 2. Delete reactions and the comment itself
-                    db_execute("DELETE FROM reactions WHERE comment_id = %s", (target_id,))
-                    deleted = db_execute("DELETE FROM comments WHERE comment_id = %s RETURNING comment_id", (target_id,), fetchone=True)
+                    (await db_execute_async("DELETE FROM reactions WHERE comment_id = %s", (target_id,)))
+                    deleted = (await db_execute_async("DELETE FROM comments WHERE comment_id = %s RETURNING comment_id", (target_id,), fetchone=True))
+                    calculate_user_rating.cache_clear()
+                    _leaderboard_cache_bust()
                     if not deleted:
                         raise Exception("Comment deletion from database failed (no rows returned)")
         
@@ -9090,10 +9346,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
         
                 # ---------- AFTER DELETION: update report, clear caches, notify author ----------
-                resolve_report(report_id, user_id, 'action_taken', 'deleted')
+                (await asyncio.to_thread(resolve_report, report_id, user_id, 'action_taken', 'deleted'))
         
                 # Clear aura caches (important for leaderboard updates)
                 calculate_user_rating.cache_clear()
+                _leaderboard_cache_bust()
                 format_aura.cache_clear()
         
                 # Notify the content author (if we have an author_id and it's not the admin themselves)
@@ -9116,18 +9373,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('report_warn_'):
             try:
                 report_id = int(query.data.split('_')[2])
-                report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+                report = (await db_fetch_one_async("SELECT * FROM reports WHERE report_id = %s", (report_id,)))
                 if not report:
                     await query.answer("Report not found.", show_alert=True)
                     return
-                _, author_id = get_report_content_preview(report['target_type'], report['target_id'])
-                resolve_report(report_id, user_id, 'action_taken', 'warned')
+                _, author_id = (await asyncio.to_thread(get_report_content_preview, report['target_type'], report['target_id']))
+                (await asyncio.to_thread(resolve_report, report_id, user_id, 'action_taken', 'warned'))
                 if author_id:
                     # Increment warning count
-                    db_execute(
+                    await db_execute_async(
                         "UPDATE users SET warning_count = COALESCE(warning_count, 0) + 1 WHERE user_id = %s",
                         (author_id,)
                     )
+                    _invalidate_user_cache(author_id)
                     try:
                         await context.bot.send_message(
                             chat_id=author_id,
@@ -9158,7 +9416,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
         if update.message:
             await update.message.reply_text("You don't have permission to access this.")
@@ -9166,14 +9424,14 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.message.reply_text("You don't have permission to access this.")
         return
     
-    stats = db_fetch_one('''
+    stats = (await db_fetch_one_async('''
         SELECT 
             (SELECT COUNT(*) FROM users) as total_users,
             (SELECT COUNT(*) FROM posts WHERE approved = TRUE) as approved_posts,
             (SELECT COUNT(*) FROM posts WHERE approved = FALSE) as pending_posts,
             (SELECT COUNT(*) FROM comments) as total_comments,
             (SELECT COUNT(*) FROM private_messages) as total_messages
-    ''')
+    '''))
     
     text = (
         "*Bot Statistics*\n\n"
@@ -9211,7 +9469,9 @@ async def show_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or update.message.caption or ""
     user_id = str(update.effective_user.id)
-    user = await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    # Cached, narrow accessor instead of a full-row SELECT on every inbound message
+    # (invalidated by db_update_user).
+    user = await asyncio.to_thread(get_user_cached, user_id)
     
 
     # Handle cancel command or main menu buttons while in an input state
@@ -9235,6 +9495,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Handle rejection reason capture from admin
     if context.user_data.get('awaiting_rejection_reason'):
+        # Guard intentionally kept: reset_state() does not clear this flag.
         if text in main_menu_buttons: return
         post_id = context.user_data.get('rejecting_post')
         if post_id:
@@ -9281,7 +9542,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_type = reporting['type']
             target_id = reporting['id']
 
-            report_id = create_report(user_id, target_type, target_id, reason)
+            report_id = (await asyncio.to_thread(create_report, user_id, target_type, target_id, reason))
 
             if report_id is None:
                 await update.message.reply_text(
@@ -9313,9 +9574,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Handle comment editing
 
     if 'editing_comment' in context.user_data:
-        if text in main_menu_buttons: return
         comment_id = context.user_data['editing_comment']
-        comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (comment_id,))
+        comment = (await db_fetch_one_async("SELECT * FROM comments WHERE comment_id = %s", (comment_id,)))
         
         if comment and comment['author_id'] == user_id and comment['type'] == 'text':
             # Guard against users accidentally pasting our own "copy the text below"
@@ -9344,10 +9604,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             # Update the comment
-            db_execute(
+            (await db_execute_async(
                 "UPDATE comments SET content = %s WHERE comment_id = %s",
                 (cleaned_text, comment_id)
-            )
+            ))
             
             # Clean up
             del context.user_data['editing_comment']
@@ -9367,7 +9627,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if 'editing_post' in context.user_data and context.user_data['editing_post']:
-        if text in main_menu_buttons: return
         pending_post = context.user_data.get('pending_post')
         if pending_post:
             # Guard against users accidentally pasting our own "copy the text below"
@@ -9414,7 +9673,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text in main_menu_buttons: return
 
         post_id = context.user_data['editing_published_post']
-        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+        post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
 
         # Re-verify the post still exists and still belongs to this user
         if not post or post['author_id'] != user_id:
@@ -9435,10 +9694,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Update the post's content in the database first, so the edit is
         # never lost even if the channel message update below fails.
-        db_execute(
+        (await db_execute_async(
             "UPDATE posts SET content = %s WHERE post_id = %s",
             (cleaned_text, post_id)
-        )
+        ))
 
         # If the post is live in the channel, keep the published message in sync.
         # Text posts get their message text updated; media posts only have their
@@ -9450,7 +9709,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 vent_display = f"Vent - {post['vent_number']:03d}" if post.get('vent_number') else f"Post #{post_id}"
 
                 # Same categories/hashtags construction as approve_post
-                cats_row = db_fetch_all("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,))
+                cats_row = (await db_fetch_all_async("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,)))
                 categories = [row['category_code'] for row in cats_row]
                 hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
                 safe_hashtags = html.escape(hashtags)
@@ -9527,7 +9786,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "INSERT INTO users (user_id, anonymous_name, sex, is_admin) VALUES (%s, %s, %s, %s)",
             (user_id, anon, '👤', is_admin)
         )
-        user = await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        user = await asyncio.to_thread(get_user_cached, user_id)
 
     # Check if we have a thread_from_post_id for continuation
     thread_from_post_id = context.user_data.get('thread_from_post_id')
@@ -9535,7 +9794,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = get_state(context)
 
     if state == STATE_AWAITING_POST:
-        if text in main_menu_buttons: return
         category = context.user_data.get('selected_categories')
 
         if not category:
@@ -9612,7 +9870,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     elif state == STATE_AWAITING_COMMENT:
-        if text in main_menu_buttons: return
         post_id = context.user_data.get('comment_post_id')
     
         parent_comment_id = 0
@@ -9666,6 +9923,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Clear Aura Cache
         calculate_user_rating.cache_clear()
+        _leaderboard_cache_bust()
         format_aura.cache_clear()
 
     
@@ -9687,7 +9945,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif state == STATE_AWAITING_PM_EDIT:
-        if text in main_menu_buttons: return
         pm_id = context.user_data.get('editing_pm_id')
         new_content = (text or "").strip()
 
@@ -9700,11 +9957,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Message can't be empty. Send the new text, or type Cancel.")
             return
 
-        msg = db_fetch_one(
+        msg = (await db_fetch_one_async(
             "SELECT sender_id, receiver_id, is_deleted, media_type, media_id, notif_message_id "
             "FROM private_messages WHERE message_id = %s",
             (pm_id,)
-        )
+        ))
         reset_state(context)
 
         if not msg or str(msg['sender_id']) != str(user_id):
@@ -9714,10 +9971,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("That message was deleted, so it can't be edited.", reply_markup=get_main_menu(user_id))
             return
 
-        db_execute(
+        (await db_execute_async(
             "UPDATE private_messages SET content = %s, is_edited = TRUE, edited_at = CURRENT_TIMESTAMP WHERE message_id = %s",
             (new_content, pm_id)
-        )
+        ))
 
         # Reflect the edit live in the receiver's chat using Telegram's native
         # edit, instead of the change only existing in our own DB copy.
@@ -9736,7 +9993,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif state == STATE_AWAITING_PRIVATE_MESSAGE:
-        if text in main_menu_buttons: return
         target_id = context.user_data.get('private_message_target')
         
         message_content = update.message.text or update.message.caption or ""
@@ -9811,13 +10067,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if state == STATE_AWAITING_NAME:
-        if text in main_menu_buttons: return
         new_name = text.strip()
         if new_name and len(new_name) <= 30:
-            await db_execute_async(
-                "UPDATE users SET anonymous_name = %s WHERE user_id = %s",
-                (new_name, user_id)
-            )
+            await db_update_user_async(user_id, anonymous_name=new_name)
             reset_state(context)
             await update.message.reply_text(
                 f"Name updated to *{new_name}*!", 
@@ -9850,7 +10102,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     if state == STATE_AWAITING_BIO:
-        if text in main_menu_buttons: return
         if not text:
             await update.message.reply_text("Bio must be text. Please try again.")
             return
@@ -9859,7 +10110,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await update.message.reply_text("Bio is too long (max 200 chars). Please shorten it.")
              return
              
-        await db_execute_async("UPDATE users SET bio = %s WHERE user_id = %s", (text, user_id))
+        await db_update_user_async(user_id, bio=text)
         reset_state(context)
         await update.message.reply_text("Bio updated successfully!", reply_markup=get_main_menu(user_id))
 
@@ -9908,10 +10159,10 @@ async def handle_private_message_text(update: Update, context: ContextTypes.DEFA
     user_id = str(update.effective_user.id)
     text = update.message.text
 
-    user = db_fetch_one(
+    user = (await db_fetch_one_async(
         "SELECT waiting_for_private_message, private_message_target FROM users WHERE user_id = %s",
         (user_id,)
-    )
+    ))
 
     if not user or not user["waiting_for_private_message"]:
         return  # Not replying to a private message
@@ -9924,7 +10175,7 @@ async def handle_private_message_text(update: Update, context: ContextTypes.DEFA
         return
 
     # Save message
-    msg = db_execute(
+    msg = (await db_execute_async(
         """
         INSERT INTO private_messages (sender_id, receiver_id, content)
         VALUES (%s, %s, %s)
@@ -9932,10 +10183,10 @@ async def handle_private_message_text(update: Update, context: ContextTypes.DEFA
         """,
         (user_id, receiver_id, text),
         fetchone=True
-    )
+    ))
 
     # Reset reply state
-    db_execute(
+    (await db_execute_async(
         """
         UPDATE users
         SET waiting_for_private_message = FALSE,
@@ -9943,7 +10194,7 @@ async def handle_private_message_text(update: Update, context: ContextTypes.DEFA
         WHERE user_id = %s
         """,
         (user_id,)
-    )
+    ))
 
     # Notify receiver
     await notify_user_of_private_message(
@@ -9972,6 +10223,14 @@ async def error_handler(update, context):
 from telegram import BotCommand 
 
 async def set_bot_commands(app):
+    # asyncio.to_thread() uses the loop's default executor, which is only min(32, cpu+4) threads
+    # (as low as 5 on a small Render instance) - too few now that every DB call goes through it.
+    try:
+        asyncio.get_running_loop().set_default_executor(
+            ThreadPoolExecutor(max_workers=_DB_MAX_CONNECTIONS + 12, thread_name_prefix="bot-worker")
+        )
+    except Exception as e:
+        logger.error(f"Could not enlarge the default executor: {e}")
     commands = [
         BotCommand("start", "Start the bot and open the menu"),
         BotCommand("webapp", "Open Web App"),
@@ -10055,7 +10314,11 @@ def main():
 
     
     # Create and run Telegram bot
-    app = Application.builder().token(TOKEN).post_init(set_bot_commands).build()
+    # concurrent_updates: by default PTB handles updates ONE AT A TIME, so a single slow handler
+    # (e.g. a page that sends 10 comment messages) makes every other user wait. With it on, updates
+    # run concurrently. Trade-off: two updates from the SAME user in the same instant can now
+    # interleave (state lives in context.user_data), which the old strict ordering prevented.
+    app = Application.builder().token(TOKEN).concurrent_updates(True).post_init(set_bot_commands).build()
     
     # Add your handlers
     app.add_handler(CommandHandler("menu", menu))
@@ -10121,7 +10384,7 @@ def main():
         if not any(j.name == "weekly_badges" for j in existing_jobs):
             job_queue.run_daily(
                 award_weekly_badges,
-                time=time(0, 0, tzinfo=timezone.utc),
+                time=dt_time(0, 0, tzinfo=timezone.utc),
                 days=(0,),  # Monday = 0
                 name="weekly_badges"
             )
@@ -10890,6 +11153,8 @@ let pendingMedia = null, pendingCommentMedia = null, pendingChatMedia = null;
 let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null;
 let chatsCache = [];
 let crMsgsCache = [];
+let crOlderMsgs = [], crHasMore = false, crLoadingOlder = false;
+let chatsPage = 1, chatsHasMore = false, chatsLoadingMore = false;
 const selCats = new Set();
 let selEmoji = null;
 
@@ -11565,8 +11830,7 @@ async function openPost(id, reveal){
         <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
           <div style="font-size:16px;line-height:1.65;color:var(--text3);font-style:italic;padding:16px;display:flex;align-items:center;gap:8px;"><span style="width:18px;height:18px;flex-shrink:0;display:inline-flex">${ICONS.alert}</span> This post has been deleted by the author.</div>
         </div>`;
-      const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}${revealParam}`);
-      renderComments(cd.data||[],null);
+      await fetchAndRenderComments(id,null,revealParam);
       return;
     }
     if(p.content_hidden){
@@ -11606,12 +11870,29 @@ async function openPost(id, reveal){
           ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
         </div>
       </div>`;
-    const cd=await api(`/api/mini-app/post/${id}/comments?viewer_id=${UID}${revealParam}`);
-    renderComments(cd.data||[],p.author_id);
-    renderComments(cd.data||[],p.author_id);
+    await fetchAndRenderComments(id,p.author_id,revealParam);
   }catch(e){document.getElementById('detail-post').innerHTML='<div style="padding:20px;color:var(--text3)">Could not load</div>'}
 }
 
+// Comments come newest-100-first-window (oldest-first inside the window); "Load older" walks back.
+let cmtAll=[], cmtHasMore=false, cmtLoadingOlder=false, cmtReveal='';
+async function fetchAndRenderComments(postId,authorId,revealParam){
+  if(revealParam!==undefined) cmtReveal=revealParam;
+  const cd=await api(`/api/mini-app/post/${postId}/comments?viewer_id=${UID}${cmtReveal}&limit=100`);
+  cmtAll=cd.data||[]; cmtHasMore=!!cd.has_more;
+  renderComments(cmtAll,authorId);
+}
+async function loadOlderComments(){
+  if(cmtLoadingOlder||!cmtHasMore||!cmtAll.length||!currentPostId)return;
+  cmtLoadingOlder=true;
+  try{
+    const pid=currentPostId;
+    const cd=await api(`/api/mini-app/post/${pid}/comments?viewer_id=${UID}${cmtReveal}&limit=100&before_id=${cmtAll[0].id}`);
+    if(pid!==currentPostId)return;
+    cmtAll=(cd.data||[]).concat(cmtAll); cmtHasMore=!!cd.has_more;
+    renderComments(cmtAll,currentPostAuthorId);
+  }catch(e){toast(e.message)}finally{cmtLoadingOlder=false}
+}
 function renderComments(comments,postAuthorId){
   const box=document.getElementById('detail-comments');
   if(!comments.length){box.innerHTML='<div style="text-align:center;padding:30px 20px;color:var(--text3);font-size:14px">No responses yet — be the first!</div>';return}
@@ -11635,7 +11916,8 @@ function renderComments(comments,postAuthorId){
       ${renderReactionButtons(c.id, 'comment', c.reactions?.counts || {}, c.reactions?.user_reaction)}
       <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
   };
-  box.innerHTML=roots.map(c=>rr(c,0)).join('');
+  const olderBtn=cmtHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderComments()">Load older responses</button></div>':'';
+  box.innerHTML=olderBtn+roots.map(c=>rr(c,0)).join('');
 }
 
 async function submitReaction(targetType,targetId,emoji,uiElement){
@@ -11693,15 +11975,13 @@ async function postComment(){
     pendingCommentMedia=null;document.getElementById('comment-file-input').value='';
     document.getElementById('comment-attach-btn').classList.remove('has-media');
     renderMediaPreview(document.getElementById('comment-media-preview'),null);
-    const cd=await api(`/api/mini-app/post/${currentPostId}/comments?viewer_id=${UID}`);
-    renderComments(cd.data||[],currentPostAuthorId);
+    await fetchAndRenderComments(currentPostId,currentPostAuthorId);
   }catch(e){toast(e.message)}finally{btn.disabled=false}
 }
 async function delComment(id){
   if(!confirm('Delete this response?'))return;
   try{await api(`/api/mini-app/comment/${id}`,{method:'DELETE',body:JSON.stringify({user_id:UID})});
-    toast('Deleted');const cd=await api(`/api/mini-app/post/${currentPostId}/comments?viewer_id=${UID}`);
-    renderComments(cd.data||[],currentPostAuthorId);}catch(e){toast(e.message)}
+    toast('Deleted');await fetchAndRenderComments(currentPostId,currentPostAuthorId);}catch(e){toast(e.message)}
 }
 
 async function loadLB(){
@@ -11912,17 +12192,37 @@ async function fetchAdminTranscript(scroll=false, preserveAnchor=false){
 }
 
 
+function chatRowsHtml(chats){
+  return chats.map(c=>`<div class="chat-item" onclick="openCR('${c.partner_id}')"><div class="ava" style="width:44px;height:44px;font-size:18px">${avaHtml(c.partner_avatar||c.partner_sex)}</div><div class="chat-item-right"><div class="chat-item-top"><span class="chat-item-name">${esc(c.partner_name||'Anonymous')}</span><span class="chat-item-time">${esc(c.time_ago||'')}</span></div><div style="display:flex;align-items:center"><div class="chat-item-preview">${c.is_mine?'You: ':''}${esc(c.last_message||'')}</div>${c.unread_count>0?`<span class="unread-badge" style="margin-left:8px">${c.unread_count}</span>`:''}</div></div></div>`).join('');
+}
+function renderChatList(){
+  const list=document.getElementById('chats-list');
+  const unread=chatsCache.reduce((a,c)=>a+(c.unread_count||0),0);
+  document.getElementById('chat-unread-label').textContent=unread?`${unread} unread message${unread>1?'s':''}`:'All caught up';
+  const more=chatsHasMore?'<div style="text-align:center;padding:12px"><button class="btn-ghost" onclick="loadMoreChats()">Load more conversations</button></div>':'';
+  list.innerHTML=chatRowsHtml(chatsCache)+more;
+}
 async function loadChats(){
   const list=document.getElementById('chats-list');list.innerHTML=skelChats();
   try{
-    const d=await api(`/api/mini-app/chats?user_id=${UID}`);
+    const d=await api(`/api/mini-app/chats?user_id=${UID}&page=1`);
     const chats=d.data||[];
-    const unread=chats.reduce((a,c)=>a+(c.unread_count||0),0);
-    document.getElementById('chat-unread-label').textContent=unread?`${unread} unread message${unread>1?'s':''}`:'All caught up';
+    chatsPage=1; chatsHasMore=!!d.has_more;
+    document.getElementById('chat-unread-label').textContent='All caught up';
     if(!chats.length){list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3);font-size:14px">No messages yet</div>';return}
     chatsCache=chats;
-    list.innerHTML=chats.map(c=>`<div class="chat-item" onclick="openCR('${c.partner_id}')"><div class="ava" style="width:44px;height:44px;font-size:18px">${avaHtml(c.partner_avatar||c.partner_sex)}</div><div class="chat-item-right"><div class="chat-item-top"><span class="chat-item-name">${esc(c.partner_name||'Anonymous')}</span><span class="chat-item-time">${esc(c.time_ago||'')}</span></div><div style="display:flex;align-items:center"><div class="chat-item-preview">${c.is_mine?'You: ':''}${esc(c.last_message||'')}</div>${c.unread_count>0?`<span class="unread-badge" style="margin-left:8px">${c.unread_count}</span>`:''}</div></div></div>`).join('');
+    renderChatList();
   }catch(e){list.innerHTML='<div style="padding:20px;color:var(--text3)">Failed to load</div>'}
+}
+async function loadMoreChats(){
+  if(chatsLoadingMore||!chatsHasMore)return;
+  chatsLoadingMore=true;
+  try{
+    const d=await api(`/api/mini-app/chats?user_id=${UID}&page=${chatsPage+1}`);
+    chatsPage+=1; chatsHasMore=!!d.has_more;
+    chatsCache=chatsCache.concat(d.data||[]);
+    renderChatList();
+  }catch(e){toast(e.message)}finally{chatsLoadingMore=false}
 }
 
 function openCR(pid,name,ava){
@@ -11938,6 +12238,7 @@ function openCR(pid,name,ava){
   document.getElementById('cr-ava').innerHTML=avaHtml(ava);
   document.getElementById('chat-room').classList.add('open');
   document.getElementById('cr-txt').value='';
+  crOlderMsgs=[]; crMsgsCache=[]; crHasMore=false;
   fetchCRMsgs(true);
   clearInterval(crPoll);crPoll=setInterval(fetchCRMsgs,3000);
 }
@@ -11950,6 +12251,25 @@ function closeCR(){
   document.querySelector('.cr-input').style.display = ''; // restore input bar hidden by admin view
   loadChats();
 }
+function crRenderMsgs(scroll,preserveAnchor){
+  const box=document.getElementById('cr-msgs');
+  const wasBottom=box.scrollHeight-box.scrollTop<=box.clientHeight+80;
+  const prevScrollHeight=box.scrollHeight, prevScrollTop=box.scrollTop;
+  const olderBtn=crHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderCRMsgs()">Load older messages</button></div>':'';
+  box.innerHTML=olderBtn+crMsgsCache.map(m=>{
+    if(m.is_deleted){
+      return `<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble msg-deleted">Message deleted</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`;
+    }
+    const editedTag=m.is_edited?' · edited':'';
+    const menuBtn=m.is_mine?'<span class="msg-menu-btn">⋯</span>':'';
+    return `<div class="msg-row ${m.is_mine?'me':'them'}" data-mid="${m.id}"><div class="msg-bubble">${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}${menuBtn}</div><div class="msg-time">${esc(m.timestamp||'')}${editedTag}</div></div>`;
+  }).join('');
+  box.querySelectorAll('.msg-row.me .msg-menu-btn').forEach(btn=>{
+    btn.onclick=(e)=>{e.stopPropagation();msgActions(btn.closest('.msg-row').dataset.mid);};
+  });
+  if(preserveAnchor)box.scrollTop=box.scrollHeight-prevScrollHeight+prevScrollTop;
+  else if(scroll||wasBottom)box.scrollTop=box.scrollHeight;
+}
 async function fetchCRMsgs(scroll=false){
   if(!crPartnerId)return;
   try{
@@ -11961,23 +12281,32 @@ async function fetchCRMsgs(scroll=false){
     // Skip this refresh cycle; the next poll picks up new messages once it's done.
     const isBusyVoice = ()=>Array.from(box.querySelectorAll('.voice-player-audio')).some(a=>!a.paused || a.dataset.loading==='1');
     if(isBusyVoice()) return;
-    const d=await api(`/api/mini-app/chats/${crPartnerId}?user_id=${UID}`);
+    const partner=crPartnerId;
+    // Poll only the newest 50; anything loaded via "Load older" is kept and merged in front.
+    const d=await api(`/api/mini-app/chats/${partner}?user_id=${UID}&limit=50`);
+    if(partner!==crPartnerId) return;   // user switched chats while this was in flight
     if(isBusyVoice()) return; // re-check: user may have started playing while this request was in flight
-    const wasBottom=box.scrollHeight-box.scrollTop<=box.clientHeight+80;
-    crMsgsCache=d.data||[];
-    box.innerHTML=crMsgsCache.map(m=>{
-      if(m.is_deleted){
-        return `<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble msg-deleted">Message deleted</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`;
-      }
-      const editedTag=m.is_edited?' · edited':'';
-      const menuBtn=m.is_mine?'<span class="msg-menu-btn">⋯</span>':'';
-      return `<div class="msg-row ${m.is_mine?'me':'them'}" data-mid="${m.id}"><div class="msg-bubble">${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}${menuBtn}</div><div class="msg-time">${esc(m.timestamp||'')}${editedTag}</div></div>`;
-    }).join('');
-    box.querySelectorAll('.msg-row.me .msg-menu-btn').forEach(btn=>{
-      btn.onclick=(e)=>{e.stopPropagation();msgActions(btn.closest('.msg-row').dataset.mid);};
-    });
-    if(scroll||wasBottom)box.scrollTop=box.scrollHeight;
+    const latest=d.data||[];
+    if(!crOlderMsgs.length) crHasMore=!!d.has_more;
+    const seen=new Set(latest.map(m=>m.id));
+    crMsgsCache=crOlderMsgs.filter(m=>!seen.has(m.id)).concat(latest);
+    crRenderMsgs(scroll,false);
   }catch(e){}
+}
+async function loadOlderCRMsgs(){
+  if(crLoadingOlder||!crHasMore||!crPartnerId||!crMsgsCache.length)return;
+  crLoadingOlder=true;
+  try{
+    const partner=crPartnerId;
+    const earliest=crMsgsCache[0].id;   // earliest message currently on screen
+    const d=await api(`/api/mini-app/chats/${partner}?user_id=${UID}&limit=50&before_id=${earliest}`);
+    if(partner!==crPartnerId)return;
+    const older=d.data||[];
+    crHasMore=!!d.has_more;
+    crOlderMsgs=older.concat(crOlderMsgs);
+    crMsgsCache=older.concat(crMsgsCache);
+    crRenderMsgs(false,true);   // keep the viewport anchored to what the user was reading
+  }catch(e){toast(e.message)}finally{crLoadingOlder=false}
 }
 function msgActions(id){
   const m=crMsgsCache.find(x=>String(x.id)===String(id));
@@ -12198,12 +12527,16 @@ def mini_app_submit_vent():
             return jsonify({'success': False, 'error': 'At least one category is required'}), 400
         
         # Check if user exists
-        user = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        user = get_user_cached(user_id)
         if not user:
             return jsonify({'success': False, 'error': 'User not found'}), 404
         
         if not media_id:
             media_type = 'text'
+        elif not media_type or media_type == 'text':
+            # Never store (media_id set, media_type 'text'): fall back to the generic
+            # detector's default ('document') when the client didn't say what it uploaded.
+            media_type = _detect_mini_app_media_type(None, None)[0]
 
         # Insert the post
         post_row = db_execute(
@@ -12252,7 +12585,7 @@ def notify_admin_of_new_post_sync(post_id):
         if not post:
             return
         
-        author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (post['author_id'],))
+        author = get_user_cached(post['author_id'])
         author_name = get_display_name(author)
         
         media_type = post.get('media_type') or 'text'
@@ -12279,14 +12612,15 @@ def notify_admin_of_new_post_sync(post_id):
         if media_id and media_type != 'text':
             caption_body = content_text[:900] + ('...' if len(content_text) > 900 else '') if content_text else media_label
             caption = f"New post awaiting approval from {author_name}:\n\n{explicit_line}{caption_body}"[:1024]
-            send_telegram_media_sync(
+            _fire_and_forget(
+                send_telegram_media_sync,
                 chat_id=ADMIN_ID, media_type=media_type, media_id=media_id,
                 caption=caption, parse_mode=None, reply_markup=keyboard
             )
         else:
             post_preview = content_text[:4000] + ('...' if len(content_text) > 4000 else '')
             header = f"New post awaiting approval from {author_name}:\n\n{explicit_line}{post_preview}"
-            send_telegram_message_sync(ADMIN_ID, header, parse_mode=None, reply_markup=keyboard)
+            _fire_and_forget(send_telegram_message_sync, ADMIN_ID, header, parse_mode=None, reply_markup=keyboard)
     except Exception as e:
         logger.error(f"Error in sync admin notification: {e}")
 
@@ -12312,7 +12646,7 @@ def send_telegram_message_sync(chat_id, text, parse_mode='HTML', reply_markup=No
             payload["parse_mode"] = parse_mode
         if reply_markup:
             payload["reply_markup"] = reply_markup
-        resp = requests.post(url, json=payload, timeout=10)
+        resp = _tg_session.post(url, json=payload, timeout=10)
         return resp.json()
     except Exception as e:
         logger.error(f"send_telegram_message_sync failed: {e}")
@@ -12343,7 +12677,7 @@ def send_telegram_media_sync(chat_id, media_type, media_id, caption=None, parse_
         payload["reply_markup"] = reply_markup
 
     try:
-        resp = requests.post(url, json=payload, timeout=15)
+        resp = _tg_session.post(url, json=payload, timeout=15)
         result = resp.json()
         if result.get('ok'):
             if caption and media_type == 'sticker':
@@ -12369,11 +12703,11 @@ def notify_user_of_private_message_sync(sender_id, receiver_id, message_content,
         if is_blocked:
             return
 
-        receiver = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (receiver_id,))
+        receiver = get_user_cached(receiver_id)
         if not receiver or not receiver.get('notifications_enabled'):
             return
 
-        sender = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (sender_id,))
+        sender = get_user_cached(sender_id)
         sender_name = get_display_name(sender)
         safe_sender_name = html.escape(sender_name)
 
@@ -12390,29 +12724,33 @@ def notify_user_of_private_message_sync(sender_id, receiver_id, message_content,
         header = f"<b>New Private Message</b>\n\nFrom: <b>{safe_sender_name}</b>\n\n"
         footer = "\n\n<i>Use /inbox to view all messages</i>"
 
-        result = None
-        if media_id and media_type and media_type != 'text':
-            caption = header + safe_preview + footer
-            result = send_telegram_media_sync(
-                chat_id=receiver_id, media_type=media_type, media_id=media_id,
-                caption=caption, parse_mode='HTML', reply_markup=keyboard
-            )
-
-        if not (result and result.get('ok')):
-            # if media send failed outright (or there was no media), fall through to plain text
-            fallback_body = safe_preview if safe_preview else "<i>[attachment]</i>"
-            notification_text = header + fallback_body + footer
-            result = send_telegram_message_sync(receiver_id, notification_text, parse_mode='HTML', reply_markup=keyboard)
-
-        # Remember the live notification's message_id so a later edit/delete of
-        # this private message can be applied natively to the real Telegram message.
-        if message_id and result and result.get('ok') and result.get('result'):
-            notif_message_id = result['result'].get('message_id')
-            if notif_message_id:
-                db_execute(
-                    "UPDATE private_messages SET notif_message_id = %s WHERE message_id = %s",
-                    (notif_message_id, message_id)
+        def _deliver():
+            result = None
+            if media_id and media_type and media_type != 'text':
+                caption = header + safe_preview + footer
+                result = send_telegram_media_sync(
+                    chat_id=receiver_id, media_type=media_type, media_id=media_id,
+                    caption=caption, parse_mode='HTML', reply_markup=keyboard
                 )
+
+            if not (result and result.get('ok')):
+                # if media send failed outright (or there was no media), fall through to plain text
+                fallback_body = safe_preview if safe_preview else "<i>[attachment]</i>"
+                notification_text = header + fallback_body + footer
+                result = send_telegram_message_sync(receiver_id, notification_text, parse_mode='HTML', reply_markup=keyboard)
+
+            # Remember the live notification's message_id so a later edit/delete of
+            # this private message can be applied natively to the real Telegram message.
+            # (This write depends on the HTTP result, so it has to run with it, in the pool.)
+            if message_id and result and result.get('ok') and result.get('result'):
+                notif_message_id = result['result'].get('message_id')
+                if notif_message_id:
+                    db_execute(
+                        "UPDATE private_messages SET notif_message_id = %s WHERE message_id = %s",
+                        (notif_message_id, message_id)
+                    )
+
+        _fire_and_forget(_deliver)
 
     except Exception as e:
         logger.error(f"notify_user_of_private_message_sync failed: {e}")
@@ -12453,7 +12791,7 @@ def edit_native_pm_notification_sync(receiver_id, notif_message_id, sender_id, n
                 "parse_mode": "HTML"
             }
 
-        resp = requests.post(url, json=payload, timeout=10)
+        resp = _tg_session.post(url, json=payload, timeout=10)
         result = resp.json()
         if not result.get('ok'):
             logger.warning(f"edit_native_pm_notification_sync failed: {result}")
@@ -12468,7 +12806,7 @@ def delete_native_pm_notification_sync(chat_id, notif_message_id):
     API (sync/HTTP), so a deleted private message leaves no placeholder behind."""
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/deleteMessage"
-        resp = requests.post(url, json={"chat_id": chat_id, "message_id": notif_message_id}, timeout=10)
+        resp = _tg_session.post(url, json={"chat_id": chat_id, "message_id": notif_message_id}, timeout=10)
         result = resp.json()
         if not result.get('ok'):
             logger.warning(f"delete_native_pm_notification_sync failed: {result}")
@@ -12488,11 +12826,11 @@ def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_id=None, c
         if str(author_id) == str(commenter_id):
             return
 
-        author = db_fetch_one("SELECT user_id, notifications_enabled FROM users WHERE user_id = %s", (author_id,))
+        author = get_user_cached(author_id)
         if not author or not author.get('notifications_enabled'):
             return
 
-        commenter = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (commenter_id,))
+        commenter = get_user_cached(commenter_id)
         commenter_name = get_display_name(commenter)
 
         post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
@@ -12514,12 +12852,14 @@ def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_id=None, c
                 {"text": "↩ Reply", "callback_data": f"reply_{post_id}_{comment_id}"}
             ]]}
 
-        if media_id and media_type and media_type != 'text':
-            result = send_telegram_media_sync(author_id, media_type, media_id, caption=notification_text, parse_mode='HTML', reply_markup=reply_markup)
-            if result and result.get('ok'):
-                return
+        def _deliver():
+            if media_id and media_type and media_type != 'text':
+                result = send_telegram_media_sync(author_id, media_type, media_id, caption=notification_text, parse_mode='HTML', reply_markup=reply_markup)
+                if result and result.get('ok'):
+                    return
+            send_telegram_message_sync(author_id, notification_text, parse_mode='HTML', reply_markup=reply_markup)
 
-        send_telegram_message_sync(author_id, notification_text, parse_mode='HTML', reply_markup=reply_markup)
+        _fire_and_forget(_deliver)
     except Exception as e:
         logger.error(f"notify_vent_author_of_comment_sync failed: {e}")
 
@@ -12531,7 +12871,7 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_commen
         if not parent_comment:
             return
 
-        original_author = db_fetch_one("SELECT * FROM users WHERE user_id = %s", (parent_comment['author_id'],))
+        original_author = get_user_cached(parent_comment['author_id'])
         if not original_author or not original_author.get('notifications_enabled'):
             return
         if str(original_author['user_id']) == str(replier_id):
@@ -12544,7 +12884,7 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_commen
         if str(replier_id) == str(post['author_id']):
             safe_replier_name = "Vent author"
         else:
-            replier = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (replier_id,))
+            replier = get_user_cached(replier_id)
             safe_replier_name = html.escape(get_display_name(replier))
 
         post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
@@ -12567,12 +12907,16 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_commen
                 {"text": "↩ Reply", "callback_data": f"replytoreply_{post_id}_{parent_comment_id}_{new_comment_id}"}
             ]]}
 
-        if media_id and media_type and media_type != 'text':
-            result = send_telegram_media_sync(original_author['user_id'], media_type, media_id, caption=notification_text, parse_mode='HTML', reply_markup=reply_markup)
-            if result and result.get('ok'):
-                return
+        target_user_id = original_author['user_id']
 
-        send_telegram_message_sync(original_author['user_id'], notification_text, parse_mode='HTML', reply_markup=reply_markup)
+        def _deliver():
+            if media_id and media_type and media_type != 'text':
+                result = send_telegram_media_sync(target_user_id, media_type, media_id, caption=notification_text, parse_mode='HTML', reply_markup=reply_markup)
+                if result and result.get('ok'):
+                    return
+            send_telegram_message_sync(target_user_id, notification_text, parse_mode='HTML', reply_markup=reply_markup)
+
+        _fire_and_forget(_deliver)
     except Exception as e:
         logger.error(f"notify_user_of_reply_sync failed: {e}")
 
@@ -12598,7 +12942,7 @@ def update_channel_post_comment_count_sync(post_id):
                 "inline_keyboard": [buttons]
             }
         }
-        requests.post(url, json=payload, timeout=5)
+        _tg_session.post(url, json=payload, timeout=5)
     except Exception as e:
         logger.error(f"Error in sync channel comment update: {e}")
 
@@ -12657,7 +13001,7 @@ def mini_app_upload_media():
             upload.stream.seek(0)
             files = {field: (upload.filename, upload.stream, upload.mimetype or 'application/octet-stream')}
             data = {'chat_id': storage_chat_id, 'disable_notification': True}
-            resp = requests.post(f"https://api.telegram.org/bot{TOKEN}/{method}", data=data, files=files, timeout=30)
+            resp = _tg_session.post(f"https://api.telegram.org/bot{TOKEN}/{method}", data=data, files=files, timeout=30)
             return resp.json()
 
         result = _send(tg_method, tg_field)
@@ -12707,110 +13051,132 @@ def mini_app_upload_media():
 
 @flask_app.route('/api/mini-app/file/<path:file_id>', methods=['GET'])
 def mini_app_file_proxy(file_id):
-    """Resolves a Telegram file_id to its CDN URL and redirects there, so the
-    bot token never needs to be exposed to the frontend."""
+    """Streams a Telegram file to the mini app. The bot token stays server-side: the client
+    never gets a redirect to a URL that contains it. Range requests are forwarded so audio and
+    video can still seek (iOS/Safari refuses to play media that isn't range-capable)."""
+    upstream = None
     try:
-        resp = requests.get(f"https://api.telegram.org/bot{TOKEN}/getFile", params={'file_id': file_id}, timeout=10)
+        resp = _tg_session.get(f"https://api.telegram.org/bot{TOKEN}/getFile", params={'file_id': file_id}, timeout=10)
         result = resp.json()
         if not result.get('ok'):
             return jsonify({'success': False, 'error': 'File not found'}), 404
         file_path = result['result']['file_path']
-        return redirect(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
+
+        fwd_headers = {}
+        if request.headers.get('Range'):
+            fwd_headers['Range'] = request.headers['Range']
+        upstream = _tg_session.get(
+            f"https://api.telegram.org/file/bot{TOKEN}/{file_path}",
+            headers=fwd_headers, stream=True, timeout=(5, 30)
+        )
+        if upstream.status_code not in (200, 206):
+            upstream.close()
+            return jsonify({'success': False, 'error': 'File not found'}), 404
+
+        def generate(up=upstream):
+            try:
+                for chunk in up.iter_content(chunk_size=64 * 1024):
+                    if chunk:
+                        yield chunk
+            finally:
+                up.close()
+
+        headers = {'Cache-Control': 'private, max-age=3600'}
+        for name in ('Content-Range', 'Accept-Ranges'):
+            if name in upstream.headers:
+                headers[name] = upstream.headers[name]
+        # Only forward Content-Length when the body is passed through untouched.
+        if 'Content-Length' in upstream.headers and 'Content-Encoding' not in upstream.headers:
+            headers['Content-Length'] = upstream.headers['Content-Length']
+        return Response(
+            generate(),
+            status=upstream.status_code,
+            content_type=upstream.headers.get('Content-Type', 'application/octet-stream'),
+            headers=headers
+        )
     except Exception as e:
-        logger.error(f"Error proxying file {file_id}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        if upstream is not None:
+            upstream.close()
+        # requests' error text can embed the request URL, i.e. the bot token: scrub it,
+        # and never send it to the client.
+        logger.error(f"Error proxying file: {str(e).replace(str(TOKEN), '<token>')}")
+        return jsonify({'success': False, 'error': 'Could not load file'}), 500
+
+# One query for a whole feed page: page slice -> categories, unread count, reaction counts,
+# the viewer's reaction, the viewer's admin flag and every author's aura score (via the shared
+# score CTE, aggregated once per *author on this page*, not per row). total_count comes from
+# a window function so the separate COUNT(*) is only needed for out-of-range pages.
+_FEED_SQL = f"""
+    WITH page_posts AS (
+        SELECT p.post_id, p.content, p.timestamp, p.comment_count, p.media_type,
+               p.media_id, p.explicit, p.author_id,
+               COUNT(*) OVER () AS total_count
+        FROM posts p
+        WHERE p.approved = TRUE AND p.deleted = FALSE
+        ORDER BY p.timestamp DESC, p.post_id DESC
+        LIMIT %s OFFSET %s
+    ),
+    score_authors AS (
+        SELECT DISTINCT author_id FROM page_posts
+    ),
+    {_SCORE_CTES_SQL}
+    SELECT
+        pp.post_id, pp.content, pp.timestamp, pp.comment_count, pp.media_type,
+        pp.media_id, pp.explicit, pp.total_count,
+        u.user_id AS author_id,
+        u.sex AS author_sex,
+        u.avatar_emoji AS author_avatar,
+        u.anonymous_name AS author_name,
+        u.is_admin AS author_is_admin,
+        COALESCE(u.hide_aura, FALSE) AS author_hide_aura,
+        COALESCE(cat.categories, '') AS categories,
+        COALESCE(uc.n, 0) AS unread_comments,
+        COALESCE(rx.counts, '{{}}'::jsonb) AS reaction_counts,
+        ur.type AS user_reaction,
+        COALESCE(asr.score, 0) AS author_score,
+        COALESCE(v.is_admin, FALSE) AS viewer_is_admin
+    FROM page_posts pp
+    JOIN users u ON u.user_id = pp.author_id
+    LEFT JOIN LATERAL (
+        SELECT STRING_AGG(DISTINCT pc.category_code, ',') AS categories
+        FROM post_categories pc WHERE pc.post_id = pp.post_id
+    ) cat ON TRUE
+    LEFT JOIN post_views pv ON pv.user_id = %s AND pv.post_id = pp.post_id
+    LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS n FROM comments c
+        WHERE c.post_id = pp.post_id
+          AND c.timestamp > COALESCE(pv.last_viewed, '1970-01-01'::timestamp)
+    ) uc ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT jsonb_object_agg(t.type, t.cnt) AS counts FROM (
+            SELECT r.type, COUNT(*) AS cnt FROM reactions r
+            WHERE r.post_id = pp.post_id GROUP BY r.type
+        ) t
+    ) rx ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT r.type FROM reactions r
+        WHERE r.post_id = pp.post_id AND r.user_id = %s LIMIT 1
+    ) ur ON TRUE
+    LEFT JOIN author_scores asr ON asr.author_id = pp.author_id
+    LEFT JOIN users v ON v.user_id = %s
+    ORDER BY pp.timestamp DESC, pp.post_id DESC
+"""
+
 
 @flask_app.route('/api/mini-app/get-posts', methods=['GET'])
 def mini_app_get_posts():
     """API endpoint for getting posts from mini app - With Pagination and Unread Counts"""
     try:
         user_id = request.args.get('user_id')
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 10))
+        uid = str(user_id) if user_id else None
+        page = _clamp_int(request.args.get('page'), 1, 100000, 1)
+        per_page = _clamp_int(request.args.get('per_page'), 1, 50, 10)
         offset = (page - 1) * per_page
-        
-        # Get approved posts.
-        # Rewritten from a correlated subquery (COUNT(*) ... WHERE c2.post_id = p.post_id
-        # AND c2.timestamp > (SELECT last_viewed FROM post_views WHERE ...), re-evaluated
-        # per post) to a LEFT JOIN against post_views. The page_posts CTE also picks the
-        # 10 posts for this page *before* joining categories/unread comments, so the
-        # aggregation work only ever runs over `per_page` rows instead of every approved
-        # post in the table (the old query had to GROUP BY + ORDER BY the full result
-        # before LIMIT/OFFSET could be applied).
-        posts = db_fetch_all('''
-            WITH page_posts AS (
-                SELECT post_id, content, timestamp, comment_count, media_type,
-                       media_id, explicit, author_id
-                FROM posts
-                WHERE approved = TRUE AND deleted = FALSE
-                ORDER BY timestamp DESC
-                LIMIT %s OFFSET %s
-            )
-            SELECT
-                pp.post_id,
-                pp.content,
-                pp.timestamp,
-                pp.comment_count,
-                pp.media_type,
-                pp.media_id,
-                pp.explicit,
-                u.user_id as author_id,
-                u.sex as author_sex,
-                u.avatar_emoji as author_avatar,
-                u.anonymous_name as author_name,
-                u.is_admin as author_is_admin,
-                COALESCE(u.hide_aura, FALSE) as author_hide_aura,
-                STRING_AGG(DISTINCT pc.category_code, ',') as categories,
-                COUNT(DISTINCT uc.comment_id) as unread_comments
-            FROM page_posts pp
-            JOIN users u ON pp.author_id = u.user_id
-            LEFT JOIN post_categories pc ON pp.post_id = pc.post_id
-            LEFT JOIN post_views pv ON pv.user_id = %s AND pv.post_id = pp.post_id
-            LEFT JOIN comments uc ON uc.post_id = pp.post_id
-                AND uc.timestamp > COALESCE(pv.last_viewed, '1970-01-01')
-            GROUP BY pp.post_id, pp.content, pp.timestamp, pp.comment_count, pp.media_type,
-                     pp.media_id, pp.explicit, u.user_id, u.sex, u.avatar_emoji,
-                     u.anonymous_name, u.is_admin, u.hide_aura
-            ORDER BY pp.timestamp DESC
-        ''', (per_page, offset, user_id))
-        
-        # Batch load reactions for posts
-        post_ids = [p['post_id'] for p in posts]
-        reactions_map = {}
-        user_reactions_map = {}
-        
-        if post_ids:
-            counts_res = db_fetch_all("""
-                SELECT post_id, type, COUNT(*) as cnt
-                FROM reactions
-                WHERE post_id IN %s AND post_id IS NOT NULL
-                GROUP BY post_id, type
-            """, (tuple(post_ids),))
-            
-            for row in (counts_res or []):
-                pid = row['post_id']
-                rtype = row['type']
-                rcnt = row['cnt']
-                if pid not in reactions_map:
-                    reactions_map[pid] = {}
-                reactions_map[pid][rtype] = rcnt
-                
-            if user_id:
-                user_res = db_fetch_all("""
-                    SELECT post_id, type
-                    FROM reactions
-                    WHERE post_id IN %s AND user_id = %s AND post_id IS NOT NULL
-                """, (tuple(post_ids), str(user_id)))
-                
-                for row in (user_res or []):
-                    pid = row['post_id']
-                    rtype = row['type']
-                    user_reactions_map[pid] = rtype
+
+        posts = db_fetch_all(_FEED_SQL, (per_page, offset, uid, uid, uid))
 
         formatted_posts = []
-        viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(user_id),)) if user_id else None
-        is_admin_viewer = bool(viewer_row and viewer_row.get('is_admin'))
-        ratings_map = get_user_ratings_batch([p['author_id'] for p in posts])
+        is_admin_viewer = bool(posts and posts[0].get('viewer_is_admin'))
         for post in posts:
             if isinstance(post['timestamp'], str):
                 post_time = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S')
@@ -12834,18 +13200,21 @@ def mini_app_get_posts():
             if len(content_preview) > 300:
                 content_preview = content_preview[:297] + '...'
             
-            rating = ratings_map.get(post['author_id'], 0)
+            rating = int(post.get('author_score') or 0)
             is_owner = str(post['author_id']) == str(user_id) if user_id else False
             show_aura = not post.get('author_hide_aura') or is_owner or is_admin_viewer
             aura_sticker = format_aura(rating) if (not post['author_is_admin'] and show_aura) else ""
             
             category_list = post['categories'].split(',') if post['categories'] else ['Other']
             
-            is_owner = str(post['author_id']) == str(user_id)
             is_explicit = bool(post.get('explicit'))
             hide_content = is_explicit and not is_owner and not is_admin_viewer
             if hide_content:
                 content_preview = "This post contains explicit content that may not be suitable for all viewers."
+
+            reaction_counts = post.get('reaction_counts') or {}
+            if isinstance(reaction_counts, str):  # jsonb normally arrives already parsed
+                reaction_counts = json.loads(reaction_counts)
             
             formatted_posts.append({
                 'id': post['post_id'],
@@ -12869,18 +13238,26 @@ def mini_app_get_posts():
                 'media_type': None if hide_content else post['media_type'],
                 'media_id': None if hide_content else post['media_id'],
                 'reactions': {
-                    'counts': reactions_map.get(post['post_id'], {}),
-                    'user_reaction': user_reactions_map.get(post['post_id'], None)
+                    'counts': reaction_counts,
+                    'user_reaction': post.get('user_reaction')
                 }
             })
 
-        total_posts = db_fetch_one("SELECT COUNT(*) as count FROM posts WHERE approved = TRUE")
+        # total_posts now counts exactly what the feed shows (approved AND not deleted).
+        if posts:
+            total = int(posts[0]['total_count'])
+        elif offset > 0:
+            # Page past the end: the window count has no rows to ride on, so ask directly.
+            total_row = db_fetch_one("SELECT COUNT(*) AS count FROM posts WHERE approved = TRUE AND deleted = FALSE")
+            total = int(total_row['count']) if total_row else 0
+        else:
+            total = 0
         
         return jsonify({
             'success': True,
             'data': formatted_posts,
             'page': page,
-            'total_posts': total_posts['count'] if total_posts else 0,
+            'total_posts': total,
             'has_more': len(posts) == per_page,
             'next_page': page + 1 if len(posts) == per_page else None
         })
@@ -13020,14 +13397,20 @@ def mini_app_get_single_post(post_id):
 
 @flask_app.route('/api/mini-app/post/<int:post_id>/comments', methods=['GET'])
 def mini_app_get_post_comments(post_id):
-    """API endpoint for fetching a post's comments with threading support"""
+    """API endpoint for fetching a post's comments with threading support.
+    Paginated like the chat endpoint: ?limit=100 (1..500) returns the NEWEST `limit` comments
+    (oldest-first, so the tree still reads top-down); pass ?before_id=<comment_id> to get the
+    `limit` comments immediately before that one. Response carries has_more."""
     try:
         # Get viewer_id
         viewer_id = request.args.get('viewer_id')
         reveal_requested = request.args.get('reveal') == '1'
+        limit = _clamp_int(request.args.get('limit'), 1, 500, 100)
+        before_id = _parse_positive_int(request.args.get('before_id'))
         viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(viewer_id),)) if viewer_id else None
         is_viewer_admin = bool(viewer_row and viewer_row.get('is_admin'))
 
+        # One lookup serves both the explicit-content gate and the vent-author badge below.
         post_gate = db_fetch_one("SELECT author_id, explicit FROM posts WHERE post_id = %s", (post_id,))
         if post_gate and post_gate.get('explicit'):
             is_privileged_viewer = bool(viewer_id) and (
@@ -13036,25 +13419,39 @@ def mini_app_get_post_comments(post_id):
             if not is_privileged_viewer and not reveal_requested:
                 return jsonify({'success': True, 'data': [], 'content_hidden': True})
 
-        comments = db_fetch_all('''
-            SELECT 
-                c.comment_id,
-                c.parent_comment_id,
-                c.content,
-                c.type as media_type,
-                c.file_id as media_id,
-                c.timestamp as time_ago,
-                u.user_id as author_id,
-                u.sex as author_sex,
-                u.avatar_emoji as author_avatar,
-                u.anonymous_name as author_name,
-                u.is_admin as author_is_admin,
-                COALESCE(u.hide_aura, FALSE) as author_hide_aura
-            FROM comments c
-            JOIN users u ON c.author_id = u.user_id
-            WHERE c.post_id = %s
-            ORDER BY c.timestamp ASC
-        ''', (post_id,))
+        before_clause = ""
+        params = [post_id]
+        if before_id:
+            before_clause = "AND (c.timestamp, c.comment_id) < (SELECT b.timestamp, b.comment_id FROM comments b WHERE b.comment_id = %s)"
+            params.append(before_id)
+        params.append(limit + 1)  # one extra row tells us whether older comments exist
+
+        comments = db_fetch_all(f'''
+            SELECT * FROM (
+                SELECT 
+                    c.comment_id,
+                    c.parent_comment_id,
+                    c.content,
+                    c.type as media_type,
+                    c.file_id as media_id,
+                    c.timestamp as time_ago,
+                    u.user_id as author_id,
+                    u.sex as author_sex,
+                    u.avatar_emoji as author_avatar,
+                    u.anonymous_name as author_name,
+                    u.is_admin as author_is_admin,
+                    COALESCE(u.hide_aura, FALSE) as author_hide_aura
+                FROM comments c
+                JOIN users u ON c.author_id = u.user_id
+                WHERE c.post_id = %s {before_clause}
+                ORDER BY c.timestamp DESC, c.comment_id DESC
+                LIMIT %s
+            ) win
+            ORDER BY win.time_ago ASC, win.comment_id ASC
+        ''', tuple(params))
+        has_more = len(comments) > limit
+        if has_more:
+            comments = comments[1:]  # drop the extra, oldest row
 
         # Batch load reactions for comments
         comment_ids = [c['comment_id'] for c in comments]
@@ -13088,8 +13485,7 @@ def mini_app_get_post_comments(post_id):
                     cid = row['comment_id']
                     rtype = row['type']
                     comment_user_reactions_map[cid] = rtype
-        post_author = db_fetch_one("SELECT author_id FROM posts WHERE post_id = %s", (post_id,))
-        post_author_id = post_author['author_id'] if post_author else None
+        post_author_id = post_gate['author_id'] if post_gate else None
         ratings_map = get_user_ratings_batch([c['author_id'] for c in comments])
         formatted_comments = []
         now = datetime.now()
@@ -13137,7 +13533,21 @@ def mini_app_get_post_comments(post_id):
                 }
             })
 
-        return jsonify({'success': True, 'data': formatted_comments})
+        # Mark as read up to the newest comment actually returned (so "unread" only clears
+        # for what was shown). GREATEST keeps a later view from being moved backwards when the
+        # client is paging through older comments.
+        if viewer_id and comments:
+            try:
+                db_execute("""
+                    INSERT INTO post_views (user_id, post_id, last_viewed)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, post_id)
+                    DO UPDATE SET last_viewed = GREATEST(post_views.last_viewed, EXCLUDED.last_viewed)
+                """, (str(viewer_id), post_id, comments[-1]['time_ago']))
+            except Exception as pv_err:  # e.g. unknown viewer id (FK) - never fail the read
+                logger.warning(f"Could not update post_views for {viewer_id}/{post_id}: {pv_err}")
+
+        return jsonify({'success': True, 'data': formatted_comments, 'has_more': has_more})
     except Exception as e:
         logger.error(f"Error fetching comments for {post_id}: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -13173,6 +13583,7 @@ def mini_app_submit_comment(post_id):
 
         update_channel_post_comment_count_sync(post_id)
         calculate_user_rating.cache_clear()
+        _leaderboard_cache_bust()
 
         # Notify the right person: parent-comment author for a reply, otherwise the vent author
         if parent_comment_id and parent_comment_id != 0:
@@ -13263,6 +13674,7 @@ def mini_app_toggle_reaction():
             
         # Clear rating caches since aura changes
         calculate_user_rating.cache_clear()
+        _leaderboard_cache_bust()
         format_aura.cache_clear()
         
         return jsonify({
@@ -13284,48 +13696,45 @@ def mini_app_get_chats():
         user_id = request.args.get('user_id')
         if not user_id:
             return jsonify({'success': False, 'error': 'Missing user_id'}), 400
-            
-        # DISTINCT ON query to get the latest message per partner, omitting aura points as requested
+        user_id = str(user_id)
+        page = _clamp_int(request.args.get('page'), 1, 100000, 1)
+        per_page = _clamp_int(request.args.get('per_page'), 1, 100, 30)
+        offset = (page - 1) * per_page
+
+        # Latest message per conversation pair (uses idx_pm_conversation_pair), paginated
+        # BEFORE the unread lateral join so the COUNT only runs for the rows on this page.
+        # per_page + 1 rows are fetched to learn whether another page exists.
         rows = db_fetch_all("""
             WITH last_messages AS (
-                SELECT DISTINCT ON (partner_id)
-                    CASE 
-                        WHEN sender_id = %s THEN receiver_id 
-                        ELSE sender_id 
-                    END AS partner_id,
-                    content,
-                    timestamp,
-                    is_read,
-                    sender_id,
-                    is_deleted,
-                    is_edited
+                SELECT DISTINCT ON (LEAST(sender_id, receiver_id), GREATEST(sender_id, receiver_id))
+                    CASE WHEN sender_id = %s THEN receiver_id ELSE sender_id END AS partner_id,
+                    content, timestamp, is_read, sender_id, is_deleted, is_edited
                 FROM private_messages
                 WHERE sender_id = %s OR receiver_id = %s
-                ORDER BY partner_id, timestamp DESC
+                ORDER BY LEAST(sender_id, receiver_id), GREATEST(sender_id, receiver_id),
+                         timestamp DESC, message_id DESC
+            ),
+            page AS (
+                SELECT * FROM last_messages ORDER BY timestamp DESC LIMIT %s OFFSET %s
             )
-            SELECT 
-                lm.partner_id,
-                lm.content,
-                lm.timestamp,
-                lm.is_read,
-                lm.sender_id,
-                lm.is_deleted,
-                lm.is_edited,
+            SELECT
+                lm.partner_id, lm.content, lm.timestamp, lm.is_read, lm.sender_id,
+                lm.is_deleted, lm.is_edited,
                 u.anonymous_name as partner_name,
                 u.sex as partner_sex,
                 u.avatar_emoji as partner_avatar,
                 u.is_admin as partner_is_admin,
-                COALESCE((
-                    SELECT COUNT(*) 
-                    FROM private_messages 
-                    WHERE sender_id = lm.partner_id 
-                      AND receiver_id = %s 
-                      AND is_read = FALSE
-                ), 0) as unread_count
-            FROM last_messages lm
-            JOIN users u ON lm.partner_id = u.user_id
+                COALESCE(unread.cnt, 0) as unread_count
+            FROM page lm
+            JOIN users u ON u.user_id = lm.partner_id
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) AS cnt FROM private_messages pm
+                WHERE pm.receiver_id = %s AND pm.sender_id = lm.partner_id AND pm.is_read = FALSE
+            ) unread ON TRUE
             ORDER BY lm.timestamp DESC
-        """, (user_id, user_id, user_id, user_id))
+        """, (user_id, user_id, user_id, per_page + 1, offset, user_id))
+        has_more = len(rows or []) > per_page
+        rows = (rows or [])[:per_page]
         
         chats = []
         for r in (rows or []):
@@ -13364,10 +13773,16 @@ def mini_app_get_chats():
                 'unread_count': r['unread_count']
             })
             
-        return jsonify({'success': True, 'data': chats})
+        return jsonify({'success': True, 'data': chats, 'page': page, 'has_more': has_more})
     except Exception as e:
         logger.error(f"Error getting chats: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+try:
+    _ADDIS_TZ = ZoneInfo("Africa/Addis_Ababa") if ZoneInfo else timezone(timedelta(hours=3))
+except Exception:
+    _ADDIS_TZ = timezone(timedelta(hours=3))
+
 
 def format_ethiopian_time(dt):
     """Format datetime into Western (EAT) + Ethiopian Amharic time format."""
@@ -13379,11 +13794,9 @@ def format_ethiopian_time(dt):
         except:
             return dt
             
-    # If server is in UTC, adjust to Ethiopia time (UTC+3)
-    now_local = datetime.now()
-    now_utc = datetime.utcnow()
-    if abs((now_local - now_utc).total_seconds()) < 60:
-        dt = dt + timedelta(hours=3)
+    # Naive DB timestamps are in the server's local zone (UTC on Render); convert to Addis
+    # Ababa time. Ethiopia has no DST, so the fixed +3 fallback is exact if tzdata is missing.
+    dt = dt.astimezone(_ADDIS_TZ).replace(tzinfo=None)
         
     western_str = dt.strftime('%I:%M %p')
     
@@ -13416,23 +13829,40 @@ def mini_app_get_messages(partner_id):
         user_id = request.args.get('user_id')
         if not user_id:
             return jsonify({'success': False, 'error': 'Missing user_id'}), 400
+        limit = _clamp_int(request.args.get('limit'), 1, 200, 50)
+        before_id = _parse_positive_int(request.args.get('before_id'))
             
-        # Mark incoming messages from this partner as read
-        db_execute("""
-            UPDATE private_messages 
-            SET is_read = TRUE 
-            WHERE sender_id = %s AND receiver_id = %s AND is_read = FALSE
-        """, (partner_id, user_id))
+        # Mark incoming messages from this partner as read (only on the live/newest page -
+        # paging back through history can't contain anything new).
+        if not before_id:
+            db_execute("""
+                UPDATE private_messages 
+                SET is_read = TRUE 
+                WHERE sender_id = %s AND receiver_id = %s AND is_read = FALSE
+            """, (partner_id, user_id))
         
-        # Get messages history
-        rows = db_fetch_all("""
-            SELECT message_id, sender_id, receiver_id, content, timestamp, is_read, media_type, media_id,
-                   is_edited, is_deleted
-            FROM private_messages
-            WHERE (sender_id = %s AND receiver_id = %s)
-               OR (sender_id = %s AND receiver_id = %s)
-            ORDER BY timestamp ASC
-        """, (user_id, partner_id, partner_id, user_id))
+        # Newest `limit` messages (or the `limit` before `before_id`), returned oldest-first.
+        before_clause = ""
+        params = [user_id, partner_id, partner_id, user_id]
+        if before_id:
+            before_clause = "AND (timestamp, message_id) < (SELECT b.timestamp, b.message_id FROM private_messages b WHERE b.message_id = %s)"
+            params.append(before_id)
+        params.append(limit + 1)  # one extra row => has_more
+        rows = db_fetch_all(f"""
+            SELECT * FROM (
+                SELECT message_id, sender_id, receiver_id, content, timestamp, is_read, media_type, media_id,
+                       is_edited, is_deleted
+                FROM private_messages
+                WHERE ((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s))
+                  {before_clause}
+                ORDER BY timestamp DESC, message_id DESC
+                LIMIT %s
+            ) win
+            ORDER BY win.timestamp ASC, win.message_id ASC
+        """, tuple(params))
+        has_more = len(rows or []) > limit
+        if has_more:
+            rows = rows[1:]  # drop the extra, oldest row
         
         messages = []
         for r in (rows or []):
@@ -13457,7 +13887,7 @@ def mini_app_get_messages(partner_id):
                 'is_deleted': is_deleted
             })
             
-        return jsonify({'success': True, 'data': messages})
+        return jsonify({'success': True, 'data': messages, 'has_more': has_more})
     except Exception as e:
         logger.error(f"Error getting messages: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -13671,7 +14101,7 @@ def mini_app_send_chat_request():
             },
             "parse_mode": "Markdown"
         }
-        requests.post(url, json=payload, timeout=5)
+        _tg_session.post(url, json=payload, timeout=5)
     except Exception as e:
         logger.error(f"Failed to send chat request notification: {e}")
     
@@ -13680,30 +14110,8 @@ def mini_app_send_chat_request():
 def mini_app_leaderboard():
     """API endpoint for leaderboard data"""
     try:
-        # Get top 10 users with weighted aura
-        top_users = db_fetch_all('''
-            SELECT 
-                u.user_id,
-                u.anonymous_name,
-                u.sex,
-                u.avatar_emoji,
-                u.weekly_badge,
-                (
-                    (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.user_id AND p.approved = TRUE) * 10 +
-                    (SELECT COUNT(*) FROM comments c WHERE c.author_id = u.user_id) * 2 +
-                    COALESCE((
-                        SELECT SUM(CASE WHEN r.type = 'like' THEN 1 WHEN r.type = 'dislike' THEN -2 ELSE 0 END)
-                        FROM reactions r
-                        JOIN comments c2 ON r.comment_id = c2.comment_id
-                        WHERE c2.author_id = u.user_id
-                    ), 0) -
-                    (SELECT COUNT(*) FROM blocks b WHERE b.blocked_id = u.user_id) * 10
-                ) as total
-            FROM users u
-            WHERE u.is_admin = FALSE
-            ORDER BY total DESC
-            LIMIT 10
-        ''')
+        # Top 10 users with weighted aura (single CTE query, cached for ~60s)
+        top_users = get_leaderboard_rows(10)
 
         
         # Format users
@@ -13811,8 +14219,8 @@ def mini_app_admin_chats():
     if not admin_id or not _require_admin(admin_id):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    page = int(request.args.get('page', 1))
-    search = (request.args.get('search') or '').strip() or None
+    page = _clamp_int(request.args.get('page'), 1, 100000, 1)
+    search = (request.args.get('search') or '').strip()[:100] or None
     per_page = 20
     offset = (page - 1) * per_page
 
@@ -13843,7 +14251,7 @@ def mini_app_admin_chat_transcript(user_a, user_b):
     if not admin_id or not _require_admin(admin_id):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    limit = int(request.args.get('limit', 100))
+    limit = _clamp_int(request.args.get('limit'), 1, 500, 100)
     msgs = get_admin_conversation_transcript(user_a, user_b, limit=limit)
     total = get_admin_conversation_message_count(user_a, user_b)
 
@@ -13869,8 +14277,11 @@ def mini_app_admin_chat_transcript(user_a, user_b):
 def mini_app_admin_pending_posts():
     """API endpoint for admin to get pending posts"""
     try:
-        # Check if admin (you'll need to implement proper authentication)
-        # For now, we'll just return data
+        # Was completely unauthenticated. Same gate as the other admin endpoints, same
+        # generic 403 (no hint whether the id exists / is an admin).
+        admin_id = request.args.get('admin_id') or request.args.get('user_id')
+        if not admin_id or not _require_admin(admin_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
         
         posts = db_fetch_all('''
             SELECT 
@@ -13903,7 +14314,11 @@ def mini_app_admin_pending_posts():
 def mini_app_admin_approve_post():
     """API endpoint for admin to approve posts"""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
+        admin_id = data.get('admin_id') or data.get('user_id') or request.args.get('admin_id')
+        if not admin_id or not _require_admin(admin_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
         post_id = data.get('post_id')
         
         if not post_id:
@@ -13914,6 +14329,8 @@ def mini_app_admin_approve_post():
             "UPDATE posts SET approved = TRUE WHERE post_id = %s",
             (post_id,)
         )
+        calculate_user_rating.cache_clear()  # an approved post is +10 aura
+        _leaderboard_cache_bust()
         
         if success:
             return jsonify({'success': True, 'message': 'Post approved'})
@@ -14004,10 +14421,7 @@ def mini_app_update_profile(user_id):
         if not name:
             return jsonify({'success': False, 'error': 'Name is required'}), 400
             
-        db_execute(
-            "UPDATE users SET anonymous_name = %s, bio = %s, avatar_emoji = %s WHERE user_id = %s",
-            (name, bio, avatar, user_id)
-        )
+        db_update_user(user_id, anonymous_name=name, bio=bio, avatar_emoji=avatar)
         
         return jsonify({'success': True, 'message': 'Profile updated successfully'})
     except Exception as e:
@@ -14059,6 +14473,8 @@ def mini_app_delete_comment(comment_id):
         # Delete reactions and comment
         db_execute("DELETE FROM reactions WHERE comment_id = %s", (comment_id,))
         db_execute("DELETE FROM comments WHERE comment_id = %s", (comment_id,))
+        calculate_user_rating.cache_clear()
+        _leaderboard_cache_bust()
         
         # Update post comment count
         db_execute("UPDATE posts SET comment_count = (SELECT COUNT(*) FROM comments WHERE post_id = %s) WHERE post_id = %s", (post_id, post_id))
@@ -14132,6 +14548,7 @@ def mini_app_update_settings(user_id):
             
         params.append(user_id)
         db_execute(f"UPDATE users SET {', '.join(updates)} WHERE user_id = %s", tuple(params))
+        _invalidate_user_cache(user_id)
         
         return jsonify({'success': True, 'message': 'Settings updated'})
     except Exception as e:
