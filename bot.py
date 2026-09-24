@@ -10560,8 +10560,10 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .pill-aura .bolt-icon path{fill:#ff9800}
 .pill-aura-pts{color:var(--gold3)}
 .ava{
-  border-radius:50%;background:linear-gradient(135deg,var(--bg3),var(--bg2));
-  border:1.5px solid var(--border2);
+  border-radius:50%;
+  background:linear-gradient(145deg,rgba(var(--gold-rgb),0.22),var(--bg3) 55%,var(--bg2));
+  border:1.5px solid rgba(var(--gold-rgb),0.55);
+  box-shadow:0 2px 10px rgba(var(--gold-rgb),0.2),inset 0 1px 1px rgba(255,255,255,0.08);
   display:flex;align-items:center;justify-content:center;
   flex-shrink:0;font-size:1.1em;
 }
@@ -10670,8 +10672,9 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 }
 .profile-ava-wrap{
   width:80px;height:80px;border-radius:50%;margin:0 auto 14px;
-  background:linear-gradient(135deg,rgba(201,168,76,0.2),rgba(201,168,76,0.05));
-  border:1.5px solid var(--border2);
+  background:linear-gradient(145deg,rgba(var(--gold-rgb),0.3),rgba(var(--gold-rgb),0.05) 60%,var(--bg2));
+  border:2px solid rgba(var(--gold-rgb),0.6);
+  box-shadow:0 0 0 4px rgba(var(--gold-rgb),0.08),0 6px 20px rgba(var(--gold-rgb),0.25),inset 0 1px 1px rgba(255,255,255,0.1);
   display:flex;align-items:center;justify-content:center;font-size:32px;
 }
 .profile-name{font-size:22px;font-weight:700;letter-spacing:-0.3px}
@@ -11035,7 +11038,7 @@ body.light .cr-head button svg{stroke:#1a1a1a}
   position:absolute;top:12px;right:16px;font-size:24px;cursor:pointer;color:var(--text3);
 }
 .modal-close:hover{color:var(--gold);}
-.modal-avatar{width:80px;height:80px;border-radius:50%;margin:0 auto 12px;background:var(--bg2);display:flex;align-items:center;justify-content:center;font-size:32px;border:2px solid var(--gold);}
+.modal-avatar{width:80px;height:80px;border-radius:50%;margin:0 auto 12px;background:linear-gradient(145deg,rgba(var(--gold-rgb),0.24),var(--bg2));display:flex;align-items:center;justify-content:center;font-size:32px;border:2px solid var(--gold);box-shadow:0 6px 18px rgba(var(--gold-rgb),0.25),inset 0 1px 1px rgba(255,255,255,0.1);}
 .modal-name{font-size:20px;font-weight:700;color:var(--gold);}
 .modal-stats{display:flex;justify-content:space-around;margin:16px 0;}
 .modal-stat{text-align:center;}
