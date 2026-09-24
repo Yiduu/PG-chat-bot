@@ -3675,7 +3675,7 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE,
         LEFT JOIN post_categories pc ON p.post_id = pc.post_id
         WHERE p.approved = FALSE
         GROUP BY p.post_id, u.anonymous_name, p.media_type, p.media_id, p.content, p.timestamp, p.explicit
-        ORDER BY p.timestamp
+        ORDER BY p.timestamp DESC
         LIMIT %s OFFSET %s
     """, (per_page, offset)))
     
@@ -12064,6 +12064,9 @@ let adminViewingPair = null;
 let adminTranscriptLimit = 60;
 let adminTranscriptHasMore = false;
 let adminTranscriptLoadingOlder = false;
+let adminChatsPage = 1;
+let adminChatsSearch = '';
+let adminChatsHasMore = false;
 
 async function checkAdminStatus(){
   try{
@@ -12094,22 +12097,33 @@ async function checkAdminStatus(){
     let st;
     document.getElementById('admin-search-inp').addEventListener('input', e=>{
       clearTimeout(st);
-      st = setTimeout(()=>loadAdminChats(e.target.value.trim()), 400);
+      st = setTimeout(()=>loadAdminChats(e.target.value.trim(), 1), 400);
     });
   }catch(e){console.error('checkAdminStatus failed:', e);}
 }
 
-async function loadAdminChats(search=''){
+async function loadAdminChats(search='', page=1){
   const list = document.getElementById('admin-chats-list');
+  adminChatsSearch = search;
+  adminChatsPage = page;
+  list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Loading…</div>';
   try{
     const q = search ? `&search=${encodeURIComponent(search)}` : '';
-    const d = await api(`/api/mini-app/admin/chats?admin_id=${UID}&page=1${q}`);
+    const d = await api(`/api/mini-app/admin/chats?admin_id=${UID}&page=${page}${q}`);
     const convos = d.data || [];
+    adminChatsHasMore = !!d.has_more;
     if(!convos.length){
-      list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No conversations found</div>';
+      list.innerHTML = page > 1
+        ? '<div style="text-align:center;padding:40px;color:var(--text3)">No more conversations</div>'
+        : '<div style="text-align:center;padding:40px;color:var(--text3)">No conversations found</div>';
+      if(page > 1){
+        // Ran past the last page (e.g. list shrank) — step back one page automatically.
+        adminChatsPage = page - 1;
+        loadAdminChats(search, adminChatsPage);
+      }
       return;
     }
-    list.innerHTML = convos.map(c => `
+    const rows = convos.map(c => `
       <div class="chat-item" data-user-a="${esc(c.user_a)}" data-user-b="${esc(c.user_b)}" data-name-a="${esc(c.name_a)}" data-name-b="${esc(c.name_b)}">
         <div class="ava" style="width:44px;height:44px;font-size:14px">${esc(c.avatar_a)}${esc(c.avatar_b)}</div>
         <div class="chat-item-right">
@@ -12120,6 +12134,13 @@ async function loadAdminChats(search=''){
           <div class="chat-item-preview">${esc(c.last_content || ('[' + (c.last_media_type || 'media') + ']'))}</div>
         </div>
       </div>`).join('');
+    const nav = `
+      <div style="display:flex;align-items:center;justify-content:center;gap:16px;padding:16px 0">
+        <button class="btn-ghost" id="admin-chats-prev" style="${page<=1?'opacity:0.4;cursor:not-allowed':''}" ${page<=1?'disabled':''} onclick="loadAdminChats(adminChatsSearch, adminChatsPage-1)">◀ Prev</button>
+        <span style="color:var(--text3);font-size:13px">Page ${page}</span>
+        <button class="btn-ghost" id="admin-chats-next" style="${adminChatsHasMore?'':'opacity:0.4;cursor:not-allowed'}" ${adminChatsHasMore?'':'disabled'} onclick="loadAdminChats(adminChatsSearch, adminChatsPage+1)">Next ▶</button>
+      </div>`;
+    list.innerHTML = rows + nav;
     list.querySelectorAll('.chat-item').forEach(el=>{
       el.onclick = ()=>openAdminTranscript(el.dataset.userA, el.dataset.userB, el.dataset.nameA, el.dataset.nameB);
     });
