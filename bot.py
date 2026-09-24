@@ -10660,7 +10660,7 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .cat-chip .icon{width:15px;height:15px;color:var(--text3)}
 .cat-chip.on .icon{color:var(--gold2)}
 .badge-icon{width:13px;height:13px;vertical-align:-2px;margin-right:3px}
-.ava svg,.modal-avatar svg,.profile-ava-wrap svg{width:55%;height:55%;color:var(--text3)}
+.ava svg,.modal-avatar svg,.profile-ava-wrap svg{width:55%;height:55%;color:var(--gold2)}
 .lb-crown .icon{width:26px;height:26px;color:var(--gold)}
 .lb-medal-rank .icon{width:22px;height:22px}
 .lb-medal-rank.silver .icon{color:#c0c4cc}
@@ -11348,6 +11348,8 @@ const ICONS = {
   clock: ic('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
   alert: ic('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
   user: ic('<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>'),
+  man: ic('<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.5 3.4-7 8-7s8 2.5 8 7"/><path d="M9.4 13.1L12 16l2.6-2.9"/>'),
+  woman: ic('<circle cx="12" cy="7.5" r="4"/><path d="M12 11.5c-3.3 1.7-5.5 5-5.5 8.5h11c0-3.5-2.2-6.8-5.5-8.5z"/>'),
   mic: ic('<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>'),
   paperclip: ic('<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'),
   close: ic('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
@@ -11355,7 +11357,12 @@ const ICONS = {
   thumbsUp: ic('<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>'),
   thumbsDown: ic('<path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/>')
 };
-function avaHtml(v){ return v ? esc(v) : ICONS.user; }
+function avaHtml(v){
+  if(v==='👨') return ICONS.man;
+  if(v==='👩') return ICONS.woman;
+  if(!v||v==='👤') return ICONS.user;
+  return esc(v);
+}
 
 const CATS = [
   ['StoryTime',ICONS.book,'Story Time'],
@@ -12282,7 +12289,7 @@ async function loadAdminChats(search='', page=1){
     }
     const rows = convos.map(c => `
       <div class="chat-item" data-user-a="${esc(c.user_a)}" data-user-b="${esc(c.user_b)}" data-name-a="${esc(c.name_a)}" data-name-b="${esc(c.name_b)}">
-        <div class="ava" style="width:44px;height:44px;font-size:14px">${esc(c.avatar_a)}${esc(c.avatar_b)}</div>
+        <div class="ava" style="width:44px;height:44px;font-size:14px">${avaHtml(c.avatar_a)}${avaHtml(c.avatar_b)}</div>
         <div class="chat-item-right">
           <div class="chat-item-top">
             <span class="chat-item-name">${esc(c.name_a)} ↔ ${esc(c.name_b)}</span>
