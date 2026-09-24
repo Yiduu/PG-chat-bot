@@ -3686,6 +3686,10 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await update.message.reply_text("No pending posts!")
         return
     
+    # Which posts the admin has already checked off for bulk delete, so the
+    # "Select" button re-renders in the right state across pages/reopens.
+    bulk_selected = context.user_data.setdefault('bulk_delete_ids', set())
+
     # Send each pending post to admin (one page's worth at a time)
     for post in posts:
         keyboard = InlineKeyboardMarkup([
@@ -3697,6 +3701,12 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 InlineKeyboardButton(
                     "Unmark Explicit" if post.get('explicit') else "Mark Explicit",
                     callback_data=f"toggle_explicit_{post['post_id']}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "☑ Selected" if post['post_id'] in bulk_selected else "☐ Select for bulk delete",
+                    callback_data=f"toggle_bulkdel_{post['post_id']}"
                 )
             ]
         ])
@@ -3799,13 +3809,130 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE,
     nav_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
     if page < total_pages:
         nav_row.append(InlineKeyboardButton("Next ▶", callback_data=f"admin_pending_page_{page+1}"))
-    nav_markup = InlineKeyboardMarkup([nav_row, [InlineKeyboardButton("Admin Panel", callback_data='admin_panel')]])
+
+    # Bulk-delete row: either the posts checked off across any page, or every
+    # pending post regardless of page/selection. Both go through a confirm step.
+    bulk_row = [
+        InlineKeyboardButton(f"🗑 Delete Selected ({len(bulk_selected)})", callback_data="bulkdel_sel_confirm"),
+        InlineKeyboardButton(f"🗑 Delete ALL ({total})", callback_data="bulkdel_all_confirm")
+    ]
+    nav_markup = InlineKeyboardMarkup([nav_row, bulk_row, [InlineKeyboardButton("Admin Panel", callback_data='admin_panel')]])
 
     footer_text = f"Showing {len(posts)} of {total} pending post(s) — page {page}/{total_pages}"
     if update.callback_query:
         await update.callback_query.message.reply_text(footer_text, reply_markup=nav_markup)
     else:
         await update.message.reply_text(footer_text, reply_markup=nav_markup)
+
+
+async def toggle_bulk_delete_select(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
+    """Check/uncheck a single pending post for the next bulk-delete run. Selection
+    is kept in user_data so it survives paging through the pending-posts list."""
+    query = update.callback_query
+    user_id = str(update.effective_user.id)
+
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
+    if not user or not user['is_admin']:
+        await query.answer("You don't have permission to do this.", show_alert=True)
+        return
+
+    selected = context.user_data.setdefault('bulk_delete_ids', set())
+    if post_id in selected:
+        selected.discard(post_id)
+        now_selected = False
+    else:
+        selected.add(post_id)
+        now_selected = True
+
+    # Refresh just the "Select" button on this post's own message.
+    try:
+        new_rows = list(query.message.reply_markup.inline_keyboard)
+        for row in new_rows:
+            for i, btn in enumerate(row):
+                if btn.callback_data == f"toggle_bulkdel_{post_id}":
+                    row[i] = InlineKeyboardButton(
+                        "☑ Selected" if now_selected else "☐ Select for bulk delete",
+                        callback_data=f"toggle_bulkdel_{post_id}"
+                    )
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_rows))
+    except Exception as e:
+        logger.error(f"Error updating bulk-delete toggle for post {post_id}: {e}")
+
+    await query.answer("Selected for deletion" if now_selected else "Removed from selection")
+
+
+async def confirm_bulk_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str):
+    """Show a Yes/Cancel confirmation before an irreversible bulk delete.
+    mode is 'selected' (only checked-off posts) or 'all' (every pending post)."""
+    query = update.callback_query
+    user_id = str(update.effective_user.id)
+
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
+    if not user or not user['is_admin']:
+        await query.answer("You don't have permission to do this.", show_alert=True)
+        return
+
+    if mode == 'selected':
+        count = len(context.user_data.get('bulk_delete_ids', set()))
+        if count == 0:
+            await query.answer("No posts selected.", show_alert=True)
+            return
+        text = f"⚠️ Delete {count} selected pending post(s)?\n\nThis cannot be undone."
+        yes_callback = "bulkdel_sel_execute"
+    else:
+        total_row = (await db_fetch_one_async("SELECT COUNT(*) as cnt FROM posts WHERE approved = FALSE"))
+        count = total_row['cnt'] if total_row else 0
+        if count == 0:
+            await query.answer("No pending posts to delete.", show_alert=True)
+            return
+        text = f"⚠️ Delete ALL {count} pending post(s)?\n\nThis cannot be undone."
+        yes_callback = "bulkdel_all_execute"
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Yes, delete", callback_data=yes_callback),
+         InlineKeyboardButton("Cancel", callback_data="bulkdel_cancel")]
+    ])
+    await query.edit_message_text(text, reply_markup=kb)
+
+
+async def execute_bulk_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str):
+    """Actually delete the posts after confirmation. Authors are not individually
+    notified here (unlike single Reject) to avoid a burst of messages when many
+    posts go at once — only the admin sees the result."""
+    query = update.callback_query
+    user_id = str(update.effective_user.id)
+
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
+    if not user or not user['is_admin']:
+        await query.answer("You don't have permission to do this.", show_alert=True)
+        return
+
+    try:
+        if mode == 'selected':
+            ids = list(context.user_data.get('bulk_delete_ids', set()))
+            if not ids:
+                await query.answer("No posts selected.", show_alert=True)
+                return
+            rows = (await db_execute_async(
+                "DELETE FROM posts WHERE post_id = ANY(%s) AND approved = FALSE RETURNING post_id",
+                (ids,), fetch=True
+            )) or []
+        else:
+            rows = (await db_execute_async(
+                "DELETE FROM posts WHERE approved = FALSE RETURNING post_id",
+                (), fetch=True
+            )) or []
+
+        deleted_count = len(rows)
+        context.user_data['bulk_delete_ids'] = set()
+        logger.info(f"Admin {user_id} bulk-deleted {deleted_count} pending post(s) (mode={mode})")
+
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Back to Pending Posts", callback_data="admin_pending")]])
+        await query.edit_message_text(f"✅ Deleted {deleted_count} pending post(s).", reply_markup=kb)
+    except Exception as e:
+        logger.error(f"Error in execute_bulk_delete (mode={mode}): {e}")
+        await query.edit_message_text("Error deleting posts. Please try again.")
+
 
 async def toggle_post_explicit(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
     """Admin flags or unflags a post as explicit — works for posts still pending
@@ -8770,6 +8897,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Error in toggle_post_explicit handler: {e}")
                 await query.answer("Error toggling explicit flag", show_alert=True)
+
+        # Bulk delete of pending posts: per-post checkbox, then delete-selected or delete-all
+        elif query.data.startswith('toggle_bulkdel_'):
+            try:
+                post_id = int(query.data.split('_')[-1])
+                await toggle_bulk_delete_select(update, context, post_id)
+            except ValueError:
+                await query.answer("Invalid post ID", show_alert=True)
+            except Exception as e:
+                logger.error(f"Error in toggle_bulk_delete_select handler: {e}")
+                await query.answer("Error toggling selection", show_alert=True)
+
+        elif query.data == 'bulkdel_sel_confirm':
+            await confirm_bulk_delete(update, context, 'selected')
+
+        elif query.data == 'bulkdel_all_confirm':
+            await confirm_bulk_delete(update, context, 'all')
+
+        elif query.data == 'bulkdel_sel_execute':
+            await execute_bulk_delete(update, context, 'selected')
+
+        elif query.data == 'bulkdel_all_execute':
+            await execute_bulk_delete(update, context, 'all')
+
+        elif query.data == 'bulkdel_cancel':
+            await show_pending_posts(update, context, page=1)
+
         # Admin broadcast handlers
         elif query.data == 'admin_broadcast':
             await start_broadcast(update, context)
