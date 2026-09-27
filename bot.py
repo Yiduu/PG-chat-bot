@@ -5906,7 +5906,10 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         await context.bot.send_message(chat_id, "Post not found.")
         return
 
-    post_author_id = post['author_id'] if not post.get('deleted') else None
+    # Keep the real author_id even for deleted posts so the vent author is still
+    # shown as "Vent author" (not their real nickname) when commenting under their
+    # own deleted post — blanking this out here previously deanonymized them.
+    post_author_id = post['author_id']
     comments = page_data['comments']
     total_comments = page_data['total_comments']
     reaction_data = page_data['reaction_data']
