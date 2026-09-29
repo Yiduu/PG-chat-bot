@@ -11,7 +11,8 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters, ContextTypes
+    MessageHandler, filters, ContextTypes,
+    TypeHandler, ApplicationHandlerStop
 )
 from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
@@ -446,6 +447,29 @@ def init_db():
                     logger.info("Adding missing column: warning_count to users table")
                     c.execute("ALTER TABLE users ADD COLUMN warning_count INTEGER DEFAULT 0")
 
+                # ---------------- moderation (ban / warn) migration ----------------
+                for col_name, col_type in [
+                    ('is_banned', 'BOOLEAN DEFAULT FALSE'),
+                    ('ban_reason', 'TEXT DEFAULT NULL'),
+                    ('banned_at', 'TIMESTAMP DEFAULT NULL'),
+                    ('banned_by', 'TEXT DEFAULT NULL'),
+                ]:
+                    if ('users', col_name) not in existing_columns:
+                        logger.info(f"Adding missing column: {col_name} to users table")
+                        c.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS user_warnings (
+                        warning_id SERIAL PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        admin_id TEXT,
+                        reason TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                c.execute("CREATE INDEX IF NOT EXISTS idx_user_warnings_user ON user_warnings (user_id, created_at DESC)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users (is_banned) WHERE is_banned = TRUE")
+
                 # Check for 'thread_context_post_id' column in users
                 if ('users', 'thread_context_post_id') not in existing_columns:
                     logger.info("Adding missing column: thread_context_post_id to users table")
@@ -774,7 +798,7 @@ def _escape_like(term):
 # ---- user row cache (only the columns hot paths actually need) ----
 _USER_CACHE_COLUMNS = (
     "user_id, is_admin, notifications_enabled, anonymous_name, sex, avatar_emoji, bio, "
-    "weekly_badge, hide_aura, hide_bio, hide_follower_count, hide_role"
+    "weekly_badge, hide_aura, hide_bio, hide_follower_count, hide_role, is_banned, ban_reason"
 )
 # lru_cache cannot evict a single key, and a plain cache_clear() races with a reader that
 # fetched the old row just before an UPDATE committed (it would re-store stale data right
@@ -2805,7 +2829,8 @@ async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: 
                 "Unmark Explicit" if post.get('explicit') else "Mark Explicit",
                 callback_data=f"toggle_explicit_{post_id}"
             )
-        ]
+        ],
+        [InlineKeyboardButton("🛡 Moderate author", callback_data=f"mod_post_{post_id}")],
     ])
     
     explicit_line = "Marked as explicit\n\n" if post.get('explicit') else ""
@@ -3218,6 +3243,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Send Broadcast", callback_data='admin_broadcast')],
         [InlineKeyboardButton("Weekly Tools", callback_data='admin_weekly_tools')],
         [InlineKeyboardButton("Pending Reports", callback_data='admin_reports')],
+        [InlineKeyboardButton("🛡 Moderation", callback_data='mod_menu')],
         [InlineKeyboardButton("Monitor Chats", callback_data='admin_chats_1')],
         [InlineKeyboardButton("Back to Menu", callback_data='menu')]
     ]
@@ -3708,7 +3734,8 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE,
                     "☑ Selected" if post['post_id'] in bulk_selected else "☐ Select for bulk delete",
                     callback_data=f"toggle_bulkdel_{post['post_id']}"
                 )
-            ]
+            ],
+            [InlineKeyboardButton("🛡 Moderate author", callback_data=f"mod_post_{post['post_id']}")],
         ])
         
         content_text = post['content'] or ''
@@ -7242,6 +7269,7 @@ async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE,
             InlineKeyboardButton("Delete Content", callback_data=f"report_delete_{rep['report_id']}"),
             InlineKeyboardButton("Warn User", callback_data=f"report_warn_{rep['report_id']}"),
         ])
+        keyboard.append([InlineKeyboardButton("🛡 Moderate author", callback_data=f"mod_rep_{rep['report_id']}")])
 
     # Pagination row
     pag_row = []
@@ -9537,25 +9565,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _, author_id = (await asyncio.to_thread(get_report_content_preview, report['target_type'], report['target_id']))
                 (await asyncio.to_thread(resolve_report, report_id, user_id, 'action_taken', 'warned'))
                 if author_id:
-                    # Increment warning count
-                    await db_execute_async(
-                        "UPDATE users SET warning_count = COALESCE(warning_count, 0) + 1 WHERE user_id = %s",
-                        (author_id,)
+                    ok, _msg = await mod_warn_user(
+                        context, author_id, user_id,
+                        f"Reported content (report #{report_id}). Please follow the community guidelines."
                     )
-                    _invalidate_user_cache(author_id)
-                    try:
-                        await context.bot.send_message(
-                            chat_id=author_id,
-                            text=(
-                                "Warning from Admin \n\n"
-                                "Your content has been reported and reviewed by an admin. "
-                                "Please ensure your posts and comments follow our community guidelines.\n\n"
-                                "Repeated violations may result in content removal or other actions."
-                            ),
-                            parse_mode=ParseMode.MARKDOWN
-                        )
-                    except Exception:
-                        pass
                 await query.answer("Warning sent to user.", show_alert=False)
                 await show_admin_reports(update, context, page=1)
             except Exception as e:
@@ -10455,6 +10468,542 @@ async def mini_app_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
+# ==================== MODERATION: BAN / WARN / UNBAN ====================
+MAX_WARNINGS_BEFORE_BAN = 3        # auto-ban at this many warnings (0 = never auto-ban)
+UNBAN_RESETS_WARNINGS = True       # unbanned users start with a clean slate
+MOD_REASON_MAX_LEN = 300
+MOD_PENDING_TIMEOUT_SECONDS = 300  # how long the bot waits for a typed reason
+_MOD_MENU_BUTTONS = {"Share", "Chat Requests", "Profile", "Posts", "Top", "Settings",
+                     "Open App", "❌ Cancel", "/cancel"}
+
+
+def _mod_clean_reason(text):
+    return (text or "").strip()[:MOD_REASON_MAX_LEN]
+
+
+def _mod_fmt_dt(value):
+    try:
+        return value.strftime('%b %d, %Y')
+    except Exception:
+        return str(value or '')
+
+
+async def mod_is_admin(user_id) -> bool:
+    row = await asyncio.to_thread(get_user_cached, str(user_id))
+    return bool(row and row.get('is_admin'))
+
+
+async def mod_get_target(target_id):
+    return await db_fetch_one_async(
+        "SELECT user_id, anonymous_name, avatar_emoji, is_admin, is_banned, ban_reason, "
+        "banned_at, warning_count FROM users WHERE user_id = %s",
+        (str(target_id),)
+    )
+
+
+async def mod_ban_user(context, target_id, admin_id, reason=None):
+    """Returns (ok: bool, html_message: str)."""
+    target_id = str(target_id)
+    if target_id == str(admin_id):
+        return False, "You can't ban yourself."
+    target = await mod_get_target(target_id)
+    if not target:
+        return False, "User not found."
+    if target['is_admin']:
+        return False, "Admins can't be banned."
+    if target['is_banned']:
+        return False, "That user is already banned."
+
+    reason = _mod_clean_reason(reason) or None
+    await db_execute_async(
+        "UPDATE users SET is_banned = TRUE, ban_reason = %s, banned_at = CURRENT_TIMESTAMP, "
+        "banned_by = %s WHERE user_id = %s",
+        (reason, str(admin_id), target_id)
+    )
+    _invalidate_user_cache(target_id)
+    logger.info(f"Admin {admin_id} banned user {target_id} (reason: {reason})")
+
+    notice = "🚫 <b>You have been banned from this bot.</b>"
+    if reason:
+        notice += f"\n\n<b>Reason:</b> {html.escape(reason)}"
+    try:
+        await context.bot.send_message(chat_id=target_id, text=notice, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.warning(f"Could not notify banned user {target_id}: {e}")
+
+    name = html.escape(get_display_name(target))
+    msg = f"🚫 Banned <b>{name}</b> (<code>{target_id}</code>)."
+    if reason:
+        msg += f"\nReason: {html.escape(reason)}"
+    return True, msg
+
+
+async def mod_unban_user(context, target_id, admin_id):
+    target_id = str(target_id)
+    target = await mod_get_target(target_id)
+    if not target:
+        return False, "User not found."
+    if not target['is_banned']:
+        return False, "That user isn't banned."
+
+    warn_reset = ", warning_count = 0" if UNBAN_RESETS_WARNINGS else ""
+    await db_execute_async(
+        "UPDATE users SET is_banned = FALSE, ban_reason = NULL, banned_at = NULL, "
+        f"banned_by = NULL{warn_reset} WHERE user_id = %s",
+        (target_id,)
+    )
+    _invalidate_user_cache(target_id)
+    logger.info(f"Admin {admin_id} unbanned user {target_id}")
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text="✅ <b>Your ban has been lifted.</b> You can use the bot again. "
+                 "Please follow the community guidelines.",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.warning(f"Could not notify unbanned user {target_id}: {e}")
+
+    name = html.escape(get_display_name(target))
+    return True, f"✅ Unbanned <b>{name}</b> (<code>{target_id}</code>)."
+
+
+async def mod_warn_user(context, target_id, admin_id, reason):
+    target_id = str(target_id)
+    reason = _mod_clean_reason(reason)
+    if not reason:
+        return False, "A reason is required for a warning."
+    if target_id == str(admin_id):
+        return False, "You can't warn yourself."
+    target = await mod_get_target(target_id)
+    if not target:
+        return False, "User not found."
+    if target['is_admin']:
+        return False, "Admins can't be warned."
+    if target['is_banned']:
+        return False, "That user is already banned."
+
+    await db_execute_async(
+        "INSERT INTO user_warnings (user_id, admin_id, reason) VALUES (%s, %s, %s)",
+        (target_id, str(admin_id), reason)
+    )
+    row = await db_execute_async(
+        "UPDATE users SET warning_count = COALESCE(warning_count, 0) + 1 "
+        "WHERE user_id = %s RETURNING warning_count",
+        (target_id,), fetchone=True
+    )
+    _invalidate_user_cache(target_id)
+    count = int(row['warning_count']) if row else 1
+    logger.info(f"Admin {admin_id} warned user {target_id} ({count}): {reason}")
+
+    limit_txt = f"{count}/{MAX_WARNINGS_BEFORE_BAN}" if MAX_WARNINGS_BEFORE_BAN else str(count)
+    notice = f"⚠️ <b>Warning from admin</b>\n\n<b>Reason:</b> {html.escape(reason)}\n\nWarnings: {limit_txt}"
+    if MAX_WARNINGS_BEFORE_BAN:
+        notice += f"\nReaching {MAX_WARNINGS_BEFORE_BAN} warnings results in a ban."
+    try:
+        await context.bot.send_message(chat_id=target_id, text=notice, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.warning(f"Could not notify warned user {target_id}: {e}")
+
+    name = html.escape(get_display_name(target))
+    msg = f"⚠️ Warned <b>{name}</b> (<code>{target_id}</code>), warnings: {limit_txt}.\nReason: {html.escape(reason)}"
+
+    if MAX_WARNINGS_BEFORE_BAN and count >= MAX_WARNINGS_BEFORE_BAN:
+        ok, ban_msg = await mod_ban_user(
+            context, target_id, admin_id,
+            f"Reached {MAX_WARNINGS_BEFORE_BAN} warnings (last: {reason})"
+        )
+        if ok:
+            msg += "\n\n🚫 <b>Auto-banned</b> for reaching the warning limit."
+    return True, msg
+
+
+# ---------- screens (each returns (text, InlineKeyboardMarkup)) ----------
+
+def mod_menu_content():
+    text = (
+        "<b>🛡 Moderation</b>\n\n"
+        "<b>Commands</b>\n"
+        "/ban &lt;user_id&gt; [reason]\n"
+        "/warn &lt;user_id&gt; &lt;reason&gt;\n"
+        "/unban &lt;user_id&gt;\n"
+        "/warnings &lt;user_id&gt;\n"
+        "/user &lt;user_id&gt;\n"
+        "/banned\n\n"
+        "You can also tap <b>🛡 Moderate author</b> under a pending post or a report."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚫 Banned users", callback_data="mod_list_1")],
+        [InlineKeyboardButton("« Admin Panel", callback_data="admin_panel")]
+    ])
+    return text, kb
+
+
+async def mod_banned_content(page=1):
+    per_page = 8
+    page = max(1, page)
+    offset = (page - 1) * per_page
+    rows = await db_fetch_all_async(
+        """SELECT user_id, anonymous_name, avatar_emoji, ban_reason,
+                  COUNT(*) OVER () AS total_count
+           FROM users WHERE is_banned = TRUE
+           ORDER BY banned_at DESC NULLS LAST LIMIT %s OFFSET %s""",
+        (per_page, offset)
+    )
+    back = [InlineKeyboardButton("« Moderation", callback_data="mod_menu")]
+    if not rows:
+        return "<b>🚫 Banned users</b>\n\nNo banned users.", InlineKeyboardMarkup([back])
+
+    total = int(rows[0]['total_count'])
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    lines = [f"<b>🚫 Banned users</b> ({total}), page {page}/{total_pages}\n"]
+    kb = []
+    for r in rows:
+        name = html.escape(get_display_name(r))
+        reason = html.escape((r.get('ban_reason') or 'no reason')[:60])
+        lines.append(f"• <b>{name}</b> (<code>{r['user_id']}</code>): {reason}")
+        kb.append([InlineKeyboardButton(f"{get_display_name(r)}"[:40], callback_data=f"mod_user_{r['user_id']}")])
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"mod_list_{page - 1}"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"mod_list_{page + 1}"))
+    if nav:
+        kb.append(nav)
+    kb.append(back)
+    return "\n".join(lines), InlineKeyboardMarkup(kb)
+
+
+async def mod_user_panel(target_id):
+    t = await mod_get_target(target_id)
+    back = [InlineKeyboardButton("« Moderation", callback_data="mod_menu")]
+    if not t:
+        return "User not found.", InlineKeyboardMarkup([back])
+
+    name = html.escape(get_display_name(t))
+    warns = int(t['warning_count'] or 0)
+    warns_txt = f"{warns}/{MAX_WARNINGS_BEFORE_BAN}" if MAX_WARNINGS_BEFORE_BAN else str(warns)
+    if t['is_admin']:
+        status = "🛡 Administrator"
+    elif t['is_banned']:
+        status = "🚫 Banned"
+    else:
+        status = "✅ Active"
+
+    lines = [f"<b>{name}</b>", f"ID: <code>{t['user_id']}</code>", f"Status: {status}", f"Warnings: {warns_txt}"]
+    if t['is_banned']:
+        lines.append(f"Ban reason: {html.escape(t['ban_reason'] or 'none given')}")
+        if t.get('banned_at'):
+            lines.append(f"Banned on: {_mod_fmt_dt(t['banned_at'])}")
+
+    uid = t['user_id']
+    kb = []
+    if not t['is_admin']:
+        second = (InlineKeyboardButton("✅ Unban", callback_data=f"mod_unban_{uid}") if t['is_banned']
+                  else InlineKeyboardButton("🚫 Ban", callback_data=f"mod_ban_{uid}"))
+        row = []
+        if not t['is_banned']:
+            row.append(InlineKeyboardButton("⚠️ Warn", callback_data=f"mod_warn_{uid}"))
+        row.append(second)
+        kb.append(row)
+        kb.append([InlineKeyboardButton("📜 Warning history", callback_data=f"mod_hist_{uid}")])
+    kb.append(back)
+    return "\n".join(lines), InlineKeyboardMarkup(kb)
+
+
+async def mod_history_content(target_id):
+    rows = await db_fetch_all_async(
+        "SELECT reason, created_at FROM user_warnings WHERE user_id = %s "
+        "ORDER BY created_at DESC LIMIT 10",
+        (str(target_id),)
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data=f"mod_user_{target_id}")]])
+    if not rows:
+        return f"<b>Warning history</b> (<code>{target_id}</code>)\n\nNo warnings on record.", kb
+    lines = [f"<b>Warning history</b> (<code>{target_id}</code>), latest 10\n"]
+    for r in rows:
+        lines.append(f"• {_mod_fmt_dt(r['created_at'])}: {html.escape(r['reason'])}")
+    return "\n".join(lines), kb
+
+
+async def _mod_show(query, text, kb):
+    """Edit the current message; if it can't be edited (e.g. a photo post), send a new one."""
+    try:
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            return
+        await query.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+# ---------- inline-button handler (callback data starts with "mod_") ----------
+
+async def moderation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    admin_id = str(query.from_user.id)
+    if not await mod_is_admin(admin_id):
+        await query.answer("You don't have permission to do this.", show_alert=True)
+        return
+    await query.answer()
+    data = query.data
+
+    try:
+        if data == 'mod_menu':
+            text, kb = mod_menu_content()
+            await _mod_show(query, text, kb)
+
+        elif data.startswith('mod_list_'):
+            page = int(data.split('_')[2]) if data.split('_')[2].isdigit() else 1
+            text, kb = await mod_banned_content(page)
+            await _mod_show(query, text, kb)
+
+        elif data.startswith('mod_user_'):
+            text, kb = await mod_user_panel(data[len('mod_user_'):])
+            await _mod_show(query, text, kb)
+
+        elif data.startswith('mod_hist_'):
+            text, kb = await mod_history_content(data[len('mod_hist_'):])
+            await _mod_show(query, text, kb)
+
+        elif data.startswith('mod_rep_'):
+            rep = await db_fetch_one_async(
+                "SELECT target_type, target_id FROM reports WHERE report_id = %s",
+                (int(data[len('mod_rep_'):]),)
+            )
+            author_id = None
+            if rep:
+                _, author_id = await asyncio.to_thread(get_report_content_preview, rep['target_type'], rep['target_id'])
+            if not author_id:
+                await query.message.reply_text("The reported content no longer exists, so its author can't be resolved.")
+                return
+            text, kb = await mod_user_panel(author_id)
+            await query.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+        elif data.startswith('mod_post_'):
+            row = await db_fetch_one_async(
+                "SELECT author_id FROM posts WHERE post_id = %s", (int(data[len('mod_post_'):]),)
+            )
+            if not row:
+                await query.message.reply_text("That post no longer exists.")
+                return
+            text, kb = await mod_user_panel(row['author_id'])
+            await query.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+        elif data.startswith('mod_warn_') or data.startswith('mod_ban_'):
+            is_warn = data.startswith('mod_warn_')
+            target = data.split('_', 2)[2]
+            context.user_data['mod_pending'] = {
+                'action': 'warn' if is_warn else 'ban',
+                'target': target,
+                'ts': time.time()
+            }
+            rows = []
+            if not is_warn:
+                rows.append([InlineKeyboardButton("Ban without a reason", callback_data=f"mod_skip_{target}")])
+            rows.append([InlineKeyboardButton("Cancel", callback_data=f"mod_user_{target}")])
+            prompt = ("Type the <b>reason for the warning</b> and send it as a message."
+                      if is_warn else
+                      "Type the <b>reason for the ban</b> (the user will see it), or tap the button to skip.")
+            await query.message.reply_text(
+                f"{prompt}\n\nUser: <code>{target}</code>",
+                reply_markup=InlineKeyboardMarkup(rows), parse_mode=ParseMode.HTML
+            )
+
+        elif data.startswith('mod_skip_'):
+            target = data[len('mod_skip_'):]
+            context.user_data.pop('mod_pending', None)
+            ok, msg = await mod_ban_user(context, target, admin_id, None)
+            await query.message.reply_text(
+                msg, parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("View user", callback_data=f"mod_user_{target}")]])
+            )
+
+        elif data.startswith('mod_unban_'):
+            target = data[len('mod_unban_'):]
+            ok, msg = await mod_unban_user(context, target, admin_id)
+            text, kb = await mod_user_panel(target)
+            await _mod_show(query, (msg + "\n\n" + text) if ok else (f"⚠️ {msg}\n\n" + text), kb)
+
+    except Exception as e:
+        logger.error(f"moderation_callback error ({data}): {e}", exc_info=True)
+        try:
+            await query.message.reply_text("Something went wrong. Please try again.")
+        except Exception:
+            pass
+
+
+# ---------- typed reason capture (runs before the normal message handler) ----------
+
+async def mod_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pending = context.user_data.get('mod_pending')
+    if not pending or not update.message or update.message.text is None:
+        return  # not ours: fall through to the normal handlers
+
+    text = update.message.text.strip()
+    admin_id = str(update.effective_user.id)
+
+    if time.time() - pending.get('ts', 0) > MOD_PENDING_TIMEOUT_SECONDS:
+        context.user_data.pop('mod_pending', None)
+        return
+    if text in _MOD_MENU_BUTTONS or text.lower() in ("cancel", "❌ cancel"):
+        context.user_data.pop('mod_pending', None)
+        return  # let the normal flow show "Input cancelled" / open the menu item
+    if not await mod_is_admin(admin_id):
+        context.user_data.pop('mod_pending', None)
+        return
+
+    context.user_data.pop('mod_pending', None)
+    if pending['action'] == 'warn':
+        ok, msg = await mod_warn_user(context, pending['target'], admin_id, text)
+    else:
+        ok, msg = await mod_ban_user(context, pending['target'], admin_id, text)
+    await update.message.reply_text(
+        msg, parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("View user", callback_data=f"mod_user_{pending['target']}")]])
+    )
+    raise ApplicationHandlerStop  # don't let the normal message handler see this text
+
+
+# ---------- slash commands ----------
+
+async def _mod_command_guard(update: Update):
+    if not await mod_is_admin(update.effective_user.id):
+        await update.message.reply_text("You don't have permission to use this command.")
+        return False
+    return True
+
+
+def _mod_parse_args(context):
+    args = context.args or []
+    if not args or not args[0].isdigit():
+        return None, ""
+    return args[0], " ".join(args[1:]).strip()
+
+
+async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _mod_command_guard(update):
+        return
+    target, reason = _mod_parse_args(context)
+    if not target:
+        await update.message.reply_text("Usage: /ban <user_id> [reason]")
+        return
+    ok, msg = await mod_ban_user(context, target, str(update.effective_user.id), reason)
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _mod_command_guard(update):
+        return
+    target, _ = _mod_parse_args(context)
+    if not target:
+        await update.message.reply_text("Usage: /unban <user_id>")
+        return
+    ok, msg = await mod_unban_user(context, target, str(update.effective_user.id))
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _mod_command_guard(update):
+        return
+    target, reason = _mod_parse_args(context)
+    if not target or not reason:
+        await update.message.reply_text("Usage: /warn <user_id> <reason>")
+        return
+    ok, msg = await mod_warn_user(context, target, str(update.effective_user.id), reason)
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+async def warnings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _mod_command_guard(update):
+        return
+    target, _ = _mod_parse_args(context)
+    if not target:
+        await update.message.reply_text("Usage: /warnings <user_id>")
+        return
+    text, kb = await mod_history_content(target)
+    await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+async def user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _mod_command_guard(update):
+        return
+    target, _ = _mod_parse_args(context)
+    if not target:
+        await update.message.reply_text("Usage: /user <user_id>")
+        return
+    text, kb = await mod_user_panel(target)
+    await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+async def banned_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _mod_command_guard(update):
+        return
+    text, kb = await mod_banned_content(1)
+    await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+async def mod_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _mod_command_guard(update):
+        return
+    text, kb = mod_menu_content()
+    await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+# ---------- enforcement ----------
+
+async def ban_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Runs before every other handler. Banned non-admins get a notice and nothing else runs."""
+    user = update.effective_user
+    if not user:
+        return
+    row = await asyncio.to_thread(get_user_cached, str(user.id))
+    if not row or not row.get('is_banned') or row.get('is_admin'):
+        return
+
+    reason = row.get('ban_reason')
+    text = "🚫 You are banned from this bot."
+    if reason:
+        text += f"\nReason: {reason}"
+    try:
+        if update.callback_query:
+            await update.callback_query.answer("🚫 You are banned from this bot.", show_alert=True)
+        elif update.message:
+            await update.message.reply_text(text)
+    except Exception:
+        pass
+    raise ApplicationHandlerStop
+
+
+@flask_app.before_request
+def _mini_app_ban_gate():
+    """Blocks banned users from every mini-app API call (reads and writes)."""
+    path = request.path
+    if not path.startswith('/api/mini-app/') or path.startswith('/api/mini-app/file/'):
+        return None
+    try:
+        uid = request.args.get('user_id') or request.args.get('viewer_id') or request.args.get('admin_id')
+        if not uid and request.is_json:
+            body = request.get_json(silent=True)
+            if isinstance(body, dict):
+                uid = body.get('user_id') or body.get('sender_id') or body.get('admin_id')
+        if not uid and request.form:
+            uid = request.form.get('user_id')
+        if not uid and request.method in ('PUT', 'POST'):
+            uid = (request.view_args or {}).get('user_id')  # /profile/<id>, /settings/<id> writes
+        if not uid:
+            return None
+        row = get_user_cached(str(uid))
+        if row and row.get('is_banned') and not row.get('is_admin'):
+            msg = "🚫 Your account has been banned."
+            if row.get('ban_reason'):
+                msg += f" Reason: {row['ban_reason']}"
+            return jsonify({'success': False, 'error': msg, 'banned': True}), 403
+    except Exception as e:
+        logger.error(f"mini-app ban gate error: {e}")  # fail open: never take the app down
+    return None
+
+
 def main():
     # Initialize database before starting the bot
     try:
@@ -10500,6 +11049,18 @@ def main():
     app.add_handler(CommandHandler("force_weekly", force_weekly_command))
     app.add_handler(CommandHandler("weekly_status", weekly_status_command))
     
+    # ---- moderation ----
+    app.add_handler(TypeHandler(Update, ban_gate), group=-2)                                   # blocks banned users first
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mod_text_input), group=-1)  # typed ban/warn reasons
+    app.add_handler(CommandHandler("ban", ban_command))
+    app.add_handler(CommandHandler("unban", unban_command))
+    app.add_handler(CommandHandler("warn", warn_command))
+    app.add_handler(CommandHandler("warnings", warnings_command))
+    app.add_handler(CommandHandler("user", user_command))
+    app.add_handler(CommandHandler("banned", banned_command))
+    app.add_handler(CommandHandler("mod", mod_command))
+    app.add_handler(CallbackQueryHandler(moderation_callback, pattern=r'^mod_'))                # BEFORE button_handler
+
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_message_text))
@@ -12793,7 +13354,8 @@ def notify_admin_of_new_post_sync(post_id):
                 [
                     {"text": "Unmark Explicit" if post.get('explicit') else "Mark Explicit",
                      "callback_data": f"toggle_explicit_{post_id}"}
-                ]
+                ],
+                [{"text": "🛡 Moderate author", "callback_data": f"mod_post_{post_id}"}]
             ]
         }
 
