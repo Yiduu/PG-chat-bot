@@ -6977,13 +6977,13 @@ def create_report(reporter_id: str, target_type: str, target_id: int, reason: st
 
 
 def get_pending_reports(offset: int = 0, limit: int = 5):
-    """Fetch paginated pending reports with reporter name."""
+    """Fetch paginated pending reports with reporter name (newest first)."""
     return db_fetch_all(
         """SELECT r.*, u.anonymous_name as reporter_name
            FROM reports r
            LEFT JOIN users u ON r.reporter_id = u.user_id
            WHERE r.status = 'pending'
-           ORDER BY r.created_at ASC
+           ORDER BY r.created_at DESC, r.report_id DESC
            LIMIT %s OFFSET %s""",
         (limit, offset)
     )
