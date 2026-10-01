@@ -2804,6 +2804,51 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
     except Exception as e:
         logger.error(f"Error sending reply notification: {e}")
 
+async def notify_post_author_of_thread_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int, parent_comment_id: int, replier_id: str, comment_content: str = None, comment_type: str = 'text', media_id: str = None):
+    """Tell the vent author about replies other people leave under comments on their vent."""
+    try:
+        import html
+        post = await db_fetch_one_async("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,))
+        if not post:
+            return
+        author_id = str(post['author_id'])
+        if author_id == str(replier_id):
+            return  # the author wrote this reply themselves
+
+        parent = await db_fetch_one_async("SELECT author_id, content FROM comments WHERE comment_id = %s", (parent_comment_id,))
+        if not parent:
+            return
+        if str(parent['author_id']) == author_id:
+            return  # already notified by notify_user_of_reply
+
+        author = await db_fetch_one_async("SELECT user_id, notifications_enabled FROM users WHERE user_id = %s", (author_id,))
+        if not author or not author['notifications_enabled']:
+            return
+
+        replier = await db_fetch_one_async("SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (replier_id,))
+        replier_name = get_display_name(replier)
+        parent_author = await db_fetch_one_async("SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (parent['author_id'],))
+        parent_name = get_display_name(parent_author)
+
+        post_preview = (post['content'][:60] + '...') if post['content'] and len(post['content']) > 60 else (post['content'] or "")
+        media_labels = {'voice': '[Voice message]', 'gif': '[GIF]', 'sticker': '[Sticker]', 'photo': '[Photo]'}
+        body = truncate_for_telegram(comment_content, COMMENT_TEXT_CONTENT_LIMIT) if comment_content else media_labels.get(comment_type, '')
+
+        lines = [f"<b>{html.escape(replier_name)}</b> replied to {html.escape(parent_name)} on your vent:", ""]
+        if body:
+            lines.append(f"<blockquote>{html.escape(body)}</blockquote>")
+        lines.append(f"They were replying to: {html.escape((parent['content'] or '[media]')[:100])}")
+        lines.append(f"Your vent: {html.escape(post_preview)}")
+        lines.append(f"\n<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>")
+        text = "\n".join(lines)
+
+        if media_id and comment_type and comment_type != 'text':
+            await send_telegram_media_async(context, author_id, comment_type, media_id, caption=text, parse_mode=ParseMode.HTML)
+            return
+        await context.bot.send_message(chat_id=author_id, text=text, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Error notifying vent author of thread reply: {e}")
+
 async def notify_admin_of_new_post(context: ContextTypes.DEFAULT_TYPE, post_id: int):
     if not ADMIN_ID:
         return
@@ -10112,6 +10157,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Notify parent comment author if this is a reply
         if parent_comment_id != 0:
             await notify_user_of_reply(context, post_id, parent_comment_id, user_id, new_comment_id, comment_content=content, comment_type=comment_type, media_id=file_id)
+            await notify_post_author_of_thread_reply(context, post_id, parent_comment_id, user_id, comment_content=content, comment_type=comment_type, media_id=file_id)
         return
 
     elif state == STATE_AWAITING_PM_EDIT:
@@ -13670,6 +13716,54 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_commen
     except Exception as e:
         logger.error(f"notify_user_of_reply_sync failed: {e}")
 
+def notify_post_author_of_thread_reply_sync(post_id, parent_comment_id, replier_id, comment_content=None, media_type='text', media_id=None):
+    """Sync version for Flask routes: tell the vent author about replies others leave under comments."""
+    try:
+        post = db_fetch_one("SELECT author_id, content FROM posts WHERE post_id = %s", (post_id,))
+        if not post:
+            return
+        author_id = str(post['author_id'])
+        if author_id == str(replier_id):
+            return
+
+        parent = db_fetch_one("SELECT author_id, content FROM comments WHERE comment_id = %s", (parent_comment_id,))
+        if not parent:
+            return
+        if str(parent['author_id']) == author_id:
+            return  # already notified by notify_user_of_reply_sync
+
+        author = get_user_cached(author_id)
+        if not author or not author.get('notifications_enabled'):
+            return
+
+        replier = get_user_cached(replier_id)
+        replier_name = get_display_name(replier)
+        parent_author = get_user_cached(parent['author_id'])
+        parent_name = get_display_name(parent_author)
+
+        post_preview = (post['content'][:60] + '...') if post['content'] and len(post['content']) > 60 else (post['content'] or "")
+        media_labels = {'voice': '[Voice message]', 'gif': '[GIF]', 'sticker': '[Sticker]', 'photo': '[Photo]'}
+        body = truncate_for_telegram(comment_content, COMMENT_TEXT_CONTENT_LIMIT) if comment_content else media_labels.get(media_type, '')
+
+        lines = [f"<b>{html.escape(replier_name)}</b> replied to {html.escape(parent_name)} on your vent:", ""]
+        if body:
+            lines.append(f"<blockquote>{html.escape(body)}</blockquote>")
+        lines.append(f"They were replying to: {html.escape((parent['content'] or '[media]')[:100])}")
+        lines.append(f"Your vent: {html.escape(post_preview)}")
+        lines.append(f"\n<a href='https://t.me/{BOT_USERNAME}?start=comments_{post_id}'>View conversation</a>")
+        text = "\n".join(lines)
+
+        def _deliver():
+            if media_id and media_type and media_type != 'text':
+                result = send_telegram_media_sync(author_id, media_type, media_id, caption=text, parse_mode='HTML')
+                if result and result.get('ok'):
+                    return
+            send_telegram_message_sync(author_id, text, parse_mode='HTML')
+
+        _fire_and_forget(_deliver)
+    except Exception as e:
+        logger.error(f"notify_post_author_of_thread_reply_sync failed: {e}")
+
 def update_channel_post_comment_count_sync(post_id):
     """Sync version of update_channel_post_comment_count for the mini app"""
     try:
@@ -14339,6 +14433,10 @@ def mini_app_submit_comment(post_id):
         if parent_comment_id and parent_comment_id != 0:
             notify_user_of_reply_sync(
                 post_id, parent_comment_id, user_id, new_comment_id,
+                comment_content=content, media_type=media_type, media_id=file_id
+            )
+            notify_post_author_of_thread_reply_sync(
+                post_id, parent_comment_id, user_id,
                 comment_content=content, media_type=media_type, media_id=file_id
             )
         else:
