@@ -451,6 +451,18 @@ def init_db():
                     )
                 ''')
 
+                # User reports store the reported user's Telegram ID in target_id, and
+                # Telegram IDs can exceed the 32-bit INTEGER range, so widen the column.
+                c.execute("""
+                    SELECT data_type FROM information_schema.columns
+                    WHERE table_name = 'reports' AND column_name = 'target_id'
+                """)
+                _tid_row = c.fetchone()
+                _tid_type = (_tid_row['data_type'] if isinstance(_tid_row, dict) else _tid_row[0]) if _tid_row else None
+                if _tid_type == 'integer':
+                    logger.info("Widening reports.target_id to BIGINT")
+                    c.execute("ALTER TABLE reports ALTER COLUMN target_id TYPE BIGINT")
+
                 # ---------------- warning_count column migration ----------------
                 if ('users', 'warning_count') not in existing_columns:
                     logger.info("Adding missing column: warning_count to users table")
@@ -4507,6 +4519,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         else:
                             btn.append([InlineKeyboardButton("Block User", callback_data=f'block_user_{user_data["user_id"]}')])
 
+                    btn.append([InlineKeyboardButton("Report User", callback_data=f'report_user_{user_data["user_id"]}')])
+
                 # Prepare display variables
                 display_sex = get_display_sex(user_data)
                 bio = user_data.get('bio', 'No bio set.')
@@ -7050,7 +7064,15 @@ def get_report_content_preview(target_type: str, target_id: int):
         row = db_fetch_one("SELECT content, author_id FROM comments WHERE comment_id = %s", (target_id,))
         if row:
             return (row['content'] or '[media]')[:100], row['author_id']
+    elif target_type == 'user':
+        row = db_fetch_one("SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (str(target_id),))
+        if row:
+            return f"User: {get_display_name(row)} (ID {target_id})", str(target_id)
     return None, None
+
+
+def _report_type_label(target_type: str) -> str:
+    return {'post': 'Post', 'comment': 'Comment', 'user': 'User'}.get(target_type, 'Content')
 
 
 def resolve_report(report_id: int, admin_id: str, status: str, action_taken: str = None):
@@ -7302,7 +7324,7 @@ async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE,
     for rep in reports:
         preview, _ = (await asyncio.to_thread(get_report_content_preview, rep['target_type'], rep['target_id']))
         preview = (preview or '[deleted]')[:60]
-        type_label = "Post" if rep['target_type'] == 'post' else "Comment"
+        type_label = _report_type_label(rep['target_type'])
         reporter_name = rep.get('reporter_name') or 'Anonymous'
         safe_preview = escape_markdown(preview, version=2)
         safe_reporter = escape_markdown(reporter_name, version=2)
@@ -7362,7 +7384,7 @@ async def notify_admin_of_new_report(
     try:
         reporter = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (reporter_id,)))
         reporter_name = reporter['anonymous_name'] if reporter else 'Anonymous'
-        type_label = "Post" if target_type == 'post' else "Comment"
+        type_label = _report_type_label(target_type)
         safe_reason = escape_markdown(reason, version=2)
         safe_name = escape_markdown(reporter_name, version=2)
         text = (
@@ -9380,6 +9402,65 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error in report_comment handler: {e}", exc_info=True)
                 await query.answer("Error processing request", show_alert=True)
 
+        elif query.data.startswith('report_cuser_') or query.data.startswith('report_user_'):
+            try:
+                if query.data.startswith('report_cuser_'):
+                    # Resolved on the server so the commenter's identity is never put in the button
+                    c_id = int(query.data[len('report_cuser_'):])
+                    crow = (await db_fetch_one_async("SELECT author_id FROM comments WHERE comment_id = %s", (c_id,)))
+                    target_uid = str(crow['author_id']) if crow else None
+                else:
+                    target_uid = query.data[len('report_user_'):]
+                if not target_uid or not target_uid.isdigit():
+                    await query.answer("User not found.", show_alert=True)
+                    return
+                if target_uid == str(user_id):
+                    await query.answer("You can't report yourself.", show_alert=True)
+                    return
+                target_row = (await db_fetch_one_async("SELECT user_id, is_admin FROM users WHERE user_id = %s", (target_uid,)))
+                if not target_row:
+                    await query.answer("User not found.", show_alert=True)
+                    return
+                if target_row['is_admin']:
+                    await query.answer("This user can't be reported.", show_alert=True)
+                    return
+                context.user_data['pending_report'] = {'type': 'user', 'id': int(target_uid)}
+                keyboard = [
+                    [InlineKeyboardButton("Yes, Report User", callback_data="confirm_report_user")],
+                    [InlineKeyboardButton("No, Cancel", callback_data="cancel_report")]
+                ]
+                await query.message.reply_text(
+                    "⚠️ <b>Are you sure you want to report this user?</b>\n\n"
+                    "An admin will review the report and may warn or ban the user. "
+                    "False reports can lead to action against your own account.",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.HTML
+                )
+                await query.answer()
+                return
+            except Exception as e:
+                logger.error(f"Error in report_user handler: {e}", exc_info=True)
+                await query.answer("Error processing request", show_alert=True)
+
+        elif query.data == 'confirm_report_user':
+            try:
+                pending = context.user_data.get('pending_report')
+                if not pending or pending.get('type') != 'user':
+                    await query.answer("This report expired. Tap Report User again.", show_alert=True)
+                    return
+                context.user_data['reporting'] = {'type': 'user', 'id': pending['id'], 'timestamp': time.time()}
+                context.user_data.pop('pending_report', None)
+                await query.message.reply_text(
+                    "*Report User*\n\nPlease type a short reason for reporting this user (max 200 characters).\n\nTap Cancel to go back.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=cancel_menu
+                )
+                await query.answer()
+                return
+            except Exception as e:
+                logger.error(f"Error in confirm_report_user handler: {e}", exc_info=True)
+                await query.answer("Error processing request", show_alert=True)
+
         elif query.data.startswith('confirm_report_post_'):
             try:
                 post_id = int(query.data.split('_')[3])  # confirm_report_post_<post_id>
@@ -9460,7 +9541,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.answer("Report not found.", show_alert=True)
                     return
                 preview, author_id = (await asyncio.to_thread(get_report_content_preview, report['target_type'], report['target_id']))
-                type_label = "Post" if report['target_type'] == 'post' else "Comment"
+                type_label = _report_type_label(report['target_type'])
                 preview_text = html.escape(preview or '[Content deleted]')
                 safe_reason = html.escape(report['reason'])
                 reporter = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (report['reporter_id'],)))
@@ -9578,7 +9659,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.info(f"Comment {target_id} deleted by admin {user_id}")
         
                 else:
-                    await query.answer("Unknown target type.", show_alert=True)
+                    await query.answer("This is a user report, so there is no content to delete. Use Warn User or Moderate author.", show_alert=True)
                     return
         
                 # ---------- AFTER DELETION: update report, clear caches, notify author ----------
@@ -10571,6 +10652,14 @@ async def mod_ban_user(context, target_id, admin_id, reason=None):
     )
     _invalidate_user_cache(target_id)
     logger.info(f"Admin {admin_id} banned user {target_id} (reason: {reason})")
+    try:
+        await db_execute_async(
+            "UPDATE reports SET status = 'action_taken', reviewed_by = %s, reviewed_at = NOW(), "
+            "action_taken = 'banned' WHERE target_type = 'user' AND target_id = %s AND status = 'pending'",
+            (str(admin_id), int(target_id))
+        )
+    except Exception as e:
+        logger.warning(f"Could not auto-resolve user reports for {target_id}: {e}")
 
     notice = "🚫 <b>You have been banned from this bot.</b>"
     if reason:
@@ -11990,9 +12079,17 @@ const EMOJIS = ['🕊️','✝️','🙏','📖','❤️','🌟','🛡️','⚔�
 
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3000)}
+function showBanScreen(msg){
+  if(document.getElementById('banScreen'))return;
+  const o=document.createElement('div');o.id='banScreen';
+  o.style.cssText='position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:32px;text-align:center;background:#0b0b0f;color:#fff;font:16px/1.5 Inter,system-ui,sans-serif';
+  o.innerHTML='<div><div style="font-size:44px;margin-bottom:12px">🚫</div><div style="font-size:20px;font-weight:700;margin-bottom:8px">Your account has been banned</div><div style="opacity:.75">'+esc(msg||'')+'</div></div>';
+  document.body.appendChild(o);
+}
 async function api(path,opts={}){
   const r=await fetch(API+path,{headers:{'Content-Type':'application/json'},...opts});
-  const d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||'Error');return d;
+  const d=await r.json();if(d&&d.banned)showBanScreen(d.error);
+  if(!r.ok||!d.success)throw new Error(d.error||'Error');return d;
 }
 
 const MAX_MEDIA_BYTES=20*1024*1024;
