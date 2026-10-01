@@ -57,6 +57,15 @@ TOKEN = os.getenv('TOKEN')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', 0))
 BOT_USERNAME = os.getenv('BOT_USERNAME')
 ADMIN_ID = os.getenv('ADMIN_ID')
+EXPLICIT_WARNING_HTML = (
+    "<pre>"
+    "        ⚠️ ማስጠንቀቂያ ⚠️\n"
+    "\n"
+    " የዚህ post ይዘት ለሁሉም አባላት ተገቢ አይደለም።\n"
+    " በራስዎ ሃላፊነት ይህንን ፖስት ማንበብ ከፈለጉ፣\n"
+    "ከታች ያለውን \"View Post\" የሚለውን ይጫኑ።"
+    "</pre>"
+)
 # Add color variables near the top of bot.py (after loading env)
 PRIMARY_COLOR = os.getenv('PRIMARY_COLOR')
 SECONDARY_COLOR = os.getenv('SECONDARY_COLOR')
@@ -4148,10 +4157,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         
         # Send post to channel based on media type
         if post.get('explicit'):
-            body_html = (
-                "የዚህ post ይዘት ለሁሉም አባላት ተገቢ አይደለም። በራስዎ ሃላፊነት  ይህንን ፖስት ማንበብ ከፈለጉ፣ ከታች ያለውን\n"
-                "\"View Post\" የሚለውን ይጫኑ።"
-            )
+            body_html = EXPLICIT_WARNING_HTML
         else:
             body_html = html.escape(post['content'])
         safe_hashtags = html.escape(hashtags)
@@ -9932,10 +9938,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Explicit posts keep their content hidden behind "View Post",
                 # exactly as they're shown when first approved
                 if post.get('explicit'):
-                    body_html = (
-                        "የዚህ post ይዘት ለሁሉም አባላት ተገቢ አይደለም። በራስዎ ሃላፊነት  ይህንን ፖስት ማንበብ ከፈለጉ፣ ከታች ያለውን\n"
-                        "\"View Post\" የሚለውን ይጫኑ።"
-                    )
+                    body_html = EXPLICIT_WARNING_HTML
                 else:
                     body_html = html.escape(cleaned_text)
 
