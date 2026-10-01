@@ -66,6 +66,10 @@ EXPLICIT_WARNING_HTML = (
     "ከታች ያለውን \"View Post\" የሚለውን ይጫኑ።"
     "</pre>"
 )
+# Per-vent "show my sex" question. Plain text on purpose: no emoji decoration.
+SHOW_SEX_QUESTION = "Show your sex under the vent number on this post?"
+SHOW_SEX_YES_LABEL = "Yes"
+SHOW_SEX_NO_LABEL = "No"
 # Add color variables near the top of bot.py (after loading env)
 PRIMARY_COLOR = os.getenv('PRIMARY_COLOR')
 SECONDARY_COLOR = os.getenv('SECONDARY_COLOR')
@@ -511,6 +515,14 @@ def init_db():
                 if ('posts', 'explicit') not in existing_columns:
                     logger.info("Adding missing column: explicit to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN explicit BOOLEAN DEFAULT FALSE")
+
+                # Check for 'revealed_sex' column in posts. Holds the sex emoji the author
+                # chose to show under the vent number for THIS post (a snapshot taken at
+                # submission time), or NULL when the author kept it hidden. NULL for every
+                # existing post, so nothing already published changes.
+                if ('posts', 'revealed_sex') not in existing_columns:
+                    logger.info("Adding missing column: revealed_sex to posts table")
+                    c.execute("ALTER TABLE posts ADD COLUMN revealed_sex TEXT DEFAULT NULL")
 
                 # Partial index that lets the mini-app feed (approved, not deleted, newest first)
                 # read one page straight off the index instead of sorting every post.
@@ -1277,7 +1289,7 @@ def reset_state(context: ContextTypes.DEFAULT_TYPE):
     for key in ('comment_post_id', 'comment_idx', 'reply_idx', 'nested_idx',
                 'selected_category', 'selected_categories', 'private_message_target',
                 'thread_context_post_id', 'thread_from_post_id', 'rejecting_post',
-                'reporting', 'pending_explicit_check', 'editing_comment', 'editing_post',
+                'reporting', 'pending_explicit_check', 'pending_sex_check', 'editing_comment', 'editing_post',
                 'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type',
                 'editing_categories_for_pending', 'pending_comment_edit',
                 'editing_published_post', 'editing_pm_id'):
@@ -2182,6 +2194,21 @@ def get_display_sex(user_data):
             return user_data['sex']
     return ""
 
+def normalize_revealed_sex(value):
+    """Only 👨 / 👩 are ever shown next to a vent number. Anything else (None, '', the
+    unset 👤 placeholder, junk) means 'show nothing'."""
+    return value if value in ('👨', '👩') else None
+
+def vent_header_html(vent_display: str, revealed_sex=None) -> str:
+    """HTML for the top line of a channel post: the copyable vent number, with the
+    author's chosen sex emoji on its own line right under it (outside <code>, so it
+    isn't swept up when someone copies the number). No emoji -> identical to the old output."""
+    header = f"<code>{vent_display}</code>"
+    sex = normalize_revealed_sex(revealed_sex)
+    if sex:
+        header += f"\n{sex}"
+    return header
+
 def format_time_ago(timestamp):
     """Human-friendly relative time string, e.g. '5m ago', 'yesterday'."""
     if not timestamp:
@@ -2522,7 +2549,8 @@ async def show_privacy_settings(update: Update, context: ContextTypes.DEFAULT_TY
         if "Message is not modified" not in str(e):
             logger.error(f"Error in show_privacy_settings: {e}")
 
-async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None, explicit: bool = False):
+async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None, explicit: bool = False, revealed_sex: str = None):
+    revealed_sex = normalize_revealed_sex(revealed_sex)
     keyboard = [
         [
             InlineKeyboardButton("Edit Text", callback_data='edit_post'),
@@ -2560,6 +2588,8 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     cat_display = ", ".join(category_list)
     
     explicit_tag = "*Marked as explicit content*\n\n" if explicit else ""
+    if revealed_sex:
+        explicit_tag += "*Your sex will be shown under the vent number*\n\n"
     
     preview_text = (
         f"{thread_text}{explicit_tag}*Post Preview* [{escape_markdown(cat_display, 2)}]\n\n"
@@ -2575,6 +2605,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
         'media_id': media_id,
         'thread_from_post_id': thread_from_post_id,
         'explicit': explicit,
+        'revealed_sex': revealed_sex,
         'timestamp': time.time()
     }
     
@@ -4065,7 +4096,7 @@ async def toggle_post_explicit(update: Update, context: ContextTypes.DEFAULT_TYP
                 body_html = html.escape(post['content'])
 
             channel_text = (
-                f"<code>{vent_display}</code>\n\n"
+                f"{vent_header_html(vent_display, post.get('revealed_sex'))}\n\n"
                 f"{body_html}\n\n"
                 f"━━━━━━━━━━━━━━━\n"
                 f"{safe_hashtags}\n"
@@ -4174,7 +4205,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
             body_html = html.escape(post['content'])
         safe_hashtags = html.escape(hashtags)
         channel_text = (
-            f"<code>{vent_display}</code>\n\n"
+            f"{vent_header_html(vent_display, post.get('revealed_sex'))}\n\n"
             f"{body_html}\n\n"
             f"━━━━━━━━━━━━━━━\n"
             f"{safe_hashtags}\n"
@@ -5537,8 +5568,15 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
 
     explicit_tag = "_Explicit content_\n" if post.get('explicit') else ""
 
+    # Author-chosen sex emoji goes on its own line right under the vent number.
+    # Never shown on a deleted post.
+    sex_line = ""
+    if not post.get('deleted') and normalize_revealed_sex(post.get('revealed_sex')):
+        sex_line = f"{normalize_revealed_sex(post.get('revealed_sex'))}\n"
+
     header_text = (
         f"*{escaped_vent}*\n"
+        f"{sex_line}"
         f"{explicit_tag}"
         f"{escaped_categories}\n\n"
         f"{escaped_text}"
@@ -7549,7 +7587,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pending_post['content'], pending_post['category'],
                     pending_post.get('media_type', 'text'), pending_post.get('media_id'),
                     thread_from_post_id=pending_post.get('thread_from_post_id'),
-                    explicit=pending_post.get('explicit', False)
+                    explicit=pending_post.get('explicit', False),
+                    revealed_sex=pending_post.get('revealed_sex')
                 )
                 return
 
@@ -8631,6 +8670,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
             # Send the preview as a fresh message (not an edit) so photo/voice posts render correctly
+            # Only users who have actually set a sex get the extra question; for
+            # everyone else the flow is exactly what it was before.
+            sex_row = (await db_fetch_one_async("SELECT sex FROM users WHERE user_id = %s", (user_id,)))
+            user_sex = normalize_revealed_sex(sex_row['sex'] if sex_row else None)
+            if user_sex:
+                context.user_data['pending_sex_check'] = {
+                    'content': pending['content'],
+                    'category': pending['category'],
+                    'media_type': pending.get('media_type', 'text'),
+                    'media_id': pending.get('media_id'),
+                    'thread_from_post_id': pending.get('thread_from_post_id'),
+                    'explicit': explicit_flag,
+                    'sex': user_sex,
+                }
+                sex_kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(SHOW_SEX_NO_LABEL, callback_data='post_sex_no'),
+                        InlineKeyboardButton(SHOW_SEX_YES_LABEL, callback_data='post_sex_yes')
+                    ]
+                ])
+                await query.message.reply_text(SHOW_SEX_QUESTION, reply_markup=sex_kb)
+                return
+
             fake_update = SimpleNamespace(
                 callback_query=None,
                 message=query.message,
@@ -8643,6 +8705,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pending.get('media_type', 'text'), pending.get('media_id'),
                 thread_from_post_id=pending.get('thread_from_post_id'),
                 explicit=explicit_flag
+            )
+            return
+
+        elif query.data in ('post_sex_yes', 'post_sex_no'):
+            pending = context.user_data.get('pending_sex_check')
+            if not pending:
+                await query.answer("Post data not found. Please start over.", show_alert=True)
+                return
+            await query.answer()
+            del context.user_data['pending_sex_check']
+
+            # Remove the Yes/No buttons from the question message
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+            fake_update = SimpleNamespace(
+                callback_query=None,
+                message=query.message,
+                effective_user=update.effective_user,
+                effective_chat=update.effective_chat
+            )
+            await send_post_confirmation(
+                fake_update, context,
+                pending['content'], pending['category'],
+                pending.get('media_type', 'text'), pending.get('media_id'),
+                thread_from_post_id=pending.get('thread_from_post_id'),
+                explicit=pending.get('explicit', False),
+                revealed_sex=pending['sex'] if query.data == 'post_sex_yes' else None
             )
             return
 
@@ -8758,7 +8850,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pending_post['content'], pending_post['category'],
                 pending_post.get('media_type', 'text'), pending_post.get('media_id'),
                 thread_from_post_id=None,
-                explicit=pending_post.get('explicit', False)
+                explicit=pending_post.get('explicit', False),
+                revealed_sex=pending_post.get('revealed_sex')
             )
             return
 
@@ -8807,7 +8900,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pending_post['content'], pending_post['category'],
                 pending_post.get('media_type', 'text'), pending_post.get('media_id'),
                 thread_from_post_id=new_thread_id,
-                explicit=pending_post.get('explicit', False)
+                explicit=pending_post.get('explicit', False),
+                revealed_sex=pending_post.get('revealed_sex')
             )
             return
 
@@ -8902,18 +8996,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_id = pending_post.get('media_id')
                 thread_from_post_id = pending_post.get('thread_from_post_id')
                 explicit_flag = pending_post.get('explicit', False)
+                revealed_sex = normalize_revealed_sex(pending_post.get('revealed_sex'))
                 
                 # Insert post (without 'category' column which was dropped)
                 if thread_from_post_id:
                     post_row = (await db_execute_async(
-                        "INSERT INTO posts (content, author_id, media_type, media_id, thread_from_post_id, explicit) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
-                        (post_content, user_id, media_type, media_id, thread_from_post_id, explicit_flag),
+                        "INSERT INTO posts (content, author_id, media_type, media_id, thread_from_post_id, explicit, revealed_sex) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, media_type, media_id, thread_from_post_id, explicit_flag, revealed_sex),
                         fetchone=True
                     ))
                 else:
                     post_row = (await db_execute_async(
-                        "INSERT INTO posts (content, author_id, media_type, media_id, explicit) VALUES (%s, %s, %s, %s, %s) RETURNING post_id",
-                        (post_content, user_id, media_type, media_id, explicit_flag),
+                        "INSERT INTO posts (content, author_id, media_type, media_id, explicit, revealed_sex) VALUES (%s, %s, %s, %s, %s, %s) RETURNING post_id",
+                        (post_content, user_id, media_type, media_id, explicit_flag, revealed_sex),
                         fetchone=True
                     ))
                 
@@ -9956,7 +10051,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pending_post.get('media_type', 'text'), 
                 pending_post.get('media_id'),
                 pending_post.get('thread_from_post_id'),
-                explicit=pending_post.get('explicit', False)
+                explicit=pending_post.get('explicit', False),
+                revealed_sex=pending_post.get('revealed_sex')
             )
             return
         else:
@@ -10025,7 +10121,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # Same channel text construction as in approve_post, using the new content
                 channel_text = (
-                    f"<code>{vent_display}</code>\n\n"
+                    f"{vent_header_html(vent_display, post.get('revealed_sex'))}\n\n"
                     f"{body_html}\n\n"
                     f"━━━━━━━━━━━━━━━\n"
                     f"{safe_hashtags}\n"
@@ -11579,6 +11675,9 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   font-family:'Inter',sans-serif;font-size:16px}
 .search-wrap input::placeholder{color:var(--text3)}
 .char-count{font-size:12px;color:var(--text3);text-align:right;margin:6px 0 12px}
+.vent-label{margin:2px 0 10px}
+.vent-num{font-size:12px;font-weight:600;color:var(--text3);letter-spacing:0.3px}
+.vent-sex{font-size:16px;line-height:1.25;margin-top:2px}
 .skel{
   background:linear-gradient(90deg,var(--bg2) 25%,var(--bg3) 50%,var(--bg2) 75%);
   background-size:200% 100%;animation:shimmer 1.4s infinite;
@@ -11917,6 +12016,13 @@ body.light .cr-head button svg{stroke:#1a1a1a}
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Share</h1><div class="page-head-sub">Speak your heart, anonymously</div></div><img src="/static/images/vent logo.png" class="logo-img" onerror="this.style.display='none'"></div></div>
       <div class="section-label">Categories</div><div style="padding:0 16px"><div id="cat-grid" class="cat-grid"></div></div>
       <div style="padding:0 16px;margin-top:12px;display:flex;align-items:flex-start;gap:8px"><input type="checkbox" id="vent-explicit-check" style="margin-top:3px;width:16px;height:16px;flex-shrink:0"><label for="vent-explicit-check" style="font-size:12.5px;color:var(--text2);line-height:1.4">This post contains explicit content (may not be suitable for all viewers)</label></div>
+      <div id="vent-sex-row" style="display:none;padding:0 16px;margin-top:12px">
+        <div style="font-size:12.5px;color:var(--text2);line-height:1.4;margin-bottom:6px">Show your sex under the vent number on this post?</div>
+        <div style="display:flex;gap:18px">
+          <label style="font-size:13px;color:var(--text);display:flex;align-items:center;gap:6px"><input type="radio" name="vent-show-sex" value="no" checked> No</label>
+          <label style="font-size:13px;color:var(--text);display:flex;align-items:center;gap:6px"><input type="radio" name="vent-show-sex" value="yes"> Yes</label>
+        </div>
+      </div>
       <div style="padding:0 16px;margin-top:14px"><textarea id="vent-txt" class="input-area" rows="5" placeholder="What's on your heart today…" maxlength="5000"></textarea><div class="char-count"><span id="vent-cnt">0</span> / 5000</div></div>
       <div id="vent-media-preview" style="display:none"></div>
       <div style="padding:0 16px;margin-top:14px;display:flex;gap:10px;align-items:center">
@@ -12363,6 +12469,7 @@ function go(name,btn){
       }
     }
   if(name==='feed'&&feedPage===1)loadFeed();
+  if(name==='vent')refreshVentSexRow();
   if(name==='leaderboard')loadLB();
   if(name==='profile')loadProfile();
   if(name==='settings')loadSettings();
@@ -12610,6 +12717,38 @@ document.addEventListener('DOMContentLoaded',()=>{
   }
 });
 
+// Per-vent "show my sex" question: only offered to users who actually have a sex saved.
+let ventSexCheckedAt=0;
+function ventShowSexChoice(){
+  const row=document.getElementById('vent-sex-row');
+  if(!row||row.style.display==='none')return false;
+  const picked=document.querySelector('input[name="vent-show-sex"]:checked');
+  return !!picked&&picked.value==='yes';
+}
+function resetVentShowSex(){
+  const no=document.querySelector('input[name="vent-show-sex"][value="no"]');
+  if(no)no.checked=true;
+}
+async function refreshVentSexRow(){
+  const row=document.getElementById('vent-sex-row');
+  if(!row||!UID)return;
+  if(Date.now()-ventSexCheckedAt<60000)return;
+  try{
+    const d=await api(`/api/mini-app/profile/${UID}?viewer_id=${UID}`);
+    const sx=d&&d.data?d.data.sex:null;
+    const has=(sx==='👨'||sx==='👩');
+    row.style.display=has?'block':'none';
+    if(!has)resetVentShowSex();
+    ventSexCheckedAt=Date.now();
+  }catch(e){row.style.display='none';resetVentShowSex()}
+}
+function ventLabel(p){
+  if(p.vent_number===null||p.vent_number===undefined)return '';
+  const n=String(p.vent_number).padStart(3,'0');
+  const sx=(p.revealed_sex==='👨'||p.revealed_sex==='👩')?`<div class="vent-sex">${esc(p.revealed_sex)}</div>`:'';
+  return `<div class="vent-label"><div class="vent-num">Vent - ${n}</div>${sx}</div>`;
+}
+
 async function submitVent(){
   const txt=document.getElementById('vent-txt').value.trim();
   const cats=[...selCats];
@@ -12618,13 +12757,14 @@ async function submitVent(){
   const btn=document.getElementById('submit-vent');
   btn.disabled=true;btn.textContent='Posting…';
   try{
-    const payload={user_id:UID,content:txt,categories:cats,explicit:document.getElementById('vent-explicit-check').checked};
+    const payload={user_id:UID,content:txt,categories:cats,explicit:document.getElementById('vent-explicit-check').checked,reveal_sex:ventShowSexChoice()};
     if(pendingMedia){payload.media_type=pendingMedia.media_type;payload.media_id=pendingMedia.media_id}
     await api('/api/mini-app/submit-vent',{method:'POST',body:JSON.stringify(payload)});
     toast('✅ Shared — awaiting review');
     document.getElementById('vent-txt').value='';
     document.getElementById('vent-cnt').textContent='0';
     document.getElementById('vent-explicit-check').checked=false;
+    resetVentShowSex();
     selCats.clear();document.querySelectorAll('.cat-chip').forEach(c=>c.classList.remove('on'));
     pendingMedia=null;document.getElementById('vent-file-input').value='';
     document.getElementById('vent-attach-btn').classList.remove('has-media');
@@ -12680,6 +12820,7 @@ function renderPost(p){
   }
   return `<div class="post-card">
     <div class="post-meta"><div class="ava" style="width:34px;height:34px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name"${p.author?.is_admin ? '' : ` onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:13px">${esc(p.author?.aura||'')}</span></div></div><div class="post-time">${esc(p.time_ago||'')}</div></div>
+    ${ventLabel(p)}
     ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${cats}</div>`:''}
     <div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
     ${p.media_id?`<div onclick="openPost(${p.id})">${renderMedia(p.media_type,p.media_id)}</div>`:''}
@@ -12736,6 +12877,7 @@ async function openPost(id, reveal){
     document.getElementById('detail-post').innerHTML=`
       <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
         <div class="post-meta"><div class="ava" style="width:38px;height:38px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name" style="font-size:15px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}')"`}>${ICONS.shield.replace('class="icon"','class="icon badge-icon"')} Vent author</div><div style="font-size:12px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
+        ${ventLabel(p)}
         ${explicitTag}
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
         <div style="font-size:17px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
@@ -13374,7 +13516,7 @@ async function init(){
   }
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='flex';
-  if(UID){loadFeed(); checkAdminStatus();}
+  if(UID){loadFeed(); checkAdminStatus(); refreshVentSexRow();}
   else{document.getElementById('feed-list').innerHTML='<div style="text-align:center;padding:60px 20px;color:var(--text3)"><div style="width:32px;height:32px;margin:0 auto 12px;color:var(--text3)">'+ICONS.lock+'</div><div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div><div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';}
 
   // Setup voice buttons after DOM ready
@@ -13411,6 +13553,8 @@ def mini_app_submit_vent():
         media_id = data.get('media_id')
 
         explicit = bool(data.get('explicit', False))
+        # Strict boolean on purpose: the string "false" must not count as a yes.
+        reveal_sex = data.get('reveal_sex') is True
 
         if not user_id:
             return jsonify({'success': False, 'error': 'User ID required'}), 400
@@ -13433,10 +13577,18 @@ def mini_app_submit_vent():
             # detector's default ('document') when the client didn't say what it uploaded.
             media_type = _detect_mini_app_media_type(None, None)[0]
 
+        # Per-post "show my sex": the emoji is read from the user's saved profile at
+        # submission time (never trusted from the client). Users with no sex set (👤)
+        # get None, i.e. nothing is shown, even if the client sent reveal_sex=true.
+        revealed_sex = None
+        if reveal_sex:
+            sex_row = db_fetch_one("SELECT sex FROM users WHERE user_id = %s", (str(user_id),))
+            revealed_sex = normalize_revealed_sex(sex_row['sex'] if sex_row else None)
+
         # Insert the post
         post_row = db_execute(
-            "INSERT INTO posts (content, author_id, media_type, media_id, approved, explicit) VALUES (%s, %s, %s, %s, FALSE, %s) RETURNING post_id",
-            (content, user_id, media_type, media_id, explicit),
+            "INSERT INTO posts (content, author_id, media_type, media_id, approved, explicit, revealed_sex) VALUES (%s, %s, %s, %s, FALSE, %s, %s) RETURNING post_id",
+            (content, user_id, media_type, media_id, explicit, revealed_sex),
             fetchone=True
         )
         
@@ -14053,7 +14205,7 @@ def mini_app_file_proxy(file_id):
 _FEED_SQL = f"""
     WITH page_posts AS (
         SELECT p.post_id, p.content, p.timestamp, p.comment_count, p.media_type,
-               p.media_id, p.explicit, p.author_id,
+               p.media_id, p.explicit, p.author_id, p.vent_number, p.revealed_sex,
                COUNT(*) OVER () AS total_count
         FROM posts p
         WHERE p.approved = TRUE AND p.deleted = FALSE
@@ -14066,7 +14218,7 @@ _FEED_SQL = f"""
     {_SCORE_CTES_SQL}
     SELECT
         pp.post_id, pp.content, pp.timestamp, pp.comment_count, pp.media_type,
-        pp.media_id, pp.explicit, pp.total_count,
+        pp.media_id, pp.explicit, pp.total_count, pp.vent_number, pp.revealed_sex,
         u.user_id AS author_id,
         u.sex AS author_sex,
         u.avatar_emoji AS author_avatar,
@@ -14162,6 +14314,8 @@ def mini_app_get_posts():
             
             formatted_posts.append({
                 'id': post['post_id'],
+                'vent_number': post.get('vent_number'),
+                'revealed_sex': normalize_revealed_sex(post.get('revealed_sex')),
                 'content': content_preview,
                 'full_content': post['content'] if not hide_content else content_preview,
                 'categories': category_list,
@@ -14216,7 +14370,7 @@ def mini_app_get_single_post(post_id):
     try:
         post = db_fetch_one('''
             SELECT 
-                p.post_id, p.vent_number, p.content, p.timestamp, p.comment_count, p.media_type, p.media_id, p.deleted, p.explicit,
+                p.post_id, p.vent_number, p.revealed_sex, p.content, p.timestamp, p.comment_count, p.media_type, p.media_id, p.deleted, p.explicit,
                 u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
                 u.is_admin as author_is_admin,
                 STRING_AGG(pc.category_code, ', ') as categories
@@ -14313,6 +14467,7 @@ def mini_app_get_single_post(post_id):
             'content': post['content'] if show_content else "This post contains explicit content that may not be suitable for all viewers.",
             'categories': category_list,
             'vent_number': post.get('vent_number'),
+            'revealed_sex': normalize_revealed_sex(post.get('revealed_sex')),
             'time_ago': time_ago,
             'comments': post['comment_count'] or 0,
             'author_id': post['author_id'],
@@ -15301,7 +15456,7 @@ def mini_app_search():
         user_id = request.args.get('user_id')
         
         sql = '''
-            SELECT p.post_id, p.content, p.timestamp, p.comment_count, p.explicit, p.media_type, p.media_id,
+            SELECT p.post_id, p.vent_number, p.revealed_sex, p.content, p.timestamp, p.comment_count, p.explicit, p.media_type, p.media_id,
                    u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
                    STRING_AGG(DISTINCT pc.category_code, ',') as categories
             FROM posts p
@@ -15340,6 +15495,8 @@ def mini_app_search():
                 content_preview = "This post contains explicit content that may not be suitable for all viewers."
             formatted_posts.append({
                 'id': post['post_id'],
+                'vent_number': post.get('vent_number'),
+                'revealed_sex': normalize_revealed_sex(post.get('revealed_sex')),
                 'content': content_preview,
                 'categories': post['categories'].split(',') if post['categories'] else [],
                 'comments': post['comment_count'] or 0,
