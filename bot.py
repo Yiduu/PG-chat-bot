@@ -11391,7 +11391,7 @@ def mini_app_page():
   --glass:rgba(255,255,255,0.04);
   --glass2:rgba(255,255,255,0.07);
   --border:rgba(255,255,255,0.08);
-  --border2:rgba(201,168,76,0.2);
+  --border2:rgba(var(--gold-rgb),0.2);
   --text:#f0ede6;
   --text2:#a09880;
   --text3:#6b6355;
@@ -11407,7 +11407,7 @@ body.light {
   --glass:rgba(0,0,0,0.02);
   --glass2:rgba(0,0,0,0.04);
   --border:rgba(0,0,0,0.1);
-  --border2:rgba(201,168,76,0.3);
+  --border2:rgba(var(--gold-rgb),0.3);
   --text:#1a1a1a;
   --text2:#4a4a4a;
   --text3:#6b6b6b;
@@ -11493,13 +11493,13 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   margin:12px 16px 0;
 }
 .card-gold{
-  background:linear-gradient(135deg,rgba(201,168,76,0.08) 0%,rgba(201,168,76,0.03) 100%);
+  background:linear-gradient(135deg,rgba(var(--gold-rgb),0.08) 0%,rgba(var(--gold-rgb),0.03) 100%);
   border-color:var(--border2);
 }
 .pill{
   display:inline-flex;align-items:center;gap:5px;
   padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;
-  background:rgba(201,168,76,0.1);border:0.5px solid rgba(201,168,76,0.25);
+  background:rgba(var(--gold-rgb),0.1);border:0.5px solid rgba(var(--gold-rgb),0.25);
   color:var(--gold2);
 }
 .pill-sm{padding:2px 8px;font-size:11px}
@@ -11507,10 +11507,10 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   display:inline-flex;align-items:center;gap:7px;
   padding:6px 14px;border-radius:24px;
   font-size:12.5px;font-weight:700;letter-spacing:0.2px;
-  background:linear-gradient(135deg,rgba(201,168,76,0.30) 0%,rgba(245,158,11,0.16) 55%,rgba(201,168,76,0.24) 100%);
+  background:linear-gradient(135deg,rgba(var(--gold-rgb),0.30) 0%,rgba(245,158,11,0.16) 55%,rgba(var(--gold-rgb),0.24) 100%);
   border:0.5px solid rgba(245,158,11,0.4);
   color:var(--gold3);
-  box-shadow:0 2px 10px rgba(201,168,76,0.2),inset 0 1px 0 rgba(255,255,255,0.07);
+  box-shadow:0 2px 10px rgba(var(--gold-rgb),0.2),inset 0 1px 0 rgba(255,255,255,0.07);
 }
 .pill-aura-badge{font-size:14px;line-height:1}
 .pill-aura .bolt-icon{width:13px;height:13px;flex-shrink:0;display:block}
@@ -11531,14 +11531,14 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   outline:none;resize:none;
   transition:border-color 0.2s;
 }
-.input-area:focus{border-color:rgba(201,168,76,0.4)}
+.input-area:focus{border-color:rgba(var(--gold-rgb),0.4)}
 .input-area::placeholder{color:var(--text3)}
 .btn-gold{
   width:100%;padding:16px;border-radius:var(--radius-sm);border:none;
   background:var(--gold);color:#0c0b09;
   font-family:'Inter',sans-serif;font-size:16px;font-weight:700;
   cursor:pointer;letter-spacing:0.2px;
-  box-shadow:0 4px 14px rgba(201,168,76,0.3);
+  box-shadow:0 4px 14px rgba(var(--gold-rgb),0.3);
   transition:opacity 0.2s,transform 0.15s;
   -webkit-tap-highlight-color:transparent;
 }
@@ -11558,7 +11558,7 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   transition:all 0.15s;-webkit-tap-highlight-color:transparent;
 }
 .cat-chip:active{transform:scale(0.97)}
-.cat-chip.on{background:rgba(201,168,76,0.12);border-color:var(--gold);color:var(--gold2)}
+.cat-chip.on{background:rgba(var(--gold-rgb),0.12);border-color:var(--gold);color:var(--gold2)}
 .cat-check{width:16px;height:16px;
   display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;
   color:transparent;transition:color 0.15s}
@@ -11588,13 +11588,13 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .read-more{font-size:13px;font-weight:700;color:var(--gold);display:flex;align-items:center;gap:3px}
 .lb-hero{
   margin:20px 16px 0;
-  background:linear-gradient(135deg,rgba(201,168,76,0.1),rgba(201,168,76,0.04));
+  background:linear-gradient(135deg,rgba(var(--gold-rgb),0.1),rgba(var(--gold-rgb),0.04));
   border:0.5px solid var(--border2);border-radius:20px;
   padding:24px 20px;text-align:center;position:relative;overflow:hidden;
 }
 .lb-hero::before{
   content:'';position:absolute;inset:-40px;
-  background:radial-gradient(circle at 50% 0,rgba(201,168,76,0.08),transparent 70%);
+  background:radial-gradient(circle at 50% 0,rgba(var(--gold-rgb),0.08),transparent 70%);
 }
 .lb-crown{font-size:36px;margin-bottom:6px;display:block}
 .lb-top-name{font-size:20px;font-weight:700;letter-spacing:-0.3px}
@@ -11648,7 +11648,7 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .setting-row:last-child{border-bottom:none}
 .setting-icon{
   width:40px;height:40px;border-radius:10px;
-  background:rgba(201,168,76,0.12);border:1px solid var(--border2);
+  background:rgba(var(--gold-rgb),0.12);border:1px solid var(--border2);
   display:flex;align-items:center;justify-content:center;flex-shrink:0;
 }
 .setting-icon svg{width:19px;height:19px;stroke:var(--gold);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
@@ -11662,13 +11662,193 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   background:var(--bg3);border:0.5px solid var(--border);
   transition:background 0.25s;
 }
-.toggle input:checked + .toggle-track{background:rgba(201,168,76,0.3);border-color:var(--gold)}
+.toggle input:checked + .toggle-track{background:rgba(var(--gold-rgb),0.3);border-color:var(--gold)}
 .toggle-thumb{
   position:absolute;width:20px;height:20px;border-radius:50%;
   top:3px;left:3px;
   background:var(--text3);transition:all 0.25s cubic-bezier(.4,0,.2,1);
 }
 .toggle input:checked ~ .toggle-thumb{left:23px;background:var(--gold)}
+/* ===== Me tab: profile hub, edit profile, avatars ===== */
+.av-svg{display:block;width:100%;height:100%}
+.ava svg.av-svg,.modal-avatar svg.av-svg,.profile-ava-wrap svg.av-svg{width:62%;height:62%}
+body.light .av-svg{filter:brightness(.74) saturate(1.25)}
+.me-head{padding:22px 20px 0}
+.me-head h1{font-size:26px;font-weight:700;letter-spacing:-0.5px;color:var(--text)}
+.me-hero{
+  position:relative;margin:16px 16px 0;padding:26px 20px 20px;border-radius:24px;
+  text-align:center;overflow:hidden;
+  background:linear-gradient(165deg,rgba(var(--gold-rgb),.17) 0%,var(--bg3) 42%,var(--bg2) 100%);
+  border:.5px solid rgba(var(--gold-rgb),.38);
+  box-shadow:0 18px 40px -20px rgba(var(--gold-rgb),.45),inset 0 1px 0 rgba(255,255,255,.06);
+}
+.me-hero::before{
+  content:'';position:absolute;left:50%;top:-70px;width:300px;height:220px;margin-left:-150px;
+  background:radial-gradient(closest-side,rgba(var(--gold-rgb),.26),transparent);pointer-events:none;
+}
+.me-hero>*{position:relative}
+.me-ava-wrap{position:relative;width:108px;height:108px;margin:0 auto 14px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.me-ava-ring{
+  width:108px;height:108px;border-radius:50%;padding:3px;
+  background:conic-gradient(from 200deg,var(--gold2),rgba(var(--gold-rgb),.25),var(--gold),rgba(var(--gold-rgb),.25),var(--gold2));
+  box-shadow:0 10px 28px -8px rgba(var(--gold-rgb),.55);
+}
+.me-ava{
+  width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(circle at 30% 22%,rgba(var(--gold-rgb),.3),var(--bg2) 72%);
+}
+.me-ava svg{width:58%;height:58%;color:var(--gold2)}
+.me-ava svg.av-svg{width:58%;height:58%}
+.me-ava-badge{
+  position:absolute;right:1px;bottom:3px;width:32px;height:32px;border-radius:50%;
+  background:var(--gold);color:#0c0b09;display:flex;align-items:center;justify-content:center;
+  border:3px solid var(--bg2);box-shadow:0 4px 12px rgba(0,0,0,.35);
+}
+.me-ava-badge svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.me-name{font-size:23px;font-weight:700;letter-spacing:-.4px;line-height:1.25;word-break:break-word}
+.me-chips{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+.me-chips:empty{display:none}
+.me-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;
+  font-size:12.5px;font-weight:700;color:var(--gold2);
+  background:rgba(var(--gold-rgb),.12);border:.5px solid rgba(var(--gold-rgb),.4);
+}
+.me-chip .icon{width:13px;height:13px}
+.me-bio{
+  margin:14px auto 0;max-width:300px;font-size:14px;line-height:1.55;color:var(--text2);
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;
+}
+.me-bio.empty{color:var(--text3);cursor:pointer}
+.me-stats{display:grid;grid-template-columns:repeat(3,1fr);margin-top:20px;padding-top:16px;border-top:.5px solid var(--border)}
+.me-stat+.me-stat{border-left:.5px solid var(--border)}
+.me-stat-num{font-size:22px;font-weight:700;color:var(--gold);letter-spacing:-.3px}
+.me-stat-lbl{font-size:11px;font-weight:600;letter-spacing:.7px;text-transform:uppercase;color:var(--text3);margin-top:2px}
+.me-prog{margin-top:18px;text-align:left}
+.me-prog-top{display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:var(--text3);margin-bottom:7px}
+.me-prog-bar{height:6px;border-radius:6px;background:var(--glass2);overflow:hidden}
+.me-prog-fill{height:100%;border-radius:6px;background:linear-gradient(90deg,rgba(var(--gold-rgb),.65),var(--gold2));transition:width .7s cubic-bezier(.2,.8,.2,1)}
+.me-edit-btn{
+  margin-top:20px;width:100%;height:48px;border:none;border-radius:14px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  background:linear-gradient(180deg,var(--gold2),var(--gold));color:#0c0b09;
+  font-family:'Inter',sans-serif;font-size:15px;font-weight:700;letter-spacing:.2px;
+  box-shadow:0 10px 22px -10px rgba(var(--gold-rgb),.8);-webkit-tap-highlight-color:transparent;
+  transition:transform .15s,opacity .15s;
+}
+.me-edit-btn:active{transform:scale(.98);opacity:.92}
+.me-edit-btn svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.me-label{padding:26px 22px 8px;font-size:12px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;color:var(--text3)}
+.me-group{margin:0 16px;background:var(--glass);border:.5px solid var(--border);border-radius:18px;overflow:hidden}
+.me-row{position:relative;display:flex;align-items:center;gap:14px;padding:14px 16px}
+.me-row+.me-row::before{content:'';position:absolute;top:0;left:68px;right:0;border-top:.5px solid var(--border)}
+.me-row.stack{flex-direction:column;align-items:stretch;gap:12px}
+.me-row-head{display:flex;align-items:center;gap:14px}
+.me-row.tap{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.me-row.tap:active{background:var(--glass2)}
+.me-ico{
+  width:38px;height:38px;border-radius:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(145deg,rgba(var(--gold-rgb),.22),rgba(var(--gold-rgb),.06));
+  border:.5px solid rgba(var(--gold-rgb),.32);
+}
+.me-ico svg{width:19px;height:19px;stroke:var(--gold2);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.me-text{flex:1;min-width:0}
+.me-title{font-size:15px;font-weight:600;color:var(--text)}
+.me-sub{font-size:12.5px;color:var(--text3);margin-top:2px;line-height:1.4}
+.me-chev{width:16px;height:16px;stroke:var(--text3);fill:none;stroke-width:2;flex-shrink:0}
+.me-note{padding:10px 24px 0;font-size:12px;line-height:1.5;color:var(--text3)}
+.me-foot{padding:26px 16px 8px;text-align:center;font-size:11px;color:var(--text3)}
+.me-foot a{color:var(--gold);text-decoration:none}
+.seg{display:flex;gap:2px;padding:3px;border-radius:12px;background:var(--bg2);border:.5px solid var(--border)}
+.seg button{
+  flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 8px;border:none;border-radius:9px;
+  background:none;color:var(--text3);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;transition:background .2s,color .2s;
+}
+.seg button.on{background:rgba(var(--gold-rgb),.16);color:var(--gold2);box-shadow:inset 0 0 0 .5px rgba(var(--gold-rgb),.5)}
+.seg svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.swatches{display:flex;gap:14px;padding:2px 2px 2px}
+.sw{
+  --c:#c9a84c;width:34px;height:34px;border-radius:50%;border:2px solid var(--bg2);padding:0;cursor:pointer;
+  background:radial-gradient(circle at 30% 25%,rgba(255,255,255,.4),var(--c) 62%);
+  outline:2px solid transparent;outline-offset:1px;display:flex;align-items:center;justify-content:center;
+  color:#0c0b09;transition:outline-color .2s,transform .15s;-webkit-tap-highlight-color:transparent;
+}
+.sw:active{transform:scale(.92)}
+.sw svg{width:14px;height:14px;opacity:0;transition:opacity .2s}
+.sw.on{outline-color:var(--c)}
+.sw.on svg{opacity:1}
+body.light .me-hero{background:linear-gradient(165deg,rgba(var(--gold-rgb),.24) 0%,var(--bg2) 55%,var(--bg3) 100%)}
+body.light .me-stat-num,body.light .me-hero .pill-aura-pts,body.light .me-chip{color:var(--gold-dark,#8a6d1f)}
+body.light .me-ico svg{stroke:var(--gold-dark,#8a6d1f)}
+body.light .seg button.on{color:var(--gold-dark,#8a6d1f)}
+body.light .me-hero .pill-aura{background:rgba(var(--gold-rgb),.2)}
+body.light .me-foot a{color:var(--gold-dark,#8a6d1f)}
+.modal-bio{font-size:13.5px;line-height:1.5;color:var(--text2);margin:2px 8px 14px;word-break:break-word}
+.modal-role{display:inline-flex;align-items:center;gap:5px;margin:0 0 10px;padding:4px 10px;border-radius:16px;font-size:12px;font-weight:700;color:var(--gold2);background:rgba(var(--gold-rgb),.12);border:.5px solid rgba(var(--gold-rgb),.4)}
+.modal-role .icon{width:12px;height:12px}
+
+/* edit profile */
+.ed-head{padding:2px 20px 0}
+.ed-head h1{font-size:26px;font-weight:700;letter-spacing:-.5px;color:var(--text)}
+.ed-preview{
+  margin:16px 16px 0;padding:16px;border-radius:22px;display:flex;align-items:center;gap:16px;
+  background:linear-gradient(150deg,rgba(var(--gold-rgb),.16),var(--bg2) 70%);
+  border:.5px solid rgba(var(--gold-rgb),.38);
+  box-shadow:0 14px 30px -18px rgba(var(--gold-rgb),.5);
+}
+.ed-prev-ava{
+  width:72px;height:72px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(circle at 30% 22%,rgba(var(--gold-rgb),.3),var(--bg2) 72%);
+  border:2px solid rgba(var(--gold-rgb),.65);box-shadow:0 0 0 4px rgba(var(--gold-rgb),.09);
+}
+.ed-prev-ava svg{width:58%;height:58%;color:var(--gold2)}
+.ed-prev-ava svg.av-svg{width:58%;height:58%}
+.ed-prev-txt{min-width:0;flex:1}
+.ed-prev-name{font-size:18px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ed-prev-bio{font-size:13px;line-height:1.45;color:var(--text2);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.ed-prev-bio.empty{color:var(--text3)}
+.ed-card{margin:14px 16px 0;padding:16px;border-radius:20px;background:var(--glass);border:.5px solid var(--border)}
+.ed-label{display:flex;justify-content:space-between;align-items:center;margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--text3)}
+.ed-count{font-weight:600;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums}
+.ed-link{background:none;border:none;padding:0;cursor:pointer;font-family:'Inter',sans-serif;font-size:12.5px;font-weight:700;letter-spacing:0;text-transform:none;color:var(--gold)}
+body.light .ed-link{color:var(--gold-dark,#8a6d1f)}
+.ed-input{
+  width:100%;background:var(--bg2);border:.5px solid var(--border);border-radius:12px;padding:13px 14px;
+  color:var(--text);font-family:'Inter',sans-serif;font-size:16px;outline:none;transition:border-color .2s,box-shadow .2s;
+}
+.ed-input:focus{border-color:rgba(var(--gold-rgb),.6);box-shadow:0 0 0 3px rgba(var(--gold-rgb),.12)}
+.ed-input::placeholder{color:var(--text3)}
+.ed-hint{margin-top:12px;font-size:12px;line-height:1.5;color:var(--text3)}
+.ed-actions{padding:20px 16px 24px;display:flex;flex-direction:column;gap:8px}
+.ed-cancel{background:none;border:none;padding:12px;cursor:pointer;font-family:'Inter',sans-serif;font-size:14px;font-weight:600;color:var(--text3)}
+.av-tabs{display:flex;gap:8px;overflow-x:auto;margin:0 -16px 14px;padding:0 16px 2px;scrollbar-width:none}
+.av-tabs::-webkit-scrollbar{display:none}
+.av-tab{
+  flex:0 0 auto;padding:7px 14px;border-radius:20px;border:.5px solid var(--border);background:var(--bg2);
+  color:var(--text2);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;transition:background .2s,border-color .2s,color .2s;
+}
+.av-tab.on{background:rgba(var(--gold-rgb),.16);border-color:var(--gold);color:var(--gold2)}
+body.light .av-tab.on{color:var(--gold-dark,#8a6d1f)}
+.av-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.av-tile{
+  position:relative;aspect-ratio:1;padding:0;border-radius:16px;cursor:pointer;
+  border:.5px solid var(--border);background:linear-gradient(145deg,var(--bg3),var(--bg2));
+  display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;
+  transition:transform .15s,border-color .2s,box-shadow .2s,background .2s;
+}
+.av-tile>svg.av-svg{width:58%;height:58%}
+.av-tile:active{transform:scale(.93)}
+.av-tile.sel{
+  border-color:var(--gold);background:linear-gradient(145deg,rgba(var(--gold-rgb),.26),var(--bg2));
+  box-shadow:0 0 0 1px var(--gold),0 10px 20px -10px rgba(var(--gold-rgb),.7);
+}
+.av-check{
+  position:absolute;top:-6px;right:-6px;width:19px;height:19px;border-radius:50%;display:none;align-items:center;justify-content:center;
+  background:var(--gold);color:#0c0b09;border:2px solid var(--bg);
+}
+.av-check svg{width:10px;height:10px}
+.av-tile.sel .av-check{display:flex}
 .search-wrap{
   display:flex;align-items:center;gap:10px;
   padding:13px 16px;background:var(--glass);
@@ -11708,8 +11888,8 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 /* In light mode the gold-on-cream contrast is too weak for the icon stroke;
    darken it slightly and give the chat room its own explicit override so it
    isn't relying on the ambient --gold var alone. */
-body.light .back-btn{color:#8a6d1f}
-body.light .back-btn svg{stroke:#8a6d1f}
+body.light .back-btn{color:var(--gold-dark,#8a6d1f)}
+body.light .back-btn svg{stroke:var(--gold-dark,#8a6d1f)}
 .comment-item{display:flex;gap:10px;margin-bottom:14px}
 .comment-item.reply{margin-left:32px}
 .comment-body{flex:1;background:var(--bg2);border:0.5px solid var(--border);
@@ -11739,12 +11919,12 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   color:var(--text);font-family:'Inter',sans-serif;font-size:16px;
   outline:none;resize:none;max-height:100px;min-height:42px;
 }
-.comment-input-bar textarea:focus{border-color:rgba(201,168,76,0.4)}
+.comment-input-bar textarea:focus{border-color:rgba(var(--gold-rgb),0.4)}
 .comment-input-bar button{
   width:40px;height:40px;border-radius:50%;
   background:var(--gold);border:none;cursor:pointer;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
-  box-shadow:0 2px 8px rgba(201,168,76,0.35);
+  box-shadow:0 2px 8px rgba(var(--gold-rgb),0.35);
 }
 .comment-input-bar button svg{width:17px;height:17px;stroke:#0c0b09;fill:none;stroke-width:2.2}
 .media-attach-btn{
@@ -11857,7 +12037,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .vr-pbtn svg.x{width:14px;height:14px;fill:none;stroke:var(--gold);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 .vr-ring{position:absolute;left:-1px;top:-1px;width:36px;height:36px;transform:rotate(-90deg)}
 .vr-ring circle{fill:none;stroke-width:2.5}
-.vr-ring .bg{stroke:rgba(201,168,76,.28)}
+.vr-ring .bg{stroke:rgba(var(--gold-rgb),.28)}
 .vr-ring .fg{stroke:var(--gold);stroke-dasharray:94.2;stroke-linecap:round;transition:stroke-dashoffset .2s}
 .vr-ring.spin{animation:vrSpin 1s linear infinite}
 .vr-ptrack{flex:1;height:3px;border-radius:2px;background:rgba(12,11,9,.28)}
@@ -11869,18 +12049,18 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .vr-pend.cm .vr-ptrack{background:var(--border)}
 .vr-pend.cm .vr-ptime{color:var(--text3)}
 @keyframes vrSpin{to{transform:rotate(270deg)}}
-.reply-quote{margin:4px 0 6px;padding:4px 8px 4px 10px;border-left:3px solid var(--gold);background:rgba(201,168,76,.10);border-radius:0 8px 8px 0;cursor:pointer;max-width:100%;-webkit-tap-highlight-color:transparent}
-.reply-quote:active{background:rgba(201,168,76,.22)}
+.reply-quote{margin:4px 0 6px;padding:4px 8px 4px 10px;border-left:3px solid var(--gold);background:rgba(var(--gold-rgb),.10);border-radius:0 8px 8px 0;cursor:pointer;max-width:100%;-webkit-tap-highlight-color:transparent}
+.reply-quote:active{background:rgba(var(--gold-rgb),.22)}
 .reply-quote.gone{cursor:default;opacity:.7}
 .reply-quote.gone .rq-text{font-style:italic}
 .rq-name{font-size:12.5px;font-weight:600;color:var(--gold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rq-text{font-size:13px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .comment-body{min-width:0}
 .cm-flash{animation:cmFlash 1.5s ease-out}
-@keyframes cmFlash{0%,35%{background:rgba(201,168,76,.28)}100%{background:transparent}}
+@keyframes cmFlash{0%,35%{background:rgba(var(--gold-rgb),.28)}100%{background:transparent}}
 .cr-msgs{overflow-x:hidden}
 .msg-row{touch-action:pan-y;position:relative}
-.msg-quote{margin:0 0 6px;padding:4px 8px 4px 9px;border-left:3px solid var(--gold);background:rgba(201,168,76,.12);border-radius:0 8px 8px 0;cursor:pointer;min-width:120px;max-width:100%}
+.msg-quote{margin:0 0 6px;padding:4px 8px 4px 9px;border-left:3px solid var(--gold);background:rgba(var(--gold-rgb),.12);border-radius:0 8px 8px 0;cursor:pointer;min-width:120px;max-width:100%}
 .msg-row.me .msg-quote{border-left-color:#0c0b09;background:rgba(12,11,9,.13)}
 .msg-row.me .msg-quote .rq-name{color:#0c0b09}
 .msg-row.me .msg-quote .rq-text{color:rgba(12,11,9,.72)}
@@ -11906,7 +12086,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   border:1px solid var(--border);cursor:pointer;font-size:14px;font-weight:600;
   transition:all 0.15s;font-family:'Inter',sans-serif;color:var(--text2);
 }
-.reaction-btn.on{background:rgba(201,168,76,0.14);border-color:var(--gold);color:var(--gold)}
+.reaction-btn.on{background:rgba(var(--gold-rgb),0.14);border-color:var(--gold);color:var(--gold)}
 .reaction-btn:active{transform:scale(0.92)}
 .chat-item{
   display:flex;align-items:center;gap:12px;
@@ -11984,12 +12164,12 @@ body.light .cr-head button svg{stroke:#1a1a1a}
   font-family:'Inter',sans-serif;font-size:16px;outline:none;
   resize:none;min-height:42px;max-height:100px;
 }
-.cr-input textarea:focus{border-color:rgba(201,168,76,0.4)}
+.cr-input textarea:focus{border-color:rgba(var(--gold-rgb),0.4)}
 .cr-send{
   width:42px;height:42px;border-radius:50%;
   background:var(--gold);border:none;cursor:pointer;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
-  box-shadow:0 2px 8px rgba(201,168,76,0.35);
+  box-shadow:0 2px 8px rgba(var(--gold-rgb),0.35);
   -webkit-tap-highlight-color:transparent;
 }
 .cr-send svg{width:18px;height:18px;stroke:#0c0b09;fill:none;stroke-width:2.2}
@@ -12019,7 +12199,7 @@ body.light .cr-head button svg{stroke:#1a1a1a}
   font-size:22px;cursor:pointer;transition:all 0.15s;
   -webkit-tap-highlight-color:transparent;
 }
-.emoji-opt.sel{border-color:var(--gold);background:rgba(201,168,76,0.1)}
+.emoji-opt.sel{border-color:var(--gold);background:rgba(var(--gold-rgb),0.1)}
 .rx-dock{
   position:absolute;bottom:calc(100% + 8px);left:0;
   background:var(--bg2);border:0.5px solid var(--border2);
@@ -12037,14 +12217,14 @@ body.light .cr-head button svg{stroke:#1a1a1a}
   background:var(--bg2);border:0.5px solid var(--border);color:var(--text2);
   cursor:pointer;transition:all 0.15s;
 }
-.rx-pill.on{background:rgba(201,168,76,0.12);border-color:var(--border2);color:var(--gold)}
+.rx-pill.on{background:rgba(var(--gold-rgb),0.12);border-color:var(--border2);color:var(--gold)}
 .reaction-trigger{
   background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;
   padding:5px 13px;font-size:13px;color:var(--text3);cursor:pointer;
 }
 .reaction-trigger:hover{color:var(--gold);border-color:var(--gold);}
 .page-head-wrap{
-  background:linear-gradient(180deg,rgba(201,168,76,0.05) 0%,transparent 100%);
+  background:linear-gradient(180deg,rgba(var(--gold-rgb),0.05) 0%,transparent 100%);
   padding-bottom:4px;
 }
 .modal-mask{
@@ -12070,7 +12250,7 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 .modal-stat-num{font-size:19px;font-weight:700;color:var(--text);}
 .modal-stat-lbl{font-size:12px;color:var(--text3);}
 .modal-btn{width:100%;padding:14px;margin-top:10px;border:none;border-radius:40px;font-size:15px;font-weight:700;cursor:pointer;}
-.modal-btn-primary{background:var(--gold);color:#0c0b09;box-shadow:0 4px 14px rgba(201,168,76,0.3);}
+.modal-btn-primary{background:var(--gold);color:#0c0b09;box-shadow:0 4px 14px rgba(var(--gold-rgb),0.3);}
 .modal-btn-primary:active{transform:scale(0.97);}
 .modal-btn-secondary{background:var(--bg2);border:1.5px solid var(--border);color:var(--text);}
 .modal-btn-secondary:active{background:var(--glass);}
@@ -12114,20 +12294,67 @@ body.light .cr-head button svg{stroke:#1a1a1a}
       <div id="detail-comments" style="padding:0 16px 80px"></div>
     </div>
     <div class="page" id="page-leaderboard"><div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Top Voices</h1><div class="page-head-sub">Weekly community leaders</div></div></div></div><div id="lb-content"></div></div>
-    <div class="page" id="page-profile"><div id="profile-content"></div></div>
     <div class="page" id="page-edit">
-      <button class="back-btn" onclick="go('profile')"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Profile</button>
-      <div style="padding:0 16px"><label class="input-label">Display name</label><input id="ep-name" class="input-area" type="text" placeholder="Your anonymous name" style="height:44px;margin-bottom:16px"><label class="input-label">Bio</label><textarea id="ep-bio" class="input-area" rows="3" placeholder="A short intro…" style="margin-bottom:16px"></textarea><label class="input-label">Avatar</label><div id="ep-emoji" class="emoji-picker" style="margin-bottom:20px"></div><button class="btn-gold" id="save-profile-btn">Save changes</button></div>
+      <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
+      <div class="ed-head"><h1>Edit profile</h1><div class="page-head-sub">How you appear to others</div></div>
+      <div class="ed-preview" id="ed-preview"></div>
+      <div class="ed-card">
+        <div class="ed-label"><span>Avatar</span><button type="button" class="ed-link" onclick="clearAvatar()">Use default</button></div>
+        <div class="av-tabs" id="av-tabs"></div>
+        <div class="av-grid" id="ep-emoji"></div>
+      </div>
+      <div class="ed-card">
+        <label class="ed-label" for="ep-name"><span>Display name</span><span class="ed-count" id="ep-name-cnt">0/30</span></label>
+        <input id="ep-name" class="ed-input" type="text" maxlength="30" placeholder="Your anonymous name" autocomplete="off">
+        <label class="ed-label" for="ep-bio" style="margin-top:18px"><span>Bio</span><span class="ed-count" id="ep-bio-cnt">0/150</span></label>
+        <textarea id="ep-bio" class="ed-input" rows="3" maxlength="150" placeholder="A line or two about you" style="resize:none"></textarea>
+        <div class="ed-hint">Your name and bio show next to your vents and replies. You can hide the bio under Privacy.</div>
+      </div>
+      <div class="ed-actions"><button class="btn-gold" id="save-profile-btn" disabled>Save changes</button><button type="button" class="ed-cancel" onclick="meBack()">Cancel</button></div>
     </div>
     <div class="page" id="page-settings">
-      <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Settings</h1><div class="page-head-sub">Manage your preferences</div></div></div></div>
-      <div class="card" style="margin-top:14px"><div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div class="setting-label"><div class="setting-label-title">Notifications</div><div class="setting-label-sub">Replies and interactions</div></div><label class="toggle"><input type="checkbox" id="set-notif"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-      <div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="setting-label"><div class="setting-label-title">Public profile</div><div class="setting-label-sub">Show stats to others</div></div><label class="toggle"><input type="checkbox" id="set-priv"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-      <div class="setting-row"><div class="setting-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><div class="setting-label"><div class="setting-label-title">Light / Dark mode</div><div class="setting-label-sub">Switch theme</div></div><label class="toggle"><input type="checkbox" id="set-theme"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div></div>
-      <div style="padding:16px"><button class="btn-gold" id="save-settings-btn">Save settings</button></div>
-      <div class="section-label">Account</div>
-      <div class="card" style="margin-top:0"><div class="setting-row" style="border:none;cursor:pointer" onclick="go('edit')"><div class="setting-icon"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div><div class="setting-label"><div class="setting-label-title">Edit profile</div><div class="setting-label-sub">Name, bio, avatar</div></div><svg style="width:16px;height:16px;stroke:var(--text3);fill:none;stroke-width:2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div></div>
-      <div style="padding:16px 16px 0;text-align:center"><div style="font-size:11px;color:var(--text3)">Christian Vent · Built by <a href="https://t.me/YIDIDIYATAMIRUU" style="color:var(--gold);text-decoration:none">@YIDIDIYATAMIRUU</a></div></div>
+      <div class="me-head"><h1>Me</h1><div class="page-head-sub">Your profile and preferences</div></div>
+      <div id="me-hero"></div>
+      <div id="me-recent"></div>
+
+      <div class="me-label">Appearance</div>
+      <div class="me-group">
+        <div class="me-row stack">
+          <div class="me-row-head"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></div><div class="me-text"><div class="me-title">Theme</div><div class="me-sub">Auto follows your device</div></div></div>
+          <div class="seg" id="seg-theme">
+            <button type="button" data-v="dark" onclick="setTheme('dark')"><svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Dark</button>
+            <button type="button" data-v="light" onclick="setTheme('light')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>Light</button>
+            <button type="button" data-v="auto" onclick="setTheme('auto')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v18a9 9 0 0 0 0-18z" fill="currentColor"/></svg>Auto</button>
+          </div>
+        </div>
+        <div class="me-row stack">
+          <div class="me-row-head"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></div><div class="me-text"><div class="me-title">Accent color</div><div class="me-sub" id="accent-name">Gold</div></div></div>
+          <div class="swatches" id="swatches"></div>
+        </div>
+        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M2 8v8"/><path d="M6 6v12"/><rect x="9" y="3" width="6" height="18" rx="2"/><path d="M18 6v12"/><path d="M22 8v8"/></svg></div><div class="me-text"><div class="me-title">Haptic feedback</div><div class="me-sub">A light tap when you press things</div></div><label class="toggle"><input type="checkbox" id="set-haptics" onchange="setHaptics(this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+      </div>
+
+      <div class="me-label">Notifications</div>
+      <div class="me-group">
+        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div class="me-text"><div class="me-title">Replies and interactions</div><div class="me-sub">Get a message from the bot when someone responds</div></div><label class="toggle"><input type="checkbox" id="set-notif" onchange="saveSetting('notifications',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+      </div>
+
+      <div class="me-label">Privacy</div>
+      <div class="me-group">
+        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="me-text"><div class="me-title">Public profile</div><div class="me-sub">Let others see your profile stats</div></div><label class="toggle"><input type="checkbox" id="set-priv" onchange="saveSetting('privacy_public',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><div class="me-text"><div class="me-title">Hide aura and points</div><div class="me-sub">Others see Hidden instead</div></div><label class="toggle"><input type="checkbox" id="set-hide-aura" onchange="saveSetting('hide_aura',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg></div><div class="me-text"><div class="me-title">Hide bio</div><div class="me-sub">Keep your bio to yourself</div></div><label class="toggle"><input type="checkbox" id="set-hide-bio" onchange="saveSetting('hide_bio',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><div class="me-text"><div class="me-title">Hide follower count</div><div class="me-sub">Your followers stay private</div></div><label class="toggle"><input type="checkbox" id="set-hide-followers" onchange="saveSetting('hide_follower_count',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row" id="row-hide-role" style="display:none"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="me-text"><div class="me-title">Hide role</div><div class="me-sub">Don't show that you're an administrator</div></div><label class="toggle"><input type="checkbox" id="set-hide-role" onchange="saveSetting('hide_role',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+      </div>
+      <div class="me-note">You and administrators always see your full profile. Changes save as soon as you toggle them.</div>
+
+      <div class="me-label">Community</div>
+      <div class="me-group">
+        <div class="me-row tap" onclick="inviteFriends()"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg></div><div class="me-text"><div class="me-title">Invite friends</div><div class="me-sub">Share the bot link in Telegram</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="me-row tap" onclick="openSupport()"><div class="me-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/></svg></div><div class="me-text"><div class="me-title">Contact support</div><div class="me-sub">Report a problem or ask a question</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+      </div>
+      <div class="me-foot">Christian Vent · Built by <a href="https://t.me/YIDIDIYATAMIRUU">@YIDIDIYATAMIRUU</a></div>
     </div>
     <div class="page" id="page-chats">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Messages</h1><div class="page-head-sub" id="chat-unread-label">All caught up</div></div></div></div>
@@ -12236,12 +12463,127 @@ const ICONS = {
   thumbsUp: ic('<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>'),
   thumbsDown: ic('<path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/>')
 };
-function avaHtml(v){
-  if(v==='👨') return ICONS.man;
-  if(v==='👩') return ICONS.woman;
-  if(!v||v==='👤') return ICONS.user;
-  return esc(v);
-}
+// ===== Premium avatar set =====
+// Avatars are still STORED as the original emoji (the Telegram bot shows them too).
+// The mini app renders each one as a hand-drawn duotone SVG, looked up by the emoji's
+// first code point (hex), so old and new variants of the same emoji resolve identically.
+const AV_HUE={gold:'#e8c97a',amber:'#f4a259',rose:'#f28ba8',sky:'#7ec8ff',mint:'#6fe0b0',violet:'#b9a2ff',ivory:'#efe8d8',coral:'#ff8a75'};
+const AV_CATS=[['faith','Faith'],['light','Light'],['creatures','Creatures'],['nature','Nature'],['mood','Mood'],['life','Life'],['care','Tech & care']];
+const AV=(function(){
+  const F=' fill="currentColor" fill-opacity=".22"';
+  const f=d=>'<path d="'+d+'"'+F+'/>';
+  const s=d=>'<path d="'+d+'"/>';
+  const c=(x,y,r)=>'<circle cx="'+x+'" cy="'+y+'" r="'+r+'"'+F+'/>';
+  const o=(x,y,r)=>'<circle cx="'+x+'" cy="'+y+'" r="'+r+'"/>';
+  const k=(x,y,r)=>'<circle cx="'+x+'" cy="'+y+'" r="'+(r||1)+'" fill="currentColor" stroke="none"/>';
+  const b=(x,y,w,h,rx)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+(rx||0)+'"'+F+'/>';
+  const solid=el=>el.replace('fill-opacity=".22"','fill-opacity=".8"');
+  const rot=(a,cx,cy,inner)=>'<g transform="rotate('+a+' '+cx+' '+cy+')">'+inner+'</g>';
+  const star=(cx,cy,R,r,n,off)=>{let p='';for(let i=0;i<n*2;i++){const a=(off||0)+i*Math.PI/n-Math.PI/2,rad=i%2?r:R;p+=(i?'L':'M')+(cx+rad*Math.cos(a)).toFixed(2)+' '+(cy+rad*Math.sin(a)).toFixed(2)}return p+'z'};
+  const sparkle=(cx,cy,R)=>'M'+cx+' '+(cy-R)+'Q'+cx+' '+cy+' '+(cx+R)+' '+cy+'Q'+cx+' '+cy+' '+cx+' '+(cy+R)+'Q'+cx+' '+cy+' '+(cx-R)+' '+cy+'Q'+cx+' '+cy+' '+cx+' '+(cy-R)+'z';
+  const scallop=(cx,cy,R,n,rr)=>{let p='';for(let i=0;i<=n;i++){const a=i*2*Math.PI/n-Math.PI/2,x=(cx+R*Math.cos(a)).toFixed(2),y=(cy+R*Math.sin(a)).toFixed(2);p+=i?('A'+rr+' '+rr+' 0 0 1 '+x+' '+y):('M'+x+' '+y)}return p+'z'};
+  const A={};
+  const add=(code,cat,name,hue,vs,body)=>{A[code]={c:cat,n:name,h:AV_HUE[hue],vs:vs,g:body}};
+
+  // ---- Faith ----
+  add('271d','faith','Cross','gold',1, f('M13 3h6v6h7v6h-7v14h-6V15H6V9h7z')+s('M16 6.5v19'));
+  add('1f64f','faith','Prayer','gold',0, f('M16 5.500C12.800 8.500 9.800 13 9.200 18.500L10.500 26.500 16 24z')+f('M16 5.500c3.200 3 6.200 7.500 6.800 13l-1.300 8L16 24z')+s('M16 5.500V24M9.300 19.500c-1.600-1.100-3.400-.5-3.600 1M22.700 19.500c1.600-1.100 3.400-.5 3.600 1M16 1.500v1.800M10.500 3.200l1.100 1.400M21.500 3.200l-1.100 1.400'));
+  add('1f54a','faith','Dove','ivory',1, f('M23.500 15.500C22.500 20 18.500 24.500 12 25.200L7.200 27.800 8.600 24.600 3.500 25 8.300 22.200C14.500 21.800 19 18.800 21 14.800z')+c(23.200,12.200,3.100)+f('M26 11.500l3.800 1.300-3.800 1.600z')+f('M17.500 19C12 17.500 8.500 11.500 9.500 4.500c5.200 1.800 9 7 10 12.500z')+k(24,11.600,.9)+s('M12.200 8.500c2 2.200 3.500 5 4.200 8'));
+  add('26ea','faith','Church','gold',0, f('M7 28V16l9-5.5 9 5.5v12z')+s('M16 10.5V4.5M13.8 7h4.4M4 28h24M13 28v-6a3 3 0 0 1 6 0v6')+k(16,16.5,1.2));
+  add('1f492','faith','Chapel','rose',0, f('M6 28V15l10-6 10 6v13z')+s('M16 9V3.5M13.8 6h4.4M3.5 28h25')+f('M16 25c-3.2-2.1-4.7-3.8-4.7-5.8a2.5 2.5 0 0 1 4.7-1.3 2.5 2.5 0 0 1 4.7 1.3c0 2-1.5 3.7-4.7 5.8z'));
+  (function(){let beads='';for(let i=0;i<9;i++){const a=Math.PI*0.5+0.5+i*(2*Math.PI-1.0)/8;beads+=c((16+9*Math.cos(a)).toFixed(2),(12.5+9*Math.sin(a)).toFixed(2),2.1)}
+    add('1f4ff','faith','Beads','violet',0, beads+s('M16 21.5v3')+f('M14.5 29h3v-4.5h-3z')); })();
+  add('1f56f','faith','Candle','amber',1, b(10.5,15,11,13,1.8)+s('M16 15v-2M7.5 28h17M10.5 19.5c1.7 0 2.4 1 2.4 2.6')+f('M16 3.5c2.7 2.9 3.8 5 3.8 6.8a3.8 3.8 0 0 1-7.6 0c0-1.8 1.1-3.9 3.8-6.8z'));
+  (function(){let g=s('M16 29V9');for(let i=0;i<3;i++){const y=12+i*5.5;g+=f('M16 '+y+'c-3.2-.4-5-2.6-5-5.4 3.3.3 5 2.3 5 5.4z')+f('M16 '+y+'c3.2-.4 5-2.6 5-5.4-3.3.3-5 2.3-5 5.4z')}
+    g+=f('M16 3c1.7 1.7 2.3 3.4 0 5.6-2.3-2.2-1.7-3.9 0-5.6z');add('1f33e','faith','Wheat','amber',0,g)})();
+  add('1f4d6','faith','Bible','sky',0, '<g transform="translate(2 2) scale(1.1667)" stroke-width="1.37">'+f('M2 4h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z')+f('M22 4h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z')+'</g>');
+  add('1f397','faith','Ribbon','rose',1, f('M16 3a7.5 7.5 0 0 1 5.4 12.7L16 20.5l-5.4-4.8A7.5 7.5 0 0 1 16 3z')+f('M11.5 17.5L8 29l5-2.6 3.5 2.6 1.5-7M20.5 17.5L24 29l-5-2.6')+k(16,10,1.4));
+
+  // ---- Light & strength ----
+  add('1f31f','light','Glow star','gold',0, f(star(16,16,8.5,3.7,5))+s('M16 2.5v3M16 26.5v3M2.5 16h3M26.5 16h3M6.2 6.2l2 2M23.8 6.2l-2 2M6.2 25.8l2-2M23.8 25.8l-2-2'));
+  add('2b50','light','Star','gold',0, f(star(16,16.5,12.5,5.4,5)));
+  add('2728','light','Sparkle','amber',0, f(sparkle(13.5,17.5,10.5))+f(sparkle(24.5,7.5,5))+f(sparkle(25,25,3.4)));
+  add('1f320','light','Shooting star','sky',0, f(star(22,10.5,6.5,2.9,5))+s('M17.5 15L5 27.5M12.8 10.8L6.5 17M21.5 19.5L15 26'));
+  (function(){let r='';for(let i=0;i<8;i++){const a=i*Math.PI/4,x1=16+8.5*Math.cos(a),y1=16+8.5*Math.sin(a),x2=16+12.5*Math.cos(a),y2=16+12.5*Math.sin(a);r+=s('M'+x1.toFixed(2)+' '+y1.toFixed(2)+'L'+x2.toFixed(2)+' '+y2.toFixed(2))}
+    add('1f506','light','Radiance','amber',0, c(16,16,5.2)+r)})();
+  add('26a1','light','Lightning','amber',0, f('M18.5 2.5L6.5 17.5h8L12.8 29.5l12.7-16h-8z'));
+  add('1f4a5','light','Burst','coral',0, f(star(16,16,13,6.2,9,0.2))+f(star(16,16,5.2,2.6,5,0.4)));
+  add('1f525','light','Flame','coral',0, f('M16 2.5c1.2 4.3 7.5 8 7.5 15a7.5 7.5 0 0 1-15 0c0-3.4 1.7-5.4 3.4-7.2.3 2.1 1.1 3.4 2.3 4.2C13.4 10.6 13.2 6 16 2.5z')+s('M16 27a3.8 3.8 0 0 0 3.8-3.8c0-2.4-1.8-3.6-3.8-6-2 2.4-3.8 3.6-3.8 6A3.8 3.8 0 0 0 16 27z'));
+  add('1f48e','light','Gem','sky',0, f('M8.5 4.5h15l5 6.5L16 28 3.5 11z')+s('M3.5 11h25M12.5 4.5L10 11l6 17M19.5 4.5L22 11l-6 17'));
+  add('1f6e1','light','Shield','gold',1, f('M16 3l10 3.6v8.4c0 6.5-4.3 11.3-10 14-5.7-2.7-10-7.5-10-14V6.6z')+s('M16 9v12M11 13.5h10'));
+  add('2764','light','Heart','rose',1, f('M16 28.5C6.2 21.8 3.5 16.4 3.5 11.8A6.3 6.3 0 0 1 16 9.5a6.3 6.3 0 0 1 12.5 2.3c0 4.6-2.7 10-12.5 16.7z')+s('M8.5 11.5a3.2 3.2 0 0 1 3.2-3.2'));
+  add('2694','light','Swords','ivory',1, s('M6 6l14 14M26 6L12 20M17 23l6-6M9 17l6 6M20 20l6 6M12 20l-6 6')+k(27.2,27.2,1.6)+k(4.8,27.2,1.6)+f('M6 6l3.2.8-.8 3.2zM26 6l-3.2.8.8 3.2z'));
+  add('1f396','light','Medal','amber',1, f('M10.5 3l5.5 9.5M21.5 3L16 12.5')+c(16,19.5,7.5)+f(star(16,19.5,3.8,1.7,5)));
+  add('1f511','light','Key','gold',0, c(9.5,22.5,5.5)+k(9.5,22.5,1.4)+s('M13.6 18.6L27 5.2M22.5 9.7l3.3 3.3M19 13.2l2.6 2.6'));
+
+  // ---- Creatures ----
+  add('1f981','creatures','Lion','amber',0, f(scallop(16,16.5,11.5,12,3.1))+c(16,17,6.7)+k(13.2,15.8,1.1)+k(18.8,15.8,1.1)+f('M14.3 19.2h3.4L16 21z')+s('M16 21v1.4M13.6 23.2c1.2.9 3.6.9 4.8 0'));
+  add('1f98a','creatures','Fox','coral',0, f('M3.5 4.5L12 9h8l8.5-4.5L27.5 16 16 28.5 4.5 16z')+s('M4.5 16L16 20l11.5-4M7.5 8l3.2 2M24.5 8l-3.2 2')+k(11.5,14.5,1.2)+k(20.5,14.5,1.2)+k(16,26.5,1.6));
+  add('1f409','creatures','Dragon','mint',0, f('M16 29c-5.2 0-8.7-3-9.2-8.3.5-5.4 3.3-9 9.2-9s8.7 3.6 9.2 9C24.7 26 21.2 29 16 29z')+s('M10.2 13.5C6.5 11 5 7 6.6 3c1.7 3 4 5.2 6.4 6.3M21.8 13.5C25.5 11 27 7 25.4 3c-1.7 3-4 5.2-6.4 6.3M10.5 17.5l3.2 1.3M21.5 17.5l-3.2 1.3M12 26c2.6 1.4 5.4 1.4 8 0M13.5 12c.8-1.7 1.6-2.7 2.5-3.3.9.6 1.7 1.6 2.5 3.3')+k(14,23.4,.9)+k(18,23.4,.9));
+  add('1f43c','creatures','Panda','ivory',0, solid(c(7.2,8,3.6))+solid(c(24.8,8,3.6))+c(16,17.5,10.8)+solid('<ellipse cx="11.2" cy="16" rx="2.8" ry="3.7" transform="rotate(22 11.2 16)"'+F+'/>')+solid('<ellipse cx="20.8" cy="16" rx="2.8" ry="3.7" transform="rotate(-22 20.8 16)"'+F+'/>')+solid('<ellipse cx="16" cy="20.7" rx="2" ry="1.4"'+F+'/>')+s('M13.4 23.3c1.2 1.1 4 1.1 5.2 0'));
+  add('1f984','creatures','Unicorn','violet',0, f('M12 28.500c-1-6.500-.5-11.500 2.500-15.500L16 9.200c1.500-1.200 3.500-1.200 5 0l.5 2.800 5.300 4.200c1.200 1 1 2.800-.3 3.600l-3 1c-.5 1.700-2 3.400-4 4L19 28.500z')+f('M17.500 8.500L19.800 1.500 21 9z')+f('M15.500 10l-1-4.500 3 3z')+s('M12.500 12C8.500 14 7 19 8 26M13.500 16c-3 2-3.700 5.500-3 9')+k(21,13.500,1.100)+k(25.500,18.200,.8));
+  add('1f985','creatures','Eagle','amber',0, f('M5 28C4 20 8 13 14 10c1.500-2.800 4.500-4.500 8-3.500 2 .6 3.500 2.600 3.500 5L29 15.500l-4.500.7c-.5 2.300-2 3.800-4 4.800L22 28z')+s('M18 9.500l5 2.200M9 24.500c2-1 4-1 6 0M10.200 19.500c2-1 3.500-1 5 0')+k(21,12.200,1.100));
+  add('1f989','creatures','Owl','amber',0, f('M16 29.5c-5 0-9-4-9-10V8.5c2.2 1 4.2.2 5.4-1.8 1.5 1.1 5.7 1.1 7.2 0 1.2 2 3.2 2.8 5.4 1.8v11c0 6-4 10-9 10z')+c(11.4,14.5,3.7)+c(20.6,14.5,3.7)+k(11.4,14.5,1.3)+k(20.6,14.5,1.3)+f('M14.4 18.4h3.2L16 21.6z')+s('M12.2 25c1.2.9 2.4 1.3 3.8 1.3s2.6-.4 3.8-1.3'));
+  add('1f98b','creatures','Butterfly','violet',0, f('M16 16C11 8 5 6 4.4 9.8 4 13 7.5 16 16 16z')+f('M16 16c-6 0-10 4-9.4 8 .4 3 4.2 3.4 6.2 1.4 2-2 3-5.4 3.2-9.4z')+f('M16 16c5-8 11-10 11.6-6.2.4 3.2-3.1 6.2-11.6 6.2z')+f('M16 16c6 0 10 4 9.4 8-.4 3-4.2 3.4-6.2 1.4-2-2-3-5.4-3.2-9.4z')+s('M16 9v17M16 9c-.9-2.8-2.6-4.4-4-5M16 9c.9-2.8 2.6-4.4 4-5'));
+  add('1f422','creatures','Turtle','mint',0, f('M6 20c0-6 4-10 10-10s10 4 10 10z')+s('M16 10v10M11.2 12.4l2.4 7.6M20.8 12.4L18.4 20M5 20h22M9.5 20v3.8M14 20v3.8M18 20v3.8M22.5 20v3.8M5.5 20.5L3 22')+c(28.4,17.6,2.8)+k(29.2,17,.7));
+  add('1f98c','creatures','Deer','amber',0, f('M11 14.5h10l-1.6 10c-.3 2.1-1.5 3.6-3.4 3.6s-3.1-1.5-3.4-3.6z')+f('M11 14.5L5 12.6c-.3 2.7 1.1 4.6 4.4 5.3zM21 14.5l6-1.9c.3 2.7-1.1 4.6-4.4 5.3z')+s('M12.2 14.2c-1-4-1.2-7-3.2-10.2M10 9.6L6 8.4M11.2 7.2L10 4M19.8 14.2c1-4 1.2-7 3.2-10.2M22 9.6l4-1.2M20.8 7.2L22 4')+k(13.6,18.8,1)+k(18.4,18.8,1)+k(16,25.2,1.5));
+  add('1f41d','creatures','Bee','amber',0, f('M13.5 14C10 9.5 11.5 4 15 5c2.4 1 2.2 5.5.4 9zM19 13.5c3.6-4.5 2.4-9.7-1-9-2.5.8-2.3 5.2-.7 9z')+c(16.5,20,8.5)+s('M13.2 13.6v12.8M18 12.6v14.8M6 20h-2M26.5 20h2')+c(6.6,19,3.1)+s('M5.4 16.2L4 13.6M8.2 16l.4-2.9'));
+
+  // ---- Nature ----
+  add('1f308','nature','Rainbow','rose',0, s('M3 25a13 13 0 0 1 26 0')+s('M7.5 25a8.5 8.5 0 0 1 17 0')+s('M12 25a4 4 0 0 1 8 0')+c(4,25.5,1.8)+c(28,25.5,1.8));
+  (function(){let p='';for(let i=0;i<5;i++)p+=rot(i*72,16,16,f('M16 16c-4.2-3.8-4.4-9.4 0-12.5 4.4 3.1 4.2 8.7 0 12.5z'));add('1f338','nature','Blossom','rose',0,p+c(16,16,3.1)+k(16,16,1))})();
+  add('1f319','nature','Moon','gold',0, '<g transform="translate(2 2) scale(1.1667)" stroke-width="1.37">'+f('M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z')+'</g>'+k(24.5,6.5,1)+k(27.5,12.5,.8));
+  add('1f34e','nature','Apple','coral',0, f('M16 10.5c-3-2-9-1.4-10 5.2-.8 6 3 13 6.4 13 1.6 0 2.2-.9 3.6-.9s2 .9 3.6.9c3.4 0 7.2-7 6.4-13-1-6.6-7-7.2-10-5.2z')+s('M16 10.5c0-3 1-5.2 3-6.7')+f('M19.5 5c2-1.6 5-1.6 6.2 0-1.6 2.2-4.6 2.5-6.2 0z'));
+  (function(){let p='';for(let i=0;i<4;i++)p+=rot(i*90,16,16,f('M16 16C12 14 9.8 11 11.4 8.4c1.4-2.2 3.8-1.6 4.6.6.8-2.2 3.2-2.8 4.6-.6C22.2 11 20 14 16 16z'));add('1f340','nature','Clover','mint',0,p+s('M16 16.5c.2 5 2 9 5 12'))})();
+  add('1f33f','nature','Herb','mint',0, s('M7 29C9 18 14 9.5 25.5 4.5')+f('M11.8 21.6C8 21.2 5.8 18.8 5.6 15.6c3.8.2 6.2 2.4 6.2 6z')+f('M13.6 17.8c3.4.4 5.6-1.2 6.6-4.2-3.4-.4-6 .8-6.6 4.2z')+f('M16.6 13.2C13.4 12 12 9.4 12.4 6.4c3.2 1.2 4.6 3.6 4.2 6.8z')+f('M19.6 10.4c3.2.6 5.4-.8 6.6-3.6-3.2-.6-5.8.4-6.6 3.6z'));
+  (function(){let p='';for(let i=0;i<12;i++)p+=rot(i*30,16,16,'<ellipse cx="16" cy="7" rx="2.3" ry="4.1"'+F+'/>');add('1f33b','nature','Sunflower','amber',0,p+solid(c(16,16,5))+k(14.4,14.6,.7)+k(17.6,14.6,.7)+k(16,17.6,.7)+k(14.2,17.2,.7)+k(17.8,17.2,.7))})();
+  add('1f30a','nature','Waves','sky',0, s('M3 10c3-3 5-3 8 0s5 3 8 0 5-3 8 0')+s('M3 17c3-3 5-3 8 0s5 3 8 0 5-3 8 0')+s('M3 24c3-3 5-3 8 0s5 3 8 0 5-3 8 0'));
+
+  // ---- Mood ----
+  const face=function(inner,cy){return c(16,cy||16,12)+inner};
+  add('1f60a','mood','Happy','gold',0, face(s('M10.2 14.4c.8-1.5 2.4-1.5 3.2 0M18.6 14.4c.8-1.5 2.4-1.5 3.2 0M10.5 19.4c1.5 2.9 3.3 3.8 5.5 3.8s4-.9 5.5-3.8')));
+  add('1f604','mood','Joy','gold',0, face(s('M10.2 13.6c.8-1.5 2.4-1.5 3.2 0M18.6 13.6c.8-1.5 2.4-1.5 3.2 0')+f('M9.6 18.2h12.8c-.5 4.3-3 6.8-6.4 6.8s-5.9-2.5-6.4-6.8z')));
+  add('1f622','mood','Sad','sky',0, face(k(11.600,15,1.300)+k(20.400,15,1.300)+s('M9.600 12.800l4-1.200M22.400 12.800l-4-1.200M11.400 23.600c1.400-1.800 3-2.600 4.600-2.600s3.200.800 4.600 2.600')+f('M21.400 18.800c1.500 2 2.100 3.100 2.100 4.100a2.100 2.100 0 0 1-4.200 0c0-1 .6-2.100 2.100-4.100z')));
+  add('1f614','mood','Pensive','violet',0, face(s('M10 14.800c1 1.200 2.700 1.200 3.700 0M18.300 14.800c1 1.200 2.700 1.200 3.700 0M9.600 12.200l4.200-.9M22.400 12.200l-4.200-.9M12.600 22.800c2-1.400 4.800-1.400 6.800 0')));
+  add('1f60c','mood','Calm','mint',0, face(s('M10 15c1.300 1.500 3 1.500 4.300 0M17.700 15c1.300 1.500 3 1.500 4.300 0M11.800 20.200c2.600 2 5.800 2 8.400 0')));
+  add('1f607','mood','Angelic','gold',0, face(s('M10.600 18c.8-1.400 2.200-1.400 3 0M18.400 18c.8-1.400 2.200-1.400 3 0M11.500 22.500c2.500 1.800 6.500 1.800 9 0'),18.500)+'<ellipse cx="16" cy="4.800" rx="6.500" ry="2"/>');
+  add('1f972','mood','Grateful','rose',0, face(k(11.400,15,1.300)+k(20.600,15,1.300)+s('M10.200 19.800c1.500 2.500 3.300 3.500 5.800 3.500s4.300-1 5.800-3.500')+f('M23.800 13.600c1.100 1.400 1.600 2.300 1.600 3.100a1.600 1.600 0 0 1-3.200 0c0-.8.500-1.700 1.600-3.100z'),16.500));
+  add('1f634','mood','Sleepy','sky',0, c(14,18.200,10.700)+s('M9 17h4.200M15.200 17h4.200')+c(14.200,23,1.700)+s('M21.500 4.500H26L21.500 10H26M27 1.500h3l-3 3.500h3'));
+
+  // ---- Life ----
+  add('1f476','life','Little one','rose',0, c(6.200,17,1.900)+c(25.800,17,1.900)+c(16,17.200,10)+s('M16 7.200c-1.300-3.500 2.700-5.200 4-2.600')+k(12.200,16.500,1.200)+k(19.800,16.500,1.200)+s('M13.500 21c1.600 1.300 3.400 1.300 5 0'));
+  add('1f9d1','life','Person','gold',0, c(16,10.500,5.500)+f('M5.500 28.500c0-6.200 4.500-10.200 10.500-10.200s10.500 4 10.500 10.200z')+s('M12.200 18.800L16 23.500l3.800-4.700'));
+  add('1f474','life','Elder','ivory',0, f('M8.500 13.500C8.500 8.500 11.500 5.500 16 5.500s7.500 3 7.500 8c0 5.500-3 8.500-7.500 8.500s-7.500-3-7.500-8.500z')+s('M8.300 12c-2 .5-3 2.500-2.500 5M23.700 12c2 .5 3 2.500 2.500 5M9.500 18.500C9.800 24.500 12.500 28.500 16 28.500s6.200-4 6.500-10M10.800 10.600h3.600M17.600 10.600h3.600')+k(12.600,13.600,1.100)+k(19.400,13.600,1.100)+s('M12.500 19c1.800-1.300 2.800-1.300 3.500 0 .7-1.300 1.700-1.300 3.500 0M14 22.800c1.200.6 2.800.6 4 0'));
+  add('1f6b6','life','Walker','sky',0, c(17.500,5.500,2.800)+s('M17 10.500l-2.500 7 3.500 3.500V29M14.500 17.500L11 29M15.800 12.500l-4 2.400-.8 4.100M16.600 12l4.200 2.600 2.600 3.400'));
+  add('1f3c3','life','Runner','coral',0, c(21.500,6,2.800)+s('M20 10.500l-3.500 6.500 4 3.500 1.500 7.500M16.500 17l-5 .5-3 5.500M19 11.500l-5.500 1.800-.8 3.700M20.300 11.800l4.200 2.200 3 .5M16.500 17l-.5 5-5 4.500'));
+  add('1f4da','life','Books','amber',0, b(4.500,6,6,22,1.600)+b(11.500,3,6,25,1.600)+f('M19 8.500l5.200-1.600 4.200 20.500-5.400 1.300z')+s('M4.500 12h6M4.500 23h6M11.500 9h6M11.500 22h6'));
+  add('1f4d3','life','Notebook','violet',0, b(8,3,18,26,2.500)+s('M4.500 8.500h6M4.500 14h6M4.500 19.500h6M4.500 25h6M14.500 10.500h8M14.500 15.500h8M14.500 20.500h5'));
+  add('1f3a8','life','Palette','coral',0, f('M16 3C8.800 3 3 8.800 3 16s5.800 13 13 13c1.700 0 3-1.300 3-3 0-.8-.3-1.500-.8-2-.5-.5-.7-1.200-.7-1.800 0-1.400 1.100-2.500 2.500-2.500H24c3 0 5-2.200 5-5C29 8.400 23.200 3 16 3z')+k(9.500,15,1.700)+k(12.500,9,1.700)+k(19.500,8.500,1.700)+k(24,13,1.700));
+  add('1f3b5','life','Melody','violet',0, s('M12 25.500V7l14-3v18')+s('M12 12l14-3')+c(8.500,25.500,3.500)+c(22.500,22.500,3.500));
+  add('1f3b9','life','Keys','ivory',0, b(3,7,26,18,2.500)+s('M9.500 7v18M16 7v18M22.500 7v18')+solid('<rect x="7.400" y="7" width="4.200" height="10" rx="1"'+F+'/>')+solid('<rect x="13.900" y="7" width="4.200" height="10" rx="1"'+F+'/>')+solid('<rect x="20.400" y="7" width="4.200" height="10" rx="1"'+F+'/>'));
+  add('1f3a3','life','Fishing','mint',0, s('M5 28C9 18 15 9 24 5')+s('M24 5v13')+c(24,20.500,2.500)+s('M3 28.500c2-1.500 4-1.500 6 0s4 1.500 6 0 4-1.500 6 0 4 1.500 6 0'));
+  add('1f9d7','life','Summit','sky',0, f('M2.500 28L13 9l5.500 8.500 3-4L29.500 28z')+s('M13 9V3l5.500 2.200L13 7.500M9.500 15.500l3 2.500 2.500-2.500')+'');
+
+  // ---- Tech & care ----
+  add('1f4bb','care','Laptop','sky',0, b(6,6.500,20,14.500,2)+f('M2.500 24h27l-2 3.500H4.500z'));
+  add('1f4f1','care','Phone','sky',0, b(9,3,14,26,3.200)+s('M14 6.500h4M14 25.500h4'));
+  add('231a','care','Watch','sky',0, f('M12 3h8l1.200 6.500h-10.400z')+f('M10.800 22.500h10.400L20 29h-8z')+c(16,16,7.500)+s('M16 11.800V16.500l3 1.800'));
+  add('1f5a5','care','Desktop','sky',1, b(3,4,26,17,2)+s('M12 28h8M16 21v7M3 16h26'));
+  add('2695','care','Medical','mint',1, s('M16 5v24')+c(16,4,1.500)+s('M19.500 9.500c-7 0-7.500 5.500-3.500 7.500s3.500 6.500-3.500 6.500')+s('M16 7.500c-2.500-2.500-5-3-8-2 1.500 2.500 4.500 3.500 8 2zM16 7.500c2.500-2.500 5-3 8-2-1.500 2.500-4.500 3.500-8 2z'));
+  add('1fa7a','care','Stethoscope','mint',0, s('M8 3.500v8a6 6 0 0 0 12 0v-8M14 17.500V21a5.500 5.500 0 0 0 11 0v-2.500')+c(25,16,3)+k(8,3.500,1.300)+k(20,3.500,1.300));
+  add('1f48a','care','Capsule','coral',0, rot(-45,16,16,b(2.500,10,27,12,6)+solid(f('M8.500 10H16v12H8.500a6 6 0 0 1 0-12z'))+s('M16 10v12')));
+  add('1f9ec','care','Helix','violet',0, s('M10 3c0 7.500 12 7.500 12 13s-12 5.500-12 13M22 3c0 7.500-12 7.500-12 13s12 5.500 12 13M11.800 8h8.400M10.400 16h11.200M11.800 24h8.400'));
+
+  // ---- Defaults (not in the picker) ----
+  add('1f464','','You','gold',0, c(16,10.500,5.500)+f('M5.500 28.500c0-6.200 4.500-10.200 10.500-10.200s10.500 4 10.500 10.200z'));
+  add('1f468','','Man','sky',0, c(16,10.500,5.500)+f('M5.500 28.500c0-6.200 4.500-10.200 10.500-10.200s10.500 4 10.500 10.200z')+s('M16 19.500l-1.600 3.200L16 28l1.600-5.300z'));
+  add('1f469','','Woman','rose',0, f('M8.500 14C8 7.500 11.500 4 16 4s8 3.500 7.500 10c0 3 1 5.200 2.200 7H6.300c1.200-1.800 2.200-4 2.200-7z')+c(16,12,5)+f('M6.500 29c0-5.500 4-9 9.500-9s9.500 3.500 9.500 9z'));
+  return A;
+})();
+function avKey(v){if(!v)return '';const cp=String(v).codePointAt(0);return cp?cp.toString(16):''}
+function avEmoji(k){return String.fromCodePoint(parseInt(k,16))+(AV[k]&&AV[k].vs?String.fromCharCode(0xFE0F):'')}
+function avSvg(k){const a=AV[k];return '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="av-svg" style="color:'+a.h+'">'+a.g+'</svg>'}
+function avaHtml(v){const k=avKey(v);if(AV[k])return avSvg(k);if(!v)return avSvg('1f464');return esc(v)}
 
 const CATS = [
   ['StoryTime',ICONS.book,'Story Time'],
@@ -12252,7 +12594,6 @@ const CATS = [
   ['Testimony',ICONS.megaphone,'Testimony'],['AddictionRecovery',ICONS.pill,'Recovery'],
   ['BibleQuestion',ICONS.book,'Bible Q&A'],['Other',ICONS.bookmark,'Other']
 ];
-const EMOJIS = ['🕊️','✝️','🙏','📖','❤️','🌟','🛡️','⚔️','⛪','🎹','👶','🧑','👴','🌿','🔥'];
 
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3000)}
@@ -12789,6 +13130,8 @@ async function toggleReaction(btn, itemType, itemId, emoji) {
 
 const ink=document.getElementById('nav-ink');
 function go(name,btn){
+  if(name==='profile')name='settings';
+  if(!btn&&(name==='settings'||name==='edit'))btn=document.querySelector('.nav-item[data-page="settings"]');
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
@@ -12803,8 +13146,7 @@ function go(name,btn){
   if(name==='feed'&&feedPage===1)loadFeed();
   if(name==='vent')refreshVentSexRow();
   if(name==='leaderboard')loadLB();
-  if(name==='profile')loadProfile();
-  if(name==='settings')loadSettings();
+  if(name==='settings')loadMe();
   if(name==='chats')loadChats();
   if(name==='admin-monitor')loadAdminChats();
   document.getElementById('pages').scrollTop=0;
@@ -12970,22 +13312,13 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('load-more-btn').addEventListener('click',()=>loadFeed(true));
   document.getElementById('send-comment').addEventListener('click',postComment);
   document.getElementById('save-profile-btn').addEventListener('click',saveProfile);
-  document.getElementById('save-settings-btn').addEventListener('click',saveSettings);
   let st;document.getElementById('search-inp').addEventListener('input',e=>{
     clearTimeout(st);searchQ=e.target.value.trim();st=setTimeout(()=>{feedPage=1;loadFeed()},500);
   });
   buildEmojiPicker();
   renderCats();
-  const themeToggle=document.getElementById('set-theme');
-  if(localStorage.getItem('theme')==='light') document.body.classList.add('light');
-  if(themeToggle){
-    themeToggle.checked=document.body.classList.contains('light');
-    themeToggle.addEventListener('change',()=>{
-      if(themeToggle.checked) document.body.classList.add('light');
-      else document.body.classList.remove('light');
-      localStorage.setItem('theme', themeToggle.checked?'light':'dark');
-    });
-  }
+  initAppearance();
+  ['ep-name','ep-bio'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',updateEditUI)});
   // Initially hide comment bar
   document.getElementById('commentBar').style.display='none';
 
@@ -13140,7 +13473,7 @@ async function loadFeed(append=false){
 
 function renderPost(p){
   const cats=(p.categories||[]).map(c=>`<span class="pill pill-sm">${esc(c)}</span>`).join('');
-  const unread=p.unread_comments>0?`<span class="pill pill-sm" style="background:rgba(201,168,76,0.2);border-color:var(--gold)">${p.unread_comments} new</span>`:'';
+  const unread=p.unread_comments>0?`<span class="pill pill-sm" style="background:rgba(var(--gold-rgb),0.2);border-color:var(--gold)">${p.unread_comments} new</span>`:'';
   let reactionsHtml='';
   if(p.reactions&&p.reactions.counts){
     for(let [emoji,count] of Object.entries(p.reactions.counts)){
@@ -13397,60 +13730,184 @@ async function loadLB(){
   }catch(e){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>'}
 }
 
-async function loadProfile(){
-  if(!UID)return;
-  const box=document.getElementById('profile-content');box.innerHTML=skelProfile();
+// ===== Me tab =====
+const PENCIL_SVG='<svg viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
+const CHECK_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const AURA_TIERS=[[0,'White'],[10,'Yellow'],[25,'Green'],[50,'Blue'],[100,'Purple'],[500,'Crown']];
+const ACCENTS=[
+  {id:'gold',name:'Gold',rgb:'201,168,76',c1:'#c9a84c',c2:'#e8c97a',c3:'#f5e4b0',dark:'#8a6d1f'},
+  {id:'rose',name:'Rose',rgb:'217,112,147',c1:'#d97093',c2:'#ec9db8',c3:'#f8d2df',dark:'#a14465'},
+  {id:'sapphire',name:'Sapphire',rgb:'91,141,239',c1:'#5b8def',c2:'#8fb1f5',c3:'#cadbfa',dark:'#2f5ec4'},
+  {id:'emerald',name:'Emerald',rgb:'72,187,138',c1:'#48bb8a',c2:'#7fd6ae',c3:'#c3ecda',dark:'#23825a'},
+  {id:'violet',name:'Violet',rgb:'155,126,232',c1:'#9b7ee8',c2:'#bba6f1',c3:'#dfd5f8',dark:'#6a4fc0'}
+];
+let meRecent=[], botLink='', edCat='faith';
+
+function lsGet(k,d){try{const v=localStorage.getItem(k);return v===null?d:v}catch(e){return d}}
+function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+function hap(kind){if(lsGet('haptics','1')==='0')return;vrHaptic(kind||'light')}
+
+// ---- appearance ----
+function themeMode(){const t=lsGet('theme','dark');return(t==='light'||t==='auto')?t:'dark'}
+function applyTheme(mode){
+  let light=mode==='light';
+  if(mode==='auto'){try{light=window.matchMedia('(prefers-color-scheme: light)').matches}catch(e){light=false}}
+  document.body.classList.toggle('light',light);
+}
+function setTheme(mode){lsSet('theme',mode);applyTheme(mode);syncAppearanceUI();hap('light')}
+function accentId(){const a=lsGet('accent','gold');return ACCENTS.some(x=>x.id===a)?a:'gold'}
+function applyAccent(id){
+  const a=ACCENTS.find(x=>x.id===id)||ACCENTS[0],st=document.documentElement.style;
+  st.setProperty('--gold',a.c1);st.setProperty('--gold2',a.c2);st.setProperty('--gold3',a.c3);
+  st.setProperty('--gold-rgb',a.rgb);st.setProperty('--gold-dark',a.dark);
+}
+function setAccent(id){lsSet('accent',id);applyAccent(id);syncAppearanceUI();hap('light')}
+function setHaptics(on){lsSet('haptics',on?'1':'0');if(on)hap('medium')}
+function buildSwatches(){
+  const box=document.getElementById('swatches');if(!box)return;
+  box.innerHTML=ACCENTS.map(a=>`<button type="button" class="sw" data-id="${a.id}" style="--c:${a.c1}" aria-label="${a.name}" onclick="setAccent('${a.id}')">${CHECK_SVG}</button>`).join('');
+}
+function syncAppearanceUI(){
+  const m=themeMode(),id=accentId();
+  document.querySelectorAll('#seg-theme button').forEach(b=>b.classList.toggle('on',b.dataset.v===m));
+  document.querySelectorAll('#swatches .sw').forEach(s=>s.classList.toggle('on',s.dataset.id===id));
+  const nm=document.getElementById('accent-name');
+  if(nm){const a=ACCENTS.find(x=>x.id===id);nm.textContent=a?a.name:'Gold'}
+  const hp=document.getElementById('set-haptics');
+  if(hp)hp.checked=lsGet('haptics','1')!=='0';
+}
+function initAppearance(){
+  applyTheme(themeMode());applyAccent(accentId());buildSwatches();syncAppearanceUI();
   try{
-    const d=await api(`/api/mini-app/profile/${UID}?viewer_id=${UID}`);
-    profileCache=d.data;const p=d.data;
-    const postsR=await api(`/api/mini-app/get-posts?user_id=${UID}&page=1`);
-    const myPosts=(postsR.data||[]).filter(x=>x.author?.is_me);
-    box.innerHTML=`
-      <div class="profile-hero"><div style="position:absolute;top:16px;right:16px"><button class="btn-ghost" onclick="setupEdit()" style="font-size:13px;padding:8px 14px">Edit</button></div>
-      <div class="profile-ava-wrap">${avaHtml(p.avatar||p.sex)}</div>
-      <div class="profile-name">${esc(p.weekly_badge||'')} ${esc(p.name)}</div>
-      <div style="margin-top:6px"><span class="pill-aura"><span class="pill-aura-badge">${esc(p.aura)}</span><svg class="bolt-icon" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg><span class="pill-aura-pts">${p.rating} pts</span></span></div>
-      <div class="profile-stats"><div class="profile-stat"><div class="profile-stat-num">${p.stats?.posts||0}</div><div class="profile-stat-lbl">Vents</div></div><div class="profile-stat"><div class="profile-stat-num">${p.stats?.followers||0}</div><div class="profile-stat-lbl">Followers</div></div><div class="profile-stat"><div class="profile-stat-num">${p.stats?.comments||0}</div><div class="profile-stat-lbl">Replies</div></div></div></div>
-      ${myPosts.length?`<div class="section-label">My recent vents</div><div style="padding:0 16px">${myPosts.slice(0,3).map(p=>`<div class="post-card" onclick="openPost(${p.id})" style="margin:0 0 10px"><div class="post-body" style="-webkit-line-clamp:2">${esc(p.content)}</div><div style="font-size:12px;color:var(--text3);margin-top:6px">${esc(p.time_ago)}</div></div>`).join('')}</div>`:''}
-    `;
-  }catch(e){box.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">Could not load profile</div>'}
+    const mq=window.matchMedia('(prefers-color-scheme: light)');
+    const h=()=>{if(themeMode()==='auto')applyTheme('auto')};
+    if(mq.addEventListener)mq.addEventListener('change',h);else if(mq.addListener)mq.addListener(h);
+  }catch(e){}
 }
 
+// ---- profile hub ----
+function fmtNum(n){const v=Number(n);return Number.isFinite(v)?(Number.isInteger(v)?String(v):v.toFixed(1)):String(n)}
+function auraProgress(rating){
+  const r=Number(rating);
+  if(!Number.isFinite(r)||r<0)return null;
+  let i=0;
+  for(let t=0;t<AURA_TIERS.length;t++){if(r>=AURA_TIERS[t][0])i=t}
+  if(i===AURA_TIERS.length-1)return{pct:100,text:'Top aura reached'};
+  const lo=AURA_TIERS[i][0],hi=AURA_TIERS[i+1][0];
+  return{pct:Math.max(2,Math.round((r-lo)/(hi-lo)*100)),text:Math.ceil(hi-r)+' pts to '+AURA_TIERS[i+1][1]+' aura'};
+}
+function meHeroHtml(p){
+  const bio=(p.bio||'').trim();
+  const showAura=!!p.aura&&!p.is_admin;
+  const prog=(p.is_admin||!p.aura)?null:auraProgress(p.rating);
+  const stat=(n,l)=>`<div class="me-stat"><div class="me-stat-num">${esc(String(n))}</div><div class="me-stat-lbl">${l}</div></div>`;
+  return `<div class="me-hero">
+    <div class="me-ava-wrap" onclick="setupEdit()"><div class="me-ava-ring"><div class="me-ava">${avaHtml(p.avatar||p.sex)}</div></div><span class="me-ava-badge">${PENCIL_SVG}</span></div>
+    <div class="me-name">${esc(p.weekly_badge||'')} ${esc(p.name)}</div>
+    <div class="me-chips">
+      ${showAura?`<span class="pill-aura"><span class="pill-aura-badge">${esc(p.aura)}</span><svg class="bolt-icon" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg><span class="pill-aura-pts">${esc(fmtNum(p.rating))} pts</span></span>`:''}
+      ${p.role?`<span class="me-chip">${ICONS.shield}${esc(p.role)}</span>`:''}
+    </div>
+    ${bio?`<div class="me-bio">${esc(bio)}</div>`:`<div class="me-bio empty" onclick="setupEdit()">Add a short bio</div>`}
+    <div class="me-stats">${stat(p.stats?.posts||0,'Vents')}${stat(p.stats?.followers||0,'Followers')}${stat(p.stats?.comments||0,'Replies')}</div>
+    ${prog?`<div class="me-prog"><div class="me-prog-top"><span>${esc(prog.text)}</span><span>${prog.pct}%</span></div><div class="me-prog-bar"><div class="me-prog-fill" style="width:${prog.pct}%"></div></div></div>`:''}
+    <button type="button" class="me-edit-btn" onclick="setupEdit()">${PENCIL_SVG}Edit profile</button>
+  </div>`;
+}
+function renderMe(){
+  const hero=document.getElementById('me-hero'),rec=document.getElementById('me-recent');
+  if(!hero||!profileCache)return;
+  hero.innerHTML=meHeroHtml(profileCache);
+  rec.innerHTML=meRecent.length?`<div class="me-label">Recent vents</div><div style="padding:0 16px">${meRecent.map(p=>`<div class="post-card" onclick="openPost(${p.id})" style="margin:0 0 10px"><div class="post-body" style="-webkit-line-clamp:2">${esc(p.content)}</div><div style="font-size:12px;color:var(--text3);margin-top:6px">${esc(p.time_ago)}</div></div>`).join('')}</div>`:'';
+}
+async function loadMe(){
+  if(!UID)return;
+  const hero=document.getElementById('me-hero');
+  if(profileCache)renderMe();else hero.innerHTML=skelProfile();
+  try{
+    const res=await Promise.all([
+      api(`/api/mini-app/profile/${UID}?viewer_id=${UID}`),
+      api(`/api/mini-app/settings/${UID}`).catch(()=>null),
+      api(`/api/mini-app/get-posts?user_id=${UID}&page=1`).catch(()=>({data:[]}))
+    ]);
+    profileCache=res[0].data;
+    meRecent=(res[2].data||[]).filter(x=>x.author&&x.author.is_me).slice(0,3);
+    renderMe();
+    if(res[1])applySettings(res[1].data);
+  }catch(e){
+    if(!profileCache)hero.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">Could not load your profile</div>';
+  }
+}
+function applySettings(d){
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.checked=!!v};
+  set('set-notif',d.notifications);set('set-priv',d.privacy_public);
+  set('set-hide-aura',d.hide_aura);set('set-hide-bio',d.hide_bio);
+  set('set-hide-followers',d.hide_follower_count);set('set-hide-role',d.hide_role);
+  const rr=document.getElementById('row-hide-role');
+  if(rr)rr.style.display=d.is_admin?'flex':'none';
+  botLink=d.bot_link||botLink;
+}
+async function saveSetting(key,input){
+  const val=input.checked;input.disabled=true;
+  try{
+    await api(`/api/mini-app/settings/${UID}`,{method:'POST',body:JSON.stringify({[key]:val})});
+    hap('light');toast('Saved');
+  }catch(e){input.checked=!val;toast(e.message||'Could not save')}
+  finally{input.disabled=false}
+}
+function openTg(url){
+  const tg=window.Telegram&&window.Telegram.WebApp;
+  try{if(tg&&tg.openTelegramLink&&url.indexOf('https://t.me/')===0){tg.openTelegramLink(url);return}}catch(e){}
+  window.open(url,'_blank');
+}
+function inviteFriends(){
+  if(!botLink){toast('Link not available yet');return}
+  hap('light');
+  openTg('https://t.me/share/url?url='+encodeURIComponent(botLink)+'&text='+encodeURIComponent('Come join me on Christian Vent.'));
+}
+function openSupport(){hap('light');openTg('https://t.me/YIDIDIYATAMIRUU')}
+function meBack(){go('settings',document.querySelector('.nav-item[data-page="settings"]'))}
+
+// ---- edit profile ----
 function setupEdit(){
   const p=profileCache;if(!p)return;
   document.getElementById('ep-name').value=p.name||'';
   document.getElementById('ep-bio').value=p.bio||'';
   selEmoji=p.avatar||null;
-  buildEmojiPicker();
+  const k=avKey(selEmoji);
+  edCat=(AV[k]&&AV[k].c)||'faith';
+  buildEmojiPicker();updateEditUI();
   go('edit',null);
 }
 function buildEmojiPicker(){
-  const g=document.getElementById('ep-emoji');if(!g)return;
-  g.innerHTML=EMOJIS.map(e=>`<div class="emoji-opt${selEmoji===e?' sel':''}" onclick="pickEmoji(this,'${e}')">${e}</div>`).join('');
+  const tabs=document.getElementById('av-tabs'),grid=document.getElementById('ep-emoji');
+  if(!tabs||!grid)return;
+  tabs.innerHTML=AV_CATS.map(c=>`<button type="button" class="av-tab${c[0]===edCat?' on':''}" onclick="setAvCat('${c[0]}')">${c[1]}</button>`).join('');
+  const selK=avKey(selEmoji);
+  grid.innerHTML=Object.keys(AV).filter(k=>AV[k].c===edCat).map(k=>`<button type="button" class="av-tile${k===selK?' sel':''}" title="${AV[k].n}" aria-label="${AV[k].n}" onclick="pickAvatar('${k}')">${avSvg(k)}<span class="av-check">${CHECK_SVG}</span></button>`).join('');
 }
-function pickEmoji(el,e){ selEmoji=e; document.querySelectorAll('.emoji-opt').forEach(x=>x.classList.remove('sel')); el.classList.add('sel'); }
+function setAvCat(c){edCat=c;buildEmojiPicker();hap('light')}
+function pickAvatar(k){selEmoji=avEmoji(k);buildEmojiPicker();updateEditUI();hap('light')}
+function clearAvatar(){selEmoji=null;buildEmojiPicker();updateEditUI();hap('light')}
+function updateEditUI(){
+  const name=document.getElementById('ep-name').value,bio=document.getElementById('ep-bio').value;
+  document.getElementById('ep-name-cnt').textContent=name.length+'/30';
+  document.getElementById('ep-bio-cnt').textContent=bio.length+'/150';
+  const p=profileCache||{};
+  document.getElementById('ed-preview').innerHTML=`<div class="ed-prev-ava">${avaHtml(selEmoji||p.sex)}</div><div class="ed-prev-txt"><div class="ed-prev-name">${esc(name.trim()||'Your name')}</div><div class="ed-prev-bio${bio.trim()?'':' empty'}">${esc(bio.trim()||'Your bio shows up here')}</div></div>`;
+  const dirty=name.trim()!==(p.name||'')||bio.trim()!==(p.bio||'')||avKey(selEmoji)!==avKey(p.avatar);
+  document.getElementById('save-profile-btn').disabled=!dirty||!name.trim();
+}
 async function saveProfile(){
   const name=document.getElementById('ep-name').value.trim();
+  const bio=document.getElementById('ep-bio').value.trim();
   if(!name)return toast('Name required');
   const btn=document.getElementById('save-profile-btn');btn.disabled=true;
   try{
-    await api(`/api/mini-app/profile/${UID}`,{method:'PUT',body:JSON.stringify({name,bio:document.getElementById('ep-bio').value.trim(),avatar:selEmoji})});
-    toast('Profile updated');go('profile',document.querySelector('[data-page="settings"]'));
-  }catch(e){toast(e.message)}finally{btn.disabled=false}
-}
-
-async function loadSettings(){
-  try{const d=await api(`/api/mini-app/settings/${UID}`);
-    document.getElementById('set-notif').checked=d.data.notifications;
-    document.getElementById('set-priv').checked=d.data.privacy_public;
-  }catch(e){}
-}
-async function saveSettings(){
-  const btn=document.getElementById('save-settings-btn');btn.disabled=true;
-  try{
-    await api(`/api/mini-app/settings/${UID}`,{method:'POST',body:JSON.stringify({notifications:document.getElementById('set-notif').checked,privacy_public:document.getElementById('set-priv').checked})});
-    toast('Saved');
-  }catch(e){toast(e.message)}finally{btn.disabled=false}
+    await api(`/api/mini-app/profile/${UID}`,{method:'PUT',body:JSON.stringify({name,bio,avatar:selEmoji||''})});
+    if(profileCache)Object.assign(profileCache,{name,bio,avatar:selEmoji||''});
+    hap('medium');toast('Profile updated');meBack();
+  }catch(e){toast(e.message||'Could not save');updateEditUI()}
 }
 
 let isAdminUser = false;
@@ -13946,6 +14403,8 @@ async function showUserProfile(userId){
       contentDiv.innerHTML = `
         <div class="modal-avatar">${avaHtml(u.avatar||u.sex)}</div>
         <div class="modal-name">${esc(u.name)}</div>
+        ${u.role?`<div class="modal-role">${ICONS.shield}${esc(u.role)}</div>`:''}
+        ${u.bio?`<div class="modal-bio">${esc(u.bio)}</div>`:''}
         <div class="modal-stats"><div class="modal-stat"><div class="modal-stat-num">${u.stats?.posts||0}</div><div class="modal-stat-lbl">Vents</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.comments||0}</div><div class="modal-stat-lbl">Replies</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.followers||0}</div><div class="modal-stat-lbl">Followers</div></div></div>
         ${buttonHtml}
       `;
@@ -15831,6 +16290,16 @@ def mini_app_profile(user_id):
             (user_id,)
         )
         
+        # Bio and role follow the same privacy switches the bot's profile card uses.
+        is_target_admin = bool(user.get('is_admin'))
+        bio_display = (user.get('bio') or "").strip()
+        role_display = "Administrator" if is_target_admin else ""
+        if not is_viewer_admin and not is_owner:
+            if user.get('hide_bio'):
+                bio_display = ""
+            if user.get('hide_role'):
+                role_display = ""
+
         return jsonify({
             'success': True,
             'data': {
@@ -15838,12 +16307,12 @@ def mini_app_profile(user_id):
                 'name': user['anonymous_name'],
                 'sex': user['sex'],
                 'avatar': user['avatar_emoji'] or "",
+                'bio': bio_display,
+                'role': role_display,
                 'weekly_badge': user['weekly_badge'] or "",
                 'rating': rating_display,
                 'aura': aura_display,
-                'is_admin': bool(user.get('is_admin')),
-
-
+                'is_admin': is_target_admin,
                 'stats': {
                     'followers': follower_count,
                     'posts': posts['count'] if posts else 0,
@@ -16063,15 +16532,23 @@ def mini_app_search():
 def mini_app_update_profile(user_id):
     """API endpoint for updating user profile"""
     try:
-        data = request.get_json()
-        name = data.get('name', '').strip()
-        bio = data.get('bio', '').strip()
-        avatar = data.get('avatar', '').strip()
-        
+        data = request.get_json(silent=True) or {}
+        # Values can arrive as null (e.g. no avatar chosen), so coerce before strip().
+        name = (data.get('name') or '').strip()
+        bio = (data.get('bio') or '').strip()
+        avatar = (data.get('avatar') or '').strip()
+
         if not name:
             return jsonify({'success': False, 'error': 'Name is required'}), 400
-            
-        db_update_user(user_id, anonymous_name=name, bio=bio, avatar_emoji=avatar)
+        # Same limits the bot enforces: 30 for the name, 150 for the bio; avatar_emoji is VARCHAR(10).
+        if len(name) > 30:
+            return jsonify({'success': False, 'error': 'Name must be 30 characters or fewer'}), 400
+        if len(bio) > 150:
+            return jsonify({'success': False, 'error': 'Bio must be 150 characters or fewer'}), 400
+        if len(avatar) > 10:
+            return jsonify({'success': False, 'error': 'Invalid avatar'}), 400
+
+        db_update_user(user_id, anonymous_name=name, bio=bio, avatar_emoji=avatar or None)
         
         return jsonify({'success': True, 'message': 'Profile updated successfully'})
     except Exception as e:
@@ -16159,15 +16636,28 @@ def mini_app_mark_post_viewed(post_id):
 def mini_app_get_settings(user_id):
     """API endpoint for fetching user settings"""
     try:
-        user = db_fetch_one("SELECT notifications_enabled, privacy_public FROM users WHERE user_id = %s", (user_id,))
+        user = db_fetch_one(
+            "SELECT notifications_enabled, privacy_public, is_admin, "
+            "COALESCE(hide_aura, FALSE) AS hide_aura, COALESCE(hide_bio, FALSE) AS hide_bio, "
+            "COALESCE(hide_follower_count, FALSE) AS hide_follower_count, "
+            "COALESCE(hide_role, FALSE) AS hide_role "
+            "FROM users WHERE user_id = %s",
+            (user_id,)
+        )
         if not user:
             return jsonify({'success': False, 'error': 'User not found'}), 404
-            
+
         return jsonify({
             'success': True,
             'data': {
                 'notifications': user['notifications_enabled'],
-                'privacy_public': user['privacy_public']
+                'privacy_public': user['privacy_public'],
+                'hide_aura': bool(user['hide_aura']),
+                'hide_bio': bool(user['hide_bio']),
+                'hide_follower_count': bool(user['hide_follower_count']),
+                'hide_role': bool(user['hide_role']),
+                'is_admin': bool(user['is_admin']),
+                'bot_link': f"https://t.me/{BOT_USERNAME}" if BOT_USERNAME else ""
             }
         })
     except Exception as e:
@@ -16178,28 +16668,29 @@ def mini_app_get_settings(user_id):
 def mini_app_update_settings(user_id):
     """API endpoint for updating user settings"""
     try:
-        data = request.get_json()
-        notifications = data.get('notifications')
-        privacy_public = data.get('privacy_public')
-        
-        updates = []
-        params = []
-        
-        if notifications is not None:
-            updates.append("notifications_enabled = %s")
-            params.append(notifications)
-            
-        if privacy_public is not None:
-            updates.append("privacy_public = %s")
-            params.append(privacy_public)
-            
-        if not updates:
+        data = request.get_json(silent=True) or {}
+
+        # request key -> users column. Only these boolean switches can be changed from here.
+        setting_columns = {
+            'notifications': 'notifications_enabled',
+            'privacy_public': 'privacy_public',
+            'hide_aura': 'hide_aura',
+            'hide_bio': 'hide_bio',
+            'hide_follower_count': 'hide_follower_count',
+            'hide_role': 'hide_role',
+        }
+        fields = {}
+        for key, column in setting_columns.items():
+            if key in data and data[key] is not None:
+                if not isinstance(data[key], bool):
+                    return jsonify({'success': False, 'error': f'{key} must be true or false'}), 400
+                fields[column] = data[key]
+
+        if not fields:
             return jsonify({'success': False, 'error': 'No settings to update'}), 400
-            
-        params.append(user_id)
-        db_execute(f"UPDATE users SET {', '.join(updates)} WHERE user_id = %s", tuple(params))
-        _invalidate_user_cache(user_id)
-        
+
+        db_update_user(user_id, **fields)
+
         return jsonify({'success': True, 'message': 'Settings updated'})
     except Exception as e:
         logger.error(f"Error updating settings: {e}")
