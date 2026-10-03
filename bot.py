@@ -11770,13 +11770,6 @@ body.light svg.av-svg{color:var(--gold-dark,#8a6d1f)}
 .ed-hint{margin-top:10px;font-size:13px;line-height:1.5;color:var(--text3)}
 .ed-actions{padding:24px 20px 24px;display:flex;flex-direction:column;gap:6px}
 .ed-cancel{background:none;border:none;padding:12px;cursor:pointer;font-family:'Inter',sans-serif;font-size:14px;font-weight:600;color:var(--text3)}
-.av-tabs{display:flex;gap:20px;overflow-x:auto;margin:0 -20px 14px;padding:0 20px;border-bottom:1px solid var(--border);scrollbar-width:none}
-.av-tabs::-webkit-scrollbar{display:none}
-.av-tab{
-  flex:0 0 auto;padding:8px 0 10px;margin-bottom:-1px;background:none;border:none;border-bottom:2px solid transparent;
-  color:var(--text3);font-family:'Inter',sans-serif;font-size:14px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;
-}
-.av-tab.on{color:var(--text);border-bottom-color:var(--gold)}
 .av-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
 .av-tile{
   aspect-ratio:1;padding:0;border-radius:12px;cursor:pointer;background:var(--bg2);border:1px solid var(--border);
@@ -12236,7 +12229,6 @@ body.light .cr-head button svg{stroke:#1a1a1a}
       <div class="ed-preview" id="ed-preview"></div>
       <div class="ed-card">
         <div class="ed-label"><span>Avatar</span><button type="button" class="ed-link" onclick="clearAvatar()">Use default</button></div>
-        <div class="av-tabs" id="av-tabs"></div>
         <div class="av-grid" id="ep-emoji"></div>
       </div>
       <div class="ed-card">
@@ -12404,7 +12396,6 @@ const ICONS = {
 // The mini app renders each one as a hand-drawn duotone SVG, looked up by the emoji's
 // first code point (hex), so old and new variants of the same emoji resolve identically.
 const AV_HUE={gold:'#e8c97a',amber:'#f4a259',rose:'#f28ba8',sky:'#7ec8ff',mint:'#6fe0b0',violet:'#b9a2ff',ivory:'#efe8d8',coral:'#ff8a75'};
-const AV_CATS=[['faith','Faith'],['light','Light'],['creatures','Creatures'],['nature','Nature'],['mood','Mood'],['life','Life'],['care','Tech & care']];
 const AV=(function(){
   const F=' fill="currentColor" fill-opacity=".22"';
   const f=d=>'<path d="'+d+'"'+F+'/>';
@@ -13677,7 +13668,7 @@ const ACCENTS=[
   {id:'emerald',name:'Emerald',rgb:'72,187,138',c1:'#48bb8a',c2:'#7fd6ae',c3:'#c3ecda',dark:'#23825a'},
   {id:'violet',name:'Violet',rgb:'155,126,232',c1:'#9b7ee8',c2:'#bba6f1',c3:'#dfd5f8',dark:'#6a4fc0'}
 ];
-let meRecent=[], botLink='', edCat='faith';
+let meRecent=[], botLink='';
 
 function lsGet(k,d){try{const v=localStorage.getItem(k);return v===null?d:v}catch(e){return d}}
 function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
@@ -13811,19 +13802,15 @@ function setupEdit(){
   document.getElementById('ep-name').value=p.name||'';
   document.getElementById('ep-bio').value=p.bio||'';
   selEmoji=p.avatar||null;
-  const k=avKey(selEmoji);
-  edCat=(AV[k]&&AV[k].c)||'faith';
   buildEmojiPicker();updateEditUI();
   go('edit',null);
 }
 function buildEmojiPicker(){
-  const tabs=document.getElementById('av-tabs'),grid=document.getElementById('ep-emoji');
-  if(!tabs||!grid)return;
-  tabs.innerHTML=AV_CATS.map(c=>`<button type="button" class="av-tab${c[0]===edCat?' on':''}" onclick="setAvCat('${c[0]}')">${c[1]}</button>`).join('');
+  const grid=document.getElementById('ep-emoji');
+  if(!grid)return;
   const selK=avKey(selEmoji);
-  grid.innerHTML=Object.keys(AV).filter(k=>AV[k].c===edCat).map(k=>`<button type="button" class="av-tile${k===selK?' sel':''}" title="${AV[k].n}" aria-label="${AV[k].n}" onclick="pickAvatar('${k}')">${avSvg(k)}<span class="av-check">${CHECK_SVG}</span></button>`).join('');
+  grid.innerHTML=Object.keys(AV).filter(k=>AV[k].c).map(k=>`<button type="button" class="av-tile${k===selK?' sel':''}" onclick="pickAvatar('${k}')">${avSvg(k)}</button>`).join('');
 }
-function setAvCat(c){edCat=c;buildEmojiPicker();hap('light')}
 function pickAvatar(k){selEmoji=avEmoji(k);buildEmojiPicker();updateEditUI();hap('light')}
 function clearAvatar(){selEmoji=null;buildEmojiPicker();updateEditUI();hap('light')}
 function updateEditUI(){
