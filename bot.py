@@ -11803,28 +11803,49 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;
   cursor:pointer;
 }
-/* ----- Voice recording button & UI ----- */
+/* ----- Voice recording (Telegram-style) ----- */
 .voice-record-btn{
-  width:40px;height:40px;border-radius:50%;flex-shrink:0;
-  background:var(--bg2);border:1px solid var(--border);cursor:pointer;
+  width:40px;height:40px;border-radius:50%;flex-shrink:0;cursor:pointer;
+  background:none!important;border:none!important;box-shadow:none!important;
   display:flex;align-items:center;justify-content:center;
-  transition:background 0.15s, transform 0.15s, border-color 0.15s;
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
   -webkit-tap-highlight-color:transparent;
 }
-.voice-record-btn svg{width:17px;height:17px;fill:none;stroke:var(--gold);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.voice-record-btn:active{transform:scale(0.92)}
-.voice-record-btn.recording{background:#e74c3c;border-color:#e74c3c;transform:scale(1.1)}
-.voice-record-btn.recording svg{stroke:#fff}
-.voice-record-timer{
-  position:fixed;bottom:calc(var(--nav-h) + 100px);left:50%;transform:translateX(-50%);
-  background:rgba(0,0,0,0.8);color:#fff;padding:8px 20px;border-radius:40px;
-  font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;
-  display:none;z-index:999;backdrop-filter:blur(8px);
-}
-.voice-record-timer .cancel-hint{
-  font-size:12px;font-weight:400;opacity:0.7;margin-left:12px;
-}
-.voice-record-timer.active{display:flex;align-items:center;gap:12px}
+.voice-record-btn svg,.comment-input-bar .voice-record-btn svg{width:24px;height:24px;fill:none;stroke:var(--text3);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.vr-bar{position:absolute;left:0;right:0;top:0;bottom:0;z-index:5;display:flex;align-items:center;gap:10px;
+  background:var(--bg);color:var(--text);border-radius:21px;animation:vrIn .18s ease-out;user-select:none;-webkit-user-select:none}
+.vr-dot{width:12px;height:12px;border-radius:50%;background:#f44336;flex-shrink:0;animation:vrBlink 1s ease-in-out infinite}
+.vr-time{font-size:17px;font-variant-numeric:tabular-nums;min-width:58px}
+.vr-slide{flex:1;display:flex;align-items:center;justify-content:center;gap:4px;color:var(--text3);font-size:15px;white-space:nowrap;padding-right:56px}
+.vr-slide svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;animation:vrNudge 1.2s ease-in-out infinite}
+.vr-textbtn{background:none;border:none;color:var(--tg-theme-link-color,#3390ec);font-size:16px;font-weight:500;padding:8px;cursor:pointer;margin-left:auto;margin-right:56px;font-family:inherit}
+.vr-iconbtn{width:36px;height:36px;border-radius:50%;border:none;background:none;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0}
+.vr-iconbtn svg{width:22px;height:22px;fill:none;stroke:var(--text3);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.vr-iconbtn.play{background:var(--tg-theme-button-color,#3390ec)}
+.vr-iconbtn.play svg{stroke:#fff;fill:#fff;width:16px;height:16px}
+.vr-track{flex:1;height:4px;border-radius:2px;background:var(--border);overflow:hidden;margin-right:56px}
+.vr-track i{display:block;height:100%;width:0;background:var(--tg-theme-button-color,#3390ec)}
+.vr-bin{margin:0 auto;animation:vrBin .38s ease-in forwards}
+.vr-bin svg{width:26px;height:26px;fill:none;stroke:#f44336;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.vr-halo,.vr-orb,.vr-lock{position:fixed;border-radius:50%;pointer-events:none}
+.vr-halo{width:64px;height:64px;margin:-32px 0 0 -32px;background:var(--tg-theme-button-color,#3390ec);opacity:.25;z-index:1000;transform:scale(1);transition:transform .09s linear}
+.vr-orb{width:64px;height:64px;margin:-32px 0 0 -32px;background:var(--tg-theme-button-color,#3390ec);z-index:1002;
+  display:flex;align-items:center;justify-content:center;box-shadow:0 2px 10px rgba(0,0,0,.3);
+  transition:width .2s,height .2s,margin .2s,transform .12s;animation:vrPop .16s ease-out}
+.vr-orb svg{width:28px;height:28px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.vr-orb.sm{width:44px;height:44px;margin:-22px 0 0 -22px;pointer-events:auto;cursor:pointer}
+.vr-orb.sm svg{width:20px;height:20px}
+.vr-lock{width:44px;height:96px;margin:-48px 0 0 -22px;border-radius:22px;background:var(--bg2);border:0.5px solid var(--border);
+  box-shadow:0 2px 12px rgba(0,0,0,.35);z-index:1001;display:flex;flex-direction:column;align-items:center;justify-content:space-around;animation:vrPop .2s ease-out}
+.vr-lock svg{width:18px;height:18px;fill:none;stroke:var(--text2);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.vr-lock.stop{height:44px;margin:-22px 0 0 -22px;border-radius:50%;pointer-events:auto;cursor:pointer;justify-content:center}
+.vr-lock.stop svg{fill:#f44336;stroke:#f44336;width:16px;height:16px}
+.vr-tip{position:fixed;z-index:1003;transform:translate(-50%,-100%);background:rgba(30,30,30,.92);color:#fff;font-size:13px;padding:8px 12px;border-radius:12px;white-space:nowrap;animation:vrIn .2s ease-out;pointer-events:none}
+@keyframes vrIn{from{opacity:0}to{opacity:1}}
+@keyframes vrPop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes vrBlink{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes vrNudge{0%,100%{transform:translateX(0)}50%{transform:translateX(-5px)}}
+@keyframes vrBin{0%{transform:translateY(-14px) scale(.6);opacity:0}30%{transform:translateY(0) scale(1.1);opacity:1}60%{transform:rotate(-10deg)}80%{transform:rotate(8deg)}100%{transform:scale(.8);opacity:0}}
 
 /* ----- Direct reaction buttons ----- */
 .reaction-buttons{
@@ -12108,7 +12129,6 @@ body.light .cr-head button svg{stroke:#1a1a1a}
   <div class="lightbox-close" onclick="closeLightbox(event)">&times;</div>
   <img id="lightbox-img" src="" alt="">
 </div>
-<div id="voice-timer" class="voice-record-timer"><span id="voice-time">0:00</span><span class="cancel-hint">⬆️ swipe up to cancel</span></div>
 
 <script>
 'use strict';
@@ -12260,123 +12280,248 @@ function renderCompactAudioPlayer(src){
   </div>`;
 }
 
-// ========== VOICE RECORDING (Telegram-style hold-to-record) ==========
-let mediaRecorder = null;
+// ========== VOICE RECORDING (Telegram-style: hold, slide left to cancel, slide up to lock) ==========
+let mediaRecorder = null;      // kept for backward compatibility
 let recordedChunks = [];
-let recordingTimer = null;
-let recordingStartTime = 0;
 let currentVoiceTarget = null; // 'vent' | 'comment' | 'chat'
 let voiceCancel = false;
+const VR_LOCK_DY = 70, VR_CANCEL_DX = 110, VR_MIN_MS = 1000, VR_MAX_MS = 10 * 60 * 1000;
+const VR_IC = {
+  mic: '<svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
+  send: '<svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>',
+  lock: '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+  up: '<svg viewBox="0 0 24 24"><polyline points="6 15 12 9 18 15"/></svg>',
+  stop: '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
+  left: '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>',
+  play: '<svg viewBox="0 0 24 24"><polygon points="7 4 20 12 7 20 7 4"/></svg>',
+  pause: '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>'
+};
+let vr = null; // active recording session
 
+function vrFmt(ms) {
+  const t = Math.max(0, Math.floor(ms / 100)), s = Math.floor(t / 10);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') + ',' + (t % 10);
+}
+function vrHaptic(kind) {
+  try {
+    const h = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback;
+    if (!h) return;
+    if (kind === 'warn') h.notificationOccurred('warning'); else h.impactOccurred(kind || 'light');
+  } catch (e) {}
+}
+function vrSwipes(on) { // stop Telegram's swipe-down-to-close while the finger slides up to lock
+  try {
+    const w = window.Telegram && window.Telegram.WebApp;
+    if (w && w.isVersionAtLeast && w.isVersionAtLeast('7.7')) { on ? w.enableVerticalSwipes() : w.disableVerticalSwipes(); }
+  } catch (e) {}
+}
 function getPreferredVoiceMimeType() {
   const candidates = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'];
   for (const type of candidates) {
-    if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(type)) {
-      return type;
-    }
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(type)) return type;
   }
   return '';
 }
+function vrTip(btn, text) {
+  const r = btn.getBoundingClientRect();
+  const tip = document.createElement('div');
+  tip.className = 'vr-tip'; tip.textContent = text;
+  tip.style.left = Math.min(Math.max(r.left + r.width / 2, 90), window.innerWidth - 90) + 'px';
+  tip.style.top = (r.top - 8) + 'px';
+  document.body.appendChild(tip);
+  setTimeout(() => tip.remove(), 2200);
+}
+
 function setupVoiceButton(btnId, target) {
   const btn = document.getElementById(btnId);
   if (!btn) return;
-  let pressTimer = null;
-  let isPressed = false;
-  let startY = 0;
-
-  const startRecording = (e) => {
+  btn.addEventListener('contextmenu', e => e.preventDefault());
+  btn.addEventListener('pointerdown', e => {
+    if (vr) return;
     e.preventDefault();
-    if (mediaRecorder && mediaRecorder.state === 'recording') return;
-    voiceCancel = false;
-    currentVoiceTarget = target;
-    isPressed = true;
-    startY = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
-    // Start recording after a short hold (like Telegram)
-    pressTimer = setTimeout(() => {
-      if (isPressed) {
-        btn.classList.add('recording');
-        document.getElementById('voice-timer').classList.add('active');
-        navigator.mediaDevices.getUserMedia({ audio: true })
-  .then(stream => {
-    recordedChunks = [];
-    const preferredType = getPreferredVoiceMimeType();
-    mediaRecorder = preferredType
-      ? new MediaRecorder(stream, { mimeType: preferredType })
-      : new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
-    mediaRecorder.onstop = () => {
-      stream.getTracks().forEach(t => t.stop());
-      btn.classList.remove('recording');
-      document.getElementById('voice-timer').classList.remove('active');
-      clearInterval(recordingTimer);
-      const elapsed = Date.now() - recordingStartTime;
-      if (!voiceCancel && elapsed >= 400 && recordedChunks.length) {
-        const mimeType = mediaRecorder.mimeType || 'audio/webm';
-        const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
-        const rawBlob = new Blob(recordedChunks, { type: mimeType });
-        const finalizeVoice = (blob) => {
-          const file = new File([blob], `voice.${ext}`, { type: mimeType });
-          handleVoiceFile(file, target);
-        };
-        if (mimeType.includes('webm') && window.ysFixWebmDuration) {
-          ysFixWebmDuration(rawBlob, elapsed, { logger: false })
-            .then(finalizeVoice)
-            .catch(() => finalizeVoice(rawBlob));
-        } else {
-          finalizeVoice(rawBlob);
-        }
-      } else if (!voiceCancel && elapsed < 400) {
-        toast('Recording too short');
-      }
-      recordedChunks = [];
-    };
-    mediaRecorder.start();
-    recordingStartTime = Date.now();
-    recordingTimer = setInterval(updateVoiceTimer, 200);
-  })
-  .catch(err => { toast('Microphone access denied'); });
-      }
-    }, 300);
-  };
-
-  const stopRecording = (e) => {
-    e.preventDefault();
-    clearTimeout(pressTimer);
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-      // Check if swipe up to cancel (distance > 80px)
-      const endY = e.type === 'touchend' ? e.changedTouches[0].clientY : e.clientY;
-      if (startY - endY > 80) {
-        voiceCancel = true;
-        toast('Cancelled');
-      }
-      mediaRecorder.stop();
-    }
-    isPressed = false;
-  };
-
-  const cancelRecording = (e) => {
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-      voiceCancel = true;
-      mediaRecorder.stop();
-    }
-    clearTimeout(pressTimer);
-    isPressed = false;
-  };
-
-  btn.addEventListener('mousedown', startRecording);
-  btn.addEventListener('mouseup', stopRecording);
-  btn.addEventListener('mouseleave', cancelRecording);
-  btn.addEventListener('touchstart', startRecording, { passive: false });
-  btn.addEventListener('touchend', stopRecording, { passive: false });
-  btn.addEventListener('touchcancel', cancelRecording, { passive: false });
+    try { btn.setPointerCapture(e.pointerId); } catch (_) {}
+    vrStart(btn, target, e.clientX, e.clientY);
+  });
+  btn.addEventListener('pointermove', e => { if (vr && vr.btn === btn && vr.state === 'rec') vrMove(e.clientX, e.clientY); });
+  btn.addEventListener('pointerup', () => { if (vr && vr.btn === btn && vr.state === 'rec') vrFinish('send'); });
+  btn.addEventListener('pointercancel', () => { if (vr && vr.btn === btn && vr.state === 'rec') vrFinish('cancel'); });
 }
 
-function updateVoiceTimer() {
-  const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
-  const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
-  const secs = String(elapsed % 60).padStart(2, '0');
-  document.getElementById('voice-time').textContent = `${mins}:${secs}`;
+function vrStart(btn, target, x, y) {
+  const row = btn.parentElement;
+  const br = btn.getBoundingClientRect(), rr = row.getBoundingClientRect();
+  const cx = br.left + br.width / 2, cy = br.top + br.height / 2;
+  const cs = getComputedStyle(row);
+  const prevPos = row.style.position;
+  if (cs.position === 'static') row.style.position = 'relative';
+
+  const bar = document.createElement('div');
+  bar.className = 'vr-bar';
+  bar.style.paddingLeft = (parseFloat(cs.paddingLeft) || 0) + 6 + 'px';
+  bar.innerHTML = '<span class="vr-dot"></span><span class="vr-time">0:00,0</span>' +
+    '<div class="vr-slide">' + VR_IC.left + '<span>Slide to cancel</span></div>';
+  row.appendChild(bar);
+
+  const mk = (cls, html) => { const d = document.createElement('div'); d.className = cls; if (html) d.innerHTML = html; d.style.left = cx + 'px'; d.style.top = cy + 'px'; document.body.appendChild(d); return d; };
+  const halo = mk('vr-halo'), orb = mk('vr-orb', VR_IC.mic);
+  const lock = mk('vr-lock', VR_IC.lock + VR_IC.up);
+  lock.style.top = (cy - 110) + 'px';
+
+  vr = { btn, row, prevPos, bar, halo, orb, lock, cx, cy, target, x0: x, y0: y, state: 'rec',
+         t0: Date.now(), dur: 0, chunks: [], rec: null, stream: null, analyser: null, ctx: null,
+         action: null, aborted: false, dead: false, raf: 0, audio: null, url: null };
+  voiceCancel = false; currentVoiceTarget = target;
+  vrHaptic('medium'); vrSwipes(false);
+  const v = vr;
+
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    if (v.aborted || v.dead) { stream.getTracks().forEach(t => t.stop()); return; } // released before the mic was ready
+    v.stream = stream;
+    const type = getPreferredVoiceMimeType();
+    v.rec = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream);
+    mediaRecorder = v.rec;
+    v.rec.ondataavailable = e => { if (e.data.size > 0) v.chunks.push(e.data); };
+    v.rec.onstop = () => vrStopped(v);
+    try {
+      v.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      v.analyser = v.ctx.createAnalyser(); v.analyser.fftSize = 256;
+      v.ctx.createMediaStreamSource(stream).connect(v.analyser);
+    } catch (e) { v.analyser = null; }
+    v.rec.start();
+    v.t0 = Date.now();
+  }).catch(() => { toast('Microphone access denied'); v.aborted = true; vrEnd(v, 'cancel', true); });
+
+  const buf = new Uint8Array(128);
+  const loop = () => {
+    if (v.dead) return;
+    if (v.state === 'rec' || v.state === 'locked') {
+      const el = Date.now() - v.t0;
+      bar.querySelector('.vr-time').textContent = vrFmt(el);
+      if (v.analyser) {
+        v.analyser.getByteTimeDomainData(buf);
+        let sum = 0; for (let i = 0; i < buf.length; i++) { const d = (buf[i] - 128) / 128; sum += d * d; }
+        halo.style.transform = 'scale(' + (1 + Math.min(Math.sqrt(sum / buf.length) * 6, 1) * 0.9).toFixed(2) + ')';
+      }
+      if (el > VR_MAX_MS) { vrFinish('send'); return; }
+    }
+    v.raf = requestAnimationFrame(loop);
+  };
+  v.raf = requestAnimationFrame(loop);
 }
+
+function vrMove(x, y) {
+  const v = vr, dx = Math.min(0, x - v.x0), dy = Math.max(0, v.y0 - y);
+  const slide = v.bar.querySelector('.vr-slide');
+  slide.style.transform = 'translateX(' + dx + 'px)';
+  slide.style.opacity = String(Math.max(0, 1 - Math.abs(dx) / VR_CANCEL_DX));
+  v.orb.style.transform = 'translateY(' + (-Math.min(dy, 100)) + 'px)';
+  if (-dx > VR_CANCEL_DX) { vrHaptic('warn'); vrFinish('cancel'); }
+  else if (dy > VR_LOCK_DY) vrLock();
+}
+
+function vrLock() { // finger slid up: keep recording hands-free
+  const v = vr; if (!v || v.state !== 'rec') return;
+  v.state = 'locked'; vrHaptic('medium');
+  v.orb.style.transform = ''; v.orb.classList.add('sm'); v.orb.innerHTML = VR_IC.send;
+  v.orb.onclick = () => vrFinish('send');
+  v.lock.className = 'vr-lock stop'; v.lock.innerHTML = VR_IC.stop;
+  v.lock.style.top = (v.cy - 64) + 'px';
+  v.lock.onclick = () => vrFinish('preview');
+  v.halo.style.display = 'none';
+  const slide = v.bar.querySelector('.vr-slide');
+  slide.outerHTML = '<button type="button" class="vr-textbtn">Cancel</button>';
+  v.bar.querySelector('.vr-textbtn').onclick = () => vrFinish('cancel');
+  vrSwipes(true);
+}
+
+function vrFinish(action) {
+  const v = vr; if (!v || v.action) return;
+  v.dur = Date.now() - v.t0;
+  if (action === 'send' && v.dur < VR_MIN_MS) action = 'short'; // like Telegram: under 1s is discarded
+  v.action = action;
+  if (!v.rec || v.rec.state === 'inactive') { v.aborted = true; vrEnd(v, action, true); return; }
+  v.rec.stop();
+}
+
+function vrStopped(v) {
+  if (v.stream) v.stream.getTracks().forEach(t => t.stop());
+  try { v.ctx && v.ctx.close(); } catch (e) {}
+  if (v.action === 'cancel' || v.action === 'short') { vrEnd(v, v.action, true); return; }
+  const mime = (v.rec && v.rec.mimeType) || 'audio/webm';
+  const raw = new Blob(v.chunks, { type: mime });
+  const done = blob => v.action === 'preview' ? vrPreview(v, blob, mime) : vrSend(v, blob, mime);
+  if (mime.includes('webm') && window.ysFixWebmDuration) {
+    ysFixWebmDuration(raw, v.dur, { logger: false }).then(done).catch(() => done(raw));
+  } else done(raw);
+}
+
+function vrEnd(v, kind, animate) {
+  v.dead = true; cancelAnimationFrame(v.raf); vrSwipes(true);
+  const cleanup = () => {
+    [v.bar, v.halo, v.orb, v.lock].forEach(el => el && el.remove());
+    v.row.style.position = v.prevPos;
+    if (v.audio) { v.audio.pause(); }
+    if (v.url) URL.revokeObjectURL(v.url);
+    if (vr === v) vr = null;
+  };
+  if (kind === 'cancel' && animate) { // trash animation like Telegram
+    v.halo.remove(); v.orb.remove(); v.lock.remove();
+    v.bar.innerHTML = '<span class="vr-bin">' + VR_IC.trash + '</span>';
+    setTimeout(cleanup, 380);
+  } else {
+    cleanup();
+    if (kind === 'short') vrTip(v.btn, 'Hold to record audio.');
+  }
+}
+
+function vrPreview(v, blob, mime) { // after tapping stop in locked mode: listen, delete or send
+  v.state = 'preview'; v.blob = blob; v.mime = mime;
+  v.url = URL.createObjectURL(blob);
+  v.audio = new Audio(v.url);
+  v.lock.remove(); v.halo.remove();
+  v.bar.innerHTML = '<button type="button" class="vr-iconbtn vr-del">' + VR_IC.trash + '</button>' +
+    '<button type="button" class="vr-iconbtn play">' + VR_IC.play + '</button>' +
+    '<div class="vr-track"><i></i></div>';
+  const timeEl = document.createElement('span');
+  timeEl.className = 'vr-time'; timeEl.style.cssText = 'position:absolute;right:56px;font-size:14px;min-width:0';
+  timeEl.textContent = vrFmt(v.dur); v.bar.appendChild(timeEl);
+  const play = v.bar.querySelector('.play'), prog = v.bar.querySelector('.vr-track i');
+  const total = () => (isFinite(v.audio.duration) && v.audio.duration > 0 ? v.audio.duration * 1000 : v.dur);
+  v.audio.ontimeupdate = () => { prog.style.width = Math.min(100, v.audio.currentTime * 1000 / total() * 100) + '%'; timeEl.textContent = vrFmt(v.audio.currentTime * 1000); };
+  v.audio.onended = () => { play.innerHTML = VR_IC.play; prog.style.width = '0'; timeEl.textContent = vrFmt(v.dur); };
+  play.onclick = () => { if (v.audio.paused) { v.audio.play(); play.innerHTML = VR_IC.pause; } else { v.audio.pause(); play.innerHTML = VR_IC.play; } };
+  v.bar.querySelector('.vr-del').onclick = () => { v.action = 'cancel'; vrEnd(v, 'cancel', true); };
+  v.orb.onclick = () => { v.audio.pause(); vrSend(v, blob, mime); };
+}
+
+async function vrSend(v, blob, mime) {
+  const target = v.target;
+  const ext = mime.includes('ogg') ? 'ogg' : 'webm';
+  vrEnd(v, 'send', false);
+  vrHaptic('light');
+  const ok = await handleVoiceFile(new File([blob], 'voice.' + ext, { type: mime }), target);
+  // Telegram sends on release. Vents need categories, so they stay attached for "Post Anonymously".
+  if (ok && target === 'chat') crSend();
+  else if (ok && target === 'comment') postComment();
+}
+
+// Telegram behaviour: mic shows when the input is empty, send arrow shows once there is text/media
+function vrSyncComposer() {
+  if (vr) return;
+  const cfg = [
+    ['comment-voice-btn', document.getElementById('send-comment'), 'comment-txt', () => pendingCommentMedia],
+    ['chat-voice-btn', document.querySelector('.cr-send'), 'cr-txt', () => pendingChatMedia]
+  ];
+  cfg.forEach(([micId, sendBtn, txtId, media]) => {
+    const mic = document.getElementById(micId), txt = document.getElementById(txtId);
+    if (!mic || !sendBtn || !txt) return;
+    const has = !!(txt.value.trim() || media());
+    mic.style.display = has ? 'none' : 'flex';
+    sendBtn.style.display = has ? 'flex' : 'none';
+  });
+}
+setInterval(vrSyncComposer, 200);
 
 async function handleVoiceFile(file, target) {
   try {
@@ -12412,7 +12557,8 @@ async function handleVoiceFile(file, target) {
       });
       document.getElementById('chat-attach-btn').classList.add('has-media');
     }
-  } catch (e) { toast(e.message); }
+    return true;
+  } catch (e) { toast(e.message); return false; }
 }
 
 // ========== REACTIONS FOR POSTS (direct buttons) ==========
