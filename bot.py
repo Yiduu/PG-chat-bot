@@ -12584,6 +12584,13 @@ let vrPendings = [], vrPendSeq = 0;
 function vrOff(p) { return (94.2 * (1 - Math.max(p, 0.08))).toFixed(1); }
 function vrPendHtml(e) {
   const failed = e.status === 'failed';
+  if (e.text !== undefined) { // optimistic text message
+    const q = e.replyId ? crQuoteHtml(crInfo(e.replyId)) : '';
+    const inf = failed
+      ? '<span style="color:#f44336">Failed to send · <a onclick="vrRetry(' + e.id + ')" style="text-decoration:underline;cursor:pointer">Retry</a> · <a onclick="vrAbort(' + e.id + ')" style="text-decoration:underline;cursor:pointer">Delete</a></span>'
+      : 'Sending…';
+    return '<div class="vr-pw"><div class="msg-row me"><div class="msg-bubble">' + q + esc(e.text) + '</div><div class="msg-time">' + inf + '</div></div></div>';
+  }
   const btn = failed
     ? '<button type="button" class="vr-pbtn" onclick="vrRetry(' + e.id + ')">' + VR_IC.retry + '</button>'
     : '<button type="button" class="vr-pbtn" onclick="vrAbort(' + e.id + ')"><svg class="vr-ring' + (e.progress > 0 ? '' : ' spin') + '" viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15"/><circle class="fg" cx="18" cy="18" r="15" style="stroke-dashoffset:' + vrOff(e.progress) + '"/></svg>' + VR_IC.x + '</button>';
@@ -12643,8 +12650,9 @@ async function vrRun(e) {
     }, x => { e.xhr = x; });
     if (e.cancelled) return;
     if (e.kind === 'chat') {
-      await api('/api/mini-app/chats/send', { method: 'POST', body: JSON.stringify({ sender_id: UID, receiver_id: e.ref, content: '', media_type: media.media_type, media_id: media.media_id, reply_to_id: e.replyId || 0 }) });
-      await fetchCRMsgs(true);
+      const res = await api('/api/mini-app/chats/send', { method: 'POST', body: JSON.stringify({ sender_id: UID, receiver_id: e.ref, content: '', media_type: media.media_type, media_id: media.media_id, reply_to_id: e.replyId || 0 }) });
+      crAddLocal(res.data, { content: '', media_type: media.media_type, media_id: media.media_id, reply_to: e.replyId ? crInfo(e.replyId) : null }, e);
+      return;
     } else {
       await api('/api/mini-app/post/' + e.ref + '/comment', { method: 'POST', body: JSON.stringify({ user_id: UID, content: '', parent_comment_id: e.parentId, media_type: media.media_type, media_id: media.media_id }) });
       await fetchAndRenderComments(e.ref, e.authorId);
@@ -12662,7 +12670,7 @@ function vrAbort(id) {
   e.cancelled = true; try { e.xhr && e.xhr.abort(); } catch (_) {}
   vrPendings = vrPendings.filter(x => x !== e); vrPendRender(e.kind);
 }
-function vrRetry(id) { const e = vrPendings.find(x => x.id === id); if (e) vrRun(e); }
+function vrRetry(id) { const e = vrPendings.find(x => x.id === id); if (e) { if (e.text !== undefined) crRunText(e); else vrRun(e); } }
 
 async function vrSend(v, blob, mime) {
   const target = v.target, dur = v.dur;
@@ -13698,6 +13706,7 @@ async function fetchCRMsgs(scroll=false){
     if(!crOlderMsgs.length) crHasMore=!!d.has_more;
     const seen=new Set(latest.map(m=>m.id));
     crMsgsCache=crOlderMsgs.filter(m=>!seen.has(m.id)).concat(latest);
+    crMsgsCache=crMergeLocal(crMsgsCache,latest);
     crRenderMsgs(scroll,false);
   }catch(e){}
 }
@@ -13828,27 +13837,57 @@ setInterval(()=>{ if(crReplyTo && crReplyTo.partner!==crPartnerId) crCancelReply
   box.addEventListener('pointercancel',reset);
 })();
 
+// Messages we just sent are added straight from the server reply (no full chat re-download).
+// They are merged back in on every poll until the server list contains them, so they never flicker away.
+let crLocalSent = [];
+function crAddLocal(d, extra, pend) {
+  const m = Object.assign({ id: d.id, sender_id: d.sender_id, receiver_id: d.receiver_id, content: d.content, media_type: 'text', media_id: null,
+    timestamp: d.timestamp, is_read: false, is_mine: true, is_edited: false, is_deleted: false, reply_to: null }, extra || {});
+  m.partner = String(d.receiver_id); m._t = Date.now();
+  crLocalSent.push(m);
+  if (pend) vrPendings = vrPendings.filter(x => x !== pend);
+  if (String(crPartnerId) === m.partner && !crMsgsCache.some(x => x.id === m.id)) { crMsgsCache.push(m); crRenderMsgs(true, false); }
+}
+function crMergeLocal(cache, latest) {
+  const have = new Set(latest.map(m => m.id)), now = Date.now();
+  crLocalSent = crLocalSent.filter(m => !have.has(m.id) && now - m._t < 60000);
+  const extra = crLocalSent.filter(m => m.partner === String(crPartnerId) && !cache.some(x => x.id === m.id));
+  return extra.length ? cache.concat(extra) : cache;
+}
+async function crRunText(e) {
+  e.status = 'sending'; vrPendRender('chat');
+  try {
+    const payload = { sender_id: UID, receiver_id: e.ref, content: e.text };
+    if (e.replyId) payload.reply_to_id = e.replyId;
+    const res = await api('/api/mini-app/chats/send', { method: 'POST', body: JSON.stringify(payload) });
+    crAddLocal(res.data, { reply_to: e.replyId ? crInfo(e.replyId) : null }, e);
+  } catch (err) { e.status = 'failed'; vrPendRender('chat'); toast(err.message); }
+}
 async function crSend(){
-  const txt=document.getElementById('cr-txt').value.trim();
+  const ta=document.getElementById('cr-txt');
+  const txt=ta.value.trim();
   if((!txt&&!pendingChatMedia)||!crPartnerId)return;
-  
-  const payload = {sender_id:UID, receiver_id:crPartnerId, content:txt};
-  if(crReplyTo){payload.reply_to_id=crReplyTo.id;crCancelReply();}
-  if(pendingChatMedia) {
-    payload.media_type = pendingChatMedia.media_type;
-    payload.media_id = pendingChatMedia.media_id;
+  const replyId=crReplyTo?crReplyTo.id:0;
+  if(crReplyTo)crCancelReply();
+  ta.value='';
+  if(!pendingChatMedia){
+    // Text: the bubble appears instantly, the request runs in the background
+    const e={id:++vrPendSeq,kind:'chat',text:txt,replyId,ref:crPartnerId,status:'sending'};
+    vrPendings.push(e);
+    vrPendRender('chat');
+    crRunText(e);
+    return;
   }
-  
-  document.getElementById('cr-txt').value='';
+  const media=pendingChatMedia;
+  const payload={sender_id:UID,receiver_id:crPartnerId,content:txt,media_type:media.media_type,media_id:media.media_id};
+  if(replyId)payload.reply_to_id=replyId;
   try{
-    await api('/api/mini-app/chats/send',{method:'POST',body:JSON.stringify(payload)});
-    if(pendingChatMedia) {
-      pendingChatMedia = null;
-      document.getElementById('chat-file-input').value = '';
-      document.getElementById('chat-attach-btn').classList.remove('has-media');
-      renderMediaPreview(document.getElementById('chat-media-preview'), null);
-    }
-    fetchCRMsgs(true);
+    const res=await api('/api/mini-app/chats/send',{method:'POST',body:JSON.stringify(payload)});
+    pendingChatMedia=null;
+    document.getElementById('chat-file-input').value='';
+    document.getElementById('chat-attach-btn').classList.remove('has-media');
+    renderMediaPreview(document.getElementById('chat-media-preview'),null);
+    crAddLocal(res.data,{content:txt,media_type:media.media_type,media_id:media.media_id,reply_to:replyId?crInfo(replyId):null});
   }catch(e){toast(e.message)}
 }
 
@@ -15528,7 +15567,9 @@ def mini_app_send_message():
         """, (sender_id, receiver_id, content, media_type, media_id, reply_to_id), fetchone=True)
 
         # Deliver a real notification — including the actual media file if present
-        notify_user_of_private_message_sync(
+        # Notification setup (block check, user lookups, Telegram call) no longer delays the response.
+        _fire_and_forget(
+            notify_user_of_private_message_sync,
             sender_id=sender_id,
             receiver_id=receiver_id,
             message_content=content,
