@@ -347,6 +347,11 @@ def init_db():
                     logger.info("Adding notif_message_id column to private_messages table")
                     c.execute("ALTER TABLE private_messages ADD COLUMN notif_message_id INTEGER")
 
+                # reply_to_id: the private message this one quotes (Telegram-style reply, no nesting).
+                if ('private_messages', 'reply_to_id') not in existing_columns:
+                    logger.info("Adding reply_to_id column to private_messages table")
+                    c.execute("ALTER TABLE private_messages ADD COLUMN reply_to_id INTEGER")
+
                 # Editing/deleting private messages now uses Telegram's native
                 # edit/delete on the real notification message, so a soft-deleted
                 # message no longer needs (or gets) a "Message deleted" placeholder —
@@ -11864,6 +11869,32 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .vr-pend.cm .vr-ptrack{background:var(--border)}
 .vr-pend.cm .vr-ptime{color:var(--text3)}
 @keyframes vrSpin{to{transform:rotate(270deg)}}
+.reply-quote{margin:4px 0 6px;padding:4px 8px 4px 10px;border-left:3px solid var(--gold);background:rgba(201,168,76,.10);border-radius:0 8px 8px 0;cursor:pointer;max-width:100%;-webkit-tap-highlight-color:transparent}
+.reply-quote:active{background:rgba(201,168,76,.22)}
+.reply-quote.gone{cursor:default;opacity:.7}
+.reply-quote.gone .rq-text{font-style:italic}
+.rq-name{font-size:12.5px;font-weight:600;color:var(--gold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rq-text{font-size:13px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.comment-body{min-width:0}
+.cm-flash{animation:cmFlash 1.5s ease-out}
+@keyframes cmFlash{0%,35%{background:rgba(201,168,76,.28)}100%{background:transparent}}
+.cr-msgs{overflow-x:hidden}
+.msg-row{touch-action:pan-y;position:relative}
+.msg-quote{margin:0 0 6px;padding:4px 8px 4px 9px;border-left:3px solid var(--gold);background:rgba(201,168,76,.12);border-radius:0 8px 8px 0;cursor:pointer;min-width:120px;max-width:100%}
+.msg-row.me .msg-quote{border-left-color:#0c0b09;background:rgba(12,11,9,.13)}
+.msg-row.me .msg-quote .rq-name{color:#0c0b09}
+.msg-row.me .msg-quote .rq-text{color:rgba(12,11,9,.72)}
+.msg-bubble.msg-flash{animation:msgFlash 1.3s ease-out}
+@keyframes msgFlash{0%,40%{filter:brightness(1.4)}100%{filter:none}}
+.msg-swipe-ico{position:absolute;left:-40px;top:50%;margin-top:-15px;width:30px;height:30px;border-radius:50%;background:var(--bg3);color:var(--text2);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none}
+.msg-swipe-ico svg{width:16px;height:16px}
+.cr-input .rb-x{width:32px;height:32px;background:none;border:none;padding:0;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
+.cr-input .rb-x svg{width:18px;height:18px;stroke:var(--text3);fill:none;stroke-width:2}
+.reply-bar{display:flex;align-items:center;gap:10px;padding:0 2px 8px;animation:vrIn .15s ease-out}
+.reply-bar .rb-line{width:3px;align-self:stretch;background:var(--gold);border-radius:2px}
+.reply-bar .rb-body{flex:1;min-width:0;cursor:pointer}
+.comment-input-bar .rb-x{width:32px;height:32px;background:none;box-shadow:none;border:none}
+.comment-input-bar .rb-x svg{width:18px;height:18px;stroke:var(--text3);fill:none;stroke-width:2}
 
 /* ----- Direct reaction buttons ----- */
 .reaction-buttons{
@@ -12116,6 +12147,7 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 
 <!-- FIXED COMMENT INPUT BAR (outside #pages) -->
 <div class="comment-input-bar" id="commentBar" style="flex-direction:column;align-items:stretch">
+  <div id="reply-bar" class="reply-bar" style="display:none"></div>
   <div id="comment-media-preview" style="display:none"></div>
   <div style="display:flex;align-items:flex-end;gap:8px">
     <button type="button" class="media-attach-btn" id="comment-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
@@ -12130,6 +12162,7 @@ body.light .cr-head button svg{stroke:#1a1a1a}
   <div class="cr-head"><button onclick="closeCR()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button><div class="ava" id="cr-ava" style="width:36px;height:36px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="icon"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div><div class="cr-name" id="cr-name">Chat</div></div></div>
   <div class="cr-msgs" id="cr-msgs"></div>
   <div class="cr-input" style="padding-top:12px;flex-direction:column;gap:6px">
+    <div id="cr-reply-bar" class="reply-bar" style="display:none"></div>
     <div id="chat-media-preview" style="display:none"></div>
     <div style="display:flex;align-items:center;gap:8px">
       <button type="button" class="media-attach-btn" id="chat-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
@@ -12560,11 +12593,11 @@ function vrPendHtml(e) {
   const core = '<div class="vr-pend' + (e.kind === 'comment' ? ' cm' : '') + '" data-pid="' + e.id + '">' + btn +
     '<div class="vr-ptrack"></div><span class="vr-ptime">' + vrFmt(e.dur).replace(/,.*/, '') + '</span></div>';
   if (e.kind === 'chat') {
-    return '<div class="vr-pw"><div class="msg-row me"><div class="msg-bubble">' + core + '</div><div class="msg-time">' + info + '</div></div></div>';
+    return '<div class="vr-pw"><div class="msg-row me"><div class="msg-bubble">' + (e.replyId ? crQuoteHtml(crInfo(e.replyId)) : '') + core + '</div><div class="msg-time">' + info + '</div></div></div>';
   }
   let av = ''; try { av = avaHtml(); } catch (_) {}
   return '<div class="vr-pw"><div class="comment-item"><div class="ava" style="width:30px;height:30px;font-size:14px">' + av + '</div>' +
-    '<div class="comment-body"><div class="comment-name">You</div>' + core + '<div class="msg-time">' + info + '</div></div></div></div>';
+    '<div class="comment-body"><div class="comment-name">You</div>' + (e.parentId ? cmtQuoteHtml(cmtInfo(e.parentId)) : '') + core + '<div class="msg-time">' + info + '</div></div></div></div>';
 }
 // used by the existing render functions so a poll/refresh never wipes a pending bubble
 function vrPendHtmlFor(kind) {
@@ -12610,7 +12643,7 @@ async function vrRun(e) {
     }, x => { e.xhr = x; });
     if (e.cancelled) return;
     if (e.kind === 'chat') {
-      await api('/api/mini-app/chats/send', { method: 'POST', body: JSON.stringify({ sender_id: UID, receiver_id: e.ref, content: '', media_type: media.media_type, media_id: media.media_id }) });
+      await api('/api/mini-app/chats/send', { method: 'POST', body: JSON.stringify({ sender_id: UID, receiver_id: e.ref, content: '', media_type: media.media_type, media_id: media.media_id, reply_to_id: e.replyId || 0 }) });
       await fetchCRMsgs(true);
     } else {
       await api('/api/mini-app/post/' + e.ref + '/comment', { method: 'POST', body: JSON.stringify({ user_id: UID, content: '', parent_comment_id: e.parentId, media_type: media.media_type, media_id: media.media_id }) });
@@ -12640,9 +12673,10 @@ async function vrSend(v, blob, mime) {
     // Telegram-style: bubble appears instantly with upload progress; no attachment preview above the composer
     if (target === 'chat' ? !crPartnerId : !currentPostId) return;
     const e = { id: ++vrPendSeq, kind: target, file, dur, status: 'uploading', progress: 0,
+                replyId: (target === 'chat' && crReplyTo) ? crReplyTo.id : 0,
                 ref: target === 'chat' ? crPartnerId : currentPostId,
                 parentId: target === 'comment' ? replyToId : 0, authorId: currentPostAuthorId };
-    if (target === 'comment') { replyToId = 0; const t = document.getElementById('comment-txt'); if (t) t.placeholder = 'Add a response…'; }
+    if (target === 'comment') cancelReply(); else if (crReplyTo) crCancelReply();
     vrPendings.push(e);
     vrRun(e);
     return;
@@ -13202,8 +13236,7 @@ async function loadOlderComments(){
 function renderComments(comments,postAuthorId){
   const box=document.getElementById('detail-comments');
   if(!comments.length){box.innerHTML='<div style="text-align:center;padding:30px 20px;color:var(--text3);font-size:14px">No responses yet — be the first!</div>'+vrPendHtmlFor('comment');return}
-  const map={};comments.forEach(c=>map[c.id]={...c,children:[]});
-  const roots=[];comments.forEach(c=>c.parent_id&&map[c.parent_id]?map[c.parent_id].children.push(map[c.id]):roots.push(map[c.id]));
+  const roots=comments; // flat, chronological: replies carry a quote instead of being nested
   const rr=(c,dep)=>{
     const isAuthor=String(c.author_id)===String(postAuthorId);
     const nameBadge=isAuthor?ICONS.shield.replace('class="icon"','class="icon badge-icon"'):'';
@@ -13218,9 +13251,9 @@ function renderComments(comments,postAuthorId){
         }
       }
     }
-    return `<div class="comment-item${dep>0?' reply':''}"><div class="ava" style="width:30px;height:30px;font-size:14px">${avaHtml(c.author?.sex)}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${nameBadge}${esc(name)} <span style="font-size:11px;color:var(--text3)">${esc(c.time_ago||'')}</span></div><div class="comment-text">${esc(c.content)}</div>${c.media_id?renderMedia(c.media_type,c.media_id):''}
+    return `<div class="comment-item" id="cmt-${c.id}"><div class="ava" style="width:30px;height:30px;font-size:14px">${avaHtml(c.author?.sex)}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${nameBadge}${esc(name)} <span style="font-size:11px;color:var(--text3)">${esc(c.time_ago||'')}</span></div>${cmtQuoteHtml(c.reply_to)}<div class="comment-text">${esc(c.content)}</div>${c.media_id?renderMedia(c.media_type,c.media_id):''}
       ${renderReactionButtons(c.id, 'comment', c.reactions?.counts || {}, c.reactions?.user_reaction)}
-      <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
+      <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>`;
   };
   const olderBtn=cmtHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderComments()">Load older responses</button></div>':'';
   box.innerHTML=olderBtn+roots.map(c=>rr(c,0)).join('')+vrPendHtmlFor('comment');
@@ -13268,7 +13301,55 @@ function showReactionDock(anchor,targetType,targetId){
 }
 
 let replyToId=0;
-function replyTo(id){replyToId=id;const t=document.getElementById('comment-txt');t.placeholder='Replying…';t.focus()}
+// ---- Telegram-style replies: quote the message, no nesting, tap quote to jump ----
+function cmtSnippet(rt) {
+  const t = (rt.content || '').trim();
+  if (t) return t;
+  const m = { voice: '🎤 Voice message', audio: '🎵 Audio', photo: '🖼 Photo', video: '🎬 Video', gif: '🎞 GIF', sticker: '🏷 Sticker' };
+  return m[rt.media_type] || (rt.media_type && rt.media_type !== 'text' ? '📎 Attachment' : '');
+}
+function cmtQuoteName(rt) {
+  return String(rt.author_id) === String(currentPostAuthorId) ? 'Vent author' : (rt.author_name || 'Anonymous');
+}
+function cmtQuoteHtml(rt) {
+  if (!rt) return '';
+  if (rt.deleted) return '<div class="reply-quote gone"><div class="rq-text">Deleted message</div></div>';
+  return '<div class="reply-quote" onclick="jumpToComment(' + rt.id + ')"><div class="rq-name">' + esc(cmtQuoteName(rt)) +
+    '</div><div class="rq-text">' + esc(cmtSnippet(rt)) + '</div></div>';
+}
+function cmtInfo(id) { // quote data for a comment that is already loaded
+  const c = cmtAll.find(x => x.id === id);
+  return c ? { id: c.id, author_id: c.author_id, author_name: c.author && c.author.name, content: c.content, media_type: c.media_type } : null;
+}
+async function jumpToComment(id) {
+  let el = document.getElementById('cmt-' + id);
+  for (let i = 0; !el && cmtHasMore && i < 10; i++) { await loadOlderComments(); el = document.getElementById('cmt-' + id); }
+  if (!el) return toast('Message not found');
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.remove('cm-flash'); void el.offsetWidth; el.classList.add('cm-flash');
+}
+function replyTo(id) {
+  const rt = cmtInfo(id);
+  replyToId = id;
+  const bar = document.getElementById('reply-bar');
+  if (rt && bar) {
+    bar.dataset.post = currentPostId;
+    bar.innerHTML = '<div class="rb-line"></div><div class="rb-body" onclick="jumpToComment(' + id + ')"><div class="rq-name">Reply to ' + esc(cmtQuoteName(rt)) +
+      '</div><div class="rq-text">' + esc(cmtSnippet(rt)) + '</div></div><button type="button" class="rb-x" onclick="cancelReply()">' + ICONS.close + '</button>';
+    bar.style.display = 'flex';
+  }
+  const t = document.getElementById('comment-txt'); if (t) t.focus();
+}
+function cancelReply() {
+  replyToId = 0;
+  const bar = document.getElementById('reply-bar');
+  if (bar) { bar.style.display = 'none'; bar.innerHTML = ''; }
+}
+setInterval(() => { // a pending reply never leaks into another post
+  const b = document.getElementById('reply-bar');
+  if (replyToId && b && String(b.dataset.post) !== String(currentPostId)) cancelReply();
+}, 300);
+
 async function postComment(){
   const txt=document.getElementById('comment-txt').value.trim();
   if((!txt&&!pendingCommentMedia)||!currentPostId)return;
@@ -13277,7 +13358,7 @@ async function postComment(){
     const payload={user_id:UID,content:txt,parent_comment_id:replyToId};
     if(pendingCommentMedia){payload.media_type=pendingCommentMedia.media_type;payload.media_id=pendingCommentMedia.media_id}
     await api(`/api/mini-app/post/${currentPostId}/comment`,{method:'POST',body:JSON.stringify(payload)});
-    document.getElementById('comment-txt').value='';replyToId=0;toast('Posted');
+    document.getElementById('comment-txt').value='';cancelReply();toast('Posted');
     pendingCommentMedia=null;document.getElementById('comment-file-input').value='';
     document.getElementById('comment-attach-btn').classList.remove('has-media');
     renderMediaPreview(document.getElementById('comment-media-preview'),null);
@@ -13585,13 +13666,13 @@ function crRenderMsgs(scroll,preserveAnchor){
   const olderBtn=crHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderCRMsgs()">Load older messages</button></div>':'';
   box.innerHTML=olderBtn+crMsgsCache.map(m=>{
     if(m.is_deleted){
-      return `<div class="msg-row ${m.is_mine?'me':'them'}"><div class="msg-bubble msg-deleted">Message deleted</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`;
+      return `<div class="msg-row ${m.is_mine?'me':'them'}" id="msg-${m.id}"><div class="msg-bubble msg-deleted">Message deleted</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`;
     }
     const editedTag=m.is_edited?' · edited':'';
-    const menuBtn=m.is_mine?'<span class="msg-menu-btn">⋯</span>':'';
-    return `<div class="msg-row ${m.is_mine?'me':'them'}" data-mid="${m.id}"><div class="msg-bubble">${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}${menuBtn}</div><div class="msg-time">${esc(m.timestamp||'')}${editedTag}</div></div>`;
+    const menuBtn='<span class="msg-menu-btn">⋯</span>';
+    return `<div class="msg-row ${m.is_mine?'me':'them'}" data-mid="${m.id}" id="msg-${m.id}"><div class="msg-bubble">${crQuoteHtml(m.reply_to)}${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}${menuBtn}</div><div class="msg-time">${esc(m.timestamp||'')}${editedTag}</div></div>`;
   }).join('')+vrPendHtmlFor('chat');
-  box.querySelectorAll('.msg-row.me .msg-menu-btn').forEach(btn=>{
+  box.querySelectorAll('.msg-menu-btn').forEach(btn=>{
     btn.onclick=(e)=>{e.stopPropagation();msgActions(btn.closest('.msg-row').dataset.mid);};
   });
   if(preserveAnchor)box.scrollTop=box.scrollHeight-prevScrollHeight+prevScrollTop;
@@ -13643,14 +13724,18 @@ function msgActions(id){
   mask.onclick=(e)=>{if(e.target===mask)mask.remove();};
   mask.innerHTML=`<div class="modal-container" style="padding:16px">
     <div style="font-weight:700;margin-bottom:12px">Message options</div>
-    <button class="modal-btn modal-btn-secondary" id="msgEditBtn">Edit</button>
-    <button class="modal-btn modal-btn-secondary" id="msgDelBtn" style="color:#e05252">Delete</button>
+    <button class="modal-btn modal-btn-secondary" id="msgReplyBtn">Reply</button>
+    ${m.is_mine?`<button class="modal-btn modal-btn-secondary" id="msgEditBtn">Edit</button>
+    <button class="modal-btn modal-btn-secondary" id="msgDelBtn" style="color:#e05252">Delete</button>`:''}
     <button class="modal-btn modal-btn-primary" id="msgCancelBtn">Cancel</button>
   </div>`;
   document.body.appendChild(mask);
   mask.querySelector('#msgCancelBtn').onclick=()=>mask.remove();
-  mask.querySelector('#msgEditBtn').onclick=()=>{mask.remove();startEditMsg(m);};
-  mask.querySelector('#msgDelBtn').onclick=()=>{mask.remove();delMsg(m.id);};
+  mask.querySelector('#msgReplyBtn').onclick=()=>{mask.remove();crReplyStart(m.id);};
+  if(m.is_mine){
+    mask.querySelector('#msgEditBtn').onclick=()=>{mask.remove();startEditMsg(m);};
+    mask.querySelector('#msgDelBtn').onclick=()=>{mask.remove();delMsg(m.id);};
+  }
 }
 function startEditMsg(m){
   const newText=prompt('Edit message:',m.content||'');
@@ -13672,11 +13757,83 @@ async function delMsg(id){
     fetchCRMsgs(true);
   }catch(e){toast(e.message)}
 }
+// ---- Telegram-style replies in private chats: quote, no nesting, tap quote to jump ----
+let crReplyTo = null; // { id, partner }
+function crPartnerName(){ const n=document.getElementById('cr-name'); return (n&&n.textContent)||'Chat'; }
+function crInfo(id){
+  const m=crMsgsCache.find(x=>String(x.id)===String(id));
+  return m?{id:m.id,is_mine:m.is_mine,deleted:!!m.is_deleted,content:m.content,media_type:m.media_type}:null;
+}
+function crQuoteHtml(rt){
+  if(!rt) return '';
+  const name=rt.is_mine?'You':crPartnerName();
+  const text=rt.deleted?'Deleted message':cmtSnippet(rt);
+  return '<div class="msg-quote" onclick="event.stopPropagation();crJump('+rt.id+')"><div class="rq-name">'+esc(name)+'</div><div class="rq-text">'+esc(text)+'</div></div>';
+}
+async function crJump(id){
+  let el=document.getElementById('msg-'+id);
+  for(let i=0;!el&&crHasMore&&i<10;i++){ await loadOlderCRMsgs(); el=document.getElementById('msg-'+id); }
+  if(!el) return toast('Message not found');
+  el.scrollIntoView({block:'center',behavior:'smooth'});
+  const b=el.querySelector('.msg-bubble');
+  if(b){ b.classList.remove('msg-flash'); void b.offsetWidth; b.classList.add('msg-flash'); }
+}
+function crReplyStart(id){
+  const rt=crInfo(id); if(!rt||rt.deleted) return;
+  crReplyTo={id:rt.id,partner:crPartnerId};
+  const bar=document.getElementById('cr-reply-bar');
+  bar.innerHTML='<div class="rb-line"></div><div class="rb-body" onclick="crJump('+rt.id+')"><div class="rq-name">Reply to '+esc(rt.is_mine?'You':crPartnerName())+
+    '</div><div class="rq-text">'+esc(cmtSnippet(rt))+'</div></div><button type="button" class="rb-x" onclick="crCancelReply()">'+ICONS.close+'</button>';
+  bar.style.display='flex';
+  const t=document.getElementById('cr-txt'); if(t) t.focus();
+}
+function crCancelReply(){
+  crReplyTo=null;
+  const bar=document.getElementById('cr-reply-bar');
+  if(bar){ bar.style.display='none'; bar.innerHTML=''; }
+}
+setInterval(()=>{ if(crReplyTo && crReplyTo.partner!==crPartnerId) crCancelReply(); },300); // never leaks into another chat
+(function(){ // swipe a message to the right to reply, like Telegram
+  const box=document.getElementById('cr-msgs'); if(!box) return;
+  let row=null,x0=0,y0=0,dx=0,drag=false,ico=null,buzzed=false;
+  const reset=()=>{
+    if(!row) return;
+    const r=row,i=ico;
+    r.style.transition='transform .18s ease'; r.style.transform='';
+    setTimeout(()=>{ r.style.transition=''; if(i) i.remove(); },200);
+    row=null; ico=null; drag=false; dx=0; buzzed=false;
+  };
+  box.addEventListener('pointerdown',e=>{
+    if(e.target.closest('button,a,audio,video,.msg-menu-btn,.msg-quote,.voice-player')) return;
+    const r=e.target.closest('.msg-row');
+    if(!r||!r.dataset.mid) return;
+    row=r; x0=e.clientX; y0=e.clientY; dx=0; drag=false; buzzed=false;
+  });
+  box.addEventListener('pointermove',e=>{
+    if(!row) return;
+    const mx=e.clientX-x0, my=e.clientY-y0;
+    if(!drag){
+      if(Math.abs(my)>12 && Math.abs(my)>Math.abs(mx)){ row=null; return; } // vertical scroll
+      if(mx>10 && mx>Math.abs(my)*1.5){
+        drag=true; ico=document.createElement('div'); ico.className='msg-swipe-ico'; ico.innerHTML=ICONS.reply||''; row.appendChild(ico);
+        try{ box.setPointerCapture(e.pointerId); }catch(_){}
+      } else return;
+    }
+    dx=Math.max(0,Math.min(mx,64));
+    row.style.transform='translateX('+dx+'px)';
+    ico.style.opacity=String(Math.min(1,dx/48));
+    if(dx>=56 && !buzzed){ buzzed=true; vrHaptic('light'); }
+  });
+  box.addEventListener('pointerup',()=>{ if(row && drag && dx>=56) crReplyStart(row.dataset.mid); reset(); });
+  box.addEventListener('pointercancel',reset);
+})();
+
 async function crSend(){
   const txt=document.getElementById('cr-txt').value.trim();
   if((!txt&&!pendingChatMedia)||!crPartnerId)return;
   
   const payload = {sender_id:UID, receiver_id:crPartnerId, content:txt};
+  if(crReplyTo){payload.reply_to_id=crReplyTo.id;crCancelReply();}
   if(pendingChatMedia) {
     payload.media_type = pendingChatMedia.media_type;
     payload.media_id = pendingChatMedia.media_id;
@@ -14876,6 +15033,17 @@ def mini_app_get_post_comments(post_id):
                     comment_user_reactions_map[cid] = rtype
         post_author_id = post_gate['author_id'] if post_gate else None
         ratings_map = get_user_ratings_batch([c['author_id'] for c in comments])
+        # Quoted-message previews (Telegram-style reply). Looked up by id so the quote still works
+        # when the original sits on an older page that is not loaded yet. Same post only.
+        parent_ids = list({c['parent_comment_id'] for c in comments if c['parent_comment_id']})
+        parent_map = {}
+        if parent_ids:
+            prow = db_fetch_all('''
+                SELECT c.comment_id, c.content, c.type AS media_type, c.author_id, u.anonymous_name AS author_name
+                FROM comments c LEFT JOIN users u ON c.author_id = u.user_id
+                WHERE c.comment_id IN %s AND c.post_id = %s
+            ''', (tuple(parent_ids), post_id))
+            parent_map = {r['comment_id']: r for r in (prow or [])}
         formatted_comments = []
         now = datetime.now()
         for c in comments:
@@ -14899,9 +15067,19 @@ def mini_app_get_post_comments(post_id):
             show_aura = not c.get('author_hide_aura') or is_owner or is_viewer_admin
             aura_str = format_aura(rating) if (not c['author_is_admin'] and show_aura) else ""
 
+            _pid = c['parent_comment_id']
+            _pr = parent_map.get(_pid) if _pid else None
+            if not _pid:
+                _reply_to = None
+            elif not _pr:
+                _reply_to = {'id': _pid, 'deleted': True}
+            else:
+                _reply_to = {'id': _pid, 'author_id': _pr['author_id'], 'author_name': _pr['author_name'] or 'Anonymous',
+                             'content': (_pr['content'] or '')[:160], 'media_type': _pr['media_type']}
             formatted_comments.append({
                 'id': c['comment_id'],
                 'parent_id': c['parent_comment_id'] or 0,
+                'reply_to': _reply_to,
                 'content': c['content'],
                 'media_type': c['media_type'],
                 'media_id': c['media_id'],
@@ -15244,7 +15422,7 @@ def mini_app_get_messages(partner_id):
         rows = db_fetch_all(f"""
             SELECT * FROM (
                 SELECT message_id, sender_id, receiver_id, content, timestamp, is_read, media_type, media_id,
-                       is_edited, is_deleted
+                       is_edited, is_deleted, reply_to_id
                 FROM private_messages
                 WHERE ((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s))
                   {before_clause}
@@ -15257,6 +15435,30 @@ def mini_app_get_messages(partner_id):
         if has_more:
             rows = rows[1:]  # drop the extra, oldest row
         
+        # Quoted-message previews, looked up by id so a quote works even when the original is on an
+        # older page that is not loaded yet. Restricted to this conversation.
+        reply_ids = list({r['reply_to_id'] for r in (rows or []) if r.get('reply_to_id')})
+        reply_map = {}
+        if reply_ids:
+            prow = db_fetch_all("""
+                SELECT message_id, sender_id, content, media_type, is_deleted
+                FROM private_messages
+                WHERE message_id IN %s
+                  AND ((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s))
+            """, (tuple(reply_ids), user_id, partner_id, partner_id, user_id))
+            reply_map = {p['message_id']: p for p in (prow or [])}
+
+        def _reply_info(rid):
+            if not rid:
+                return None
+            p = reply_map.get(rid)
+            if not p:
+                return {'id': rid, 'deleted': True}
+            gone = bool(p.get('is_deleted'))
+            return {'id': rid, 'is_mine': str(p['sender_id']) == str(user_id), 'deleted': gone,
+                    'content': None if gone else (p['content'] or '')[:160],
+                    'media_type': None if gone else p.get('media_type')}
+
         messages = []
         for r in (rows or []):
             if isinstance(r['timestamp'], str):
@@ -15277,7 +15479,8 @@ def mini_app_get_messages(partner_id):
                 'is_read': r['is_read'],
                 'is_mine': str(r['sender_id']) == str(user_id),
                 'is_edited': bool(r.get('is_edited')),
-                'is_deleted': is_deleted
+                'is_deleted': is_deleted,
+                'reply_to': None if is_deleted else _reply_info(r.get('reply_to_id'))
             })
             
         return jsonify({'success': True, 'data': messages, 'has_more': has_more})
@@ -15307,11 +15510,22 @@ def mini_app_send_message():
         if block_check:
             return jsonify({'success': False, 'error': 'You are blocked by this user.'}), 403
 
+        # Optional reply target: must be a message of THIS conversation, otherwise ignored.
+        reply_to_id = _parse_positive_int(data.get('reply_to_id'))
+        if reply_to_id:
+            in_convo = db_fetch_one("""
+                SELECT 1 FROM private_messages
+                WHERE message_id = %s
+                  AND ((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s))
+            """, (reply_to_id, sender_id, receiver_id, receiver_id, sender_id))
+            if not in_convo:
+                reply_to_id = None
+
         res = db_execute("""
-            INSERT INTO private_messages (sender_id, receiver_id, content, media_type, media_id)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO private_messages (sender_id, receiver_id, content, media_type, media_id, reply_to_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING message_id, timestamp
-        """, (sender_id, receiver_id, content, media_type, media_id), fetchone=True)
+        """, (sender_id, receiver_id, content, media_type, media_id, reply_to_id), fetchone=True)
 
         # Deliver a real notification — including the actual media file if present
         notify_user_of_private_message_sync(
