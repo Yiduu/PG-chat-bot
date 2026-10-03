@@ -11846,6 +11846,24 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 @keyframes vrBlink{0%,100%{opacity:1}50%{opacity:.25}}
 @keyframes vrNudge{0%,100%{transform:translateX(0)}50%{transform:translateX(-5px)}}
 @keyframes vrBin{0%{transform:translateY(-14px) scale(.6);opacity:0}30%{transform:translateY(0) scale(1.1);opacity:1}60%{transform:rotate(-10deg)}80%{transform:rotate(8deg)}100%{transform:scale(.8);opacity:0}}
+.vr-pw{display:contents}
+.vr-pend{display:flex;align-items:center;gap:10px;width:188px;max-width:100%}
+.vr-pbtn{position:relative;width:34px;height:34px;border-radius:50%;background:#0c0b09;border:none;padding:0;flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.vr-pbtn svg.x{width:14px;height:14px;fill:none;stroke:var(--gold);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.vr-ring{position:absolute;left:-1px;top:-1px;width:36px;height:36px;transform:rotate(-90deg)}
+.vr-ring circle{fill:none;stroke-width:2.5}
+.vr-ring .bg{stroke:rgba(201,168,76,.28)}
+.vr-ring .fg{stroke:var(--gold);stroke-dasharray:94.2;stroke-linecap:round;transition:stroke-dashoffset .2s}
+.vr-ring.spin{animation:vrSpin 1s linear infinite}
+.vr-ptrack{flex:1;height:3px;border-radius:2px;background:rgba(12,11,9,.28)}
+.vr-ptime{font-size:10.5px;color:rgba(12,11,9,.72);font-variant-numeric:tabular-nums}
+.vr-pend.cm .vr-pbtn{background:var(--gold)}
+.vr-pend.cm .vr-pbtn svg.x{stroke:#0c0b09}
+.vr-pend.cm .vr-ring .fg{stroke:#0c0b09}
+.vr-pend.cm .vr-ring .bg{stroke:rgba(12,11,9,.2)}
+.vr-pend.cm .vr-ptrack{background:var(--border)}
+.vr-pend.cm .vr-ptime{color:var(--text3)}
+@keyframes vrSpin{to{transform:rotate(270deg)}}
 
 /* ----- Direct reaction buttons ----- */
 .reaction-buttons{
@@ -12495,15 +12513,111 @@ function vrPreview(v, blob, mime) { // after tapping stop in locked mode: listen
   v.orb.onclick = () => { v.audio.pause(); vrSend(v, blob, mime); };
 }
 
+// ---- Optimistic "sending" bubbles for chats and responses ----
+VR_IC.x = '<svg class="x" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+VR_IC.retry = '<svg class="x" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 1 1-2.1-9.4L23 10"/></svg>';
+let vrPendings = [], vrPendSeq = 0;
+
+function vrOff(p) { return (94.2 * (1 - Math.max(p, 0.08))).toFixed(1); }
+function vrPendHtml(e) {
+  const failed = e.status === 'failed';
+  const btn = failed
+    ? '<button type="button" class="vr-pbtn" onclick="vrRetry(' + e.id + ')">' + VR_IC.retry + '</button>'
+    : '<button type="button" class="vr-pbtn" onclick="vrAbort(' + e.id + ')"><svg class="vr-ring' + (e.progress > 0 ? '' : ' spin') + '" viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15"/><circle class="fg" cx="18" cy="18" r="15" style="stroke-dashoffset:' + vrOff(e.progress) + '"/></svg>' + VR_IC.x + '</button>';
+  const info = failed
+    ? '<span style="color:#f44336">Failed to send · <a onclick="vrAbort(' + e.id + ')" style="text-decoration:underline;cursor:pointer">Delete</a></span>'
+    : 'Sending…';
+  const core = '<div class="vr-pend' + (e.kind === 'comment' ? ' cm' : '') + '" data-pid="' + e.id + '">' + btn +
+    '<div class="vr-ptrack"></div><span class="vr-ptime">' + vrFmt(e.dur).replace(/,.*/, '') + '</span></div>';
+  if (e.kind === 'chat') {
+    return '<div class="vr-pw"><div class="msg-row me"><div class="msg-bubble">' + core + '</div><div class="msg-time">' + info + '</div></div></div>';
+  }
+  let av = ''; try { av = avaHtml(); } catch (_) {}
+  return '<div class="vr-pw"><div class="comment-item"><div class="ava" style="width:30px;height:30px;font-size:14px">' + av + '</div>' +
+    '<div class="comment-body"><div class="comment-name">You</div>' + core + '<div class="msg-time">' + info + '</div></div></div></div>';
+}
+// used by the existing render functions so a poll/refresh never wipes a pending bubble
+function vrPendHtmlFor(kind) {
+  const ref = kind === 'chat' ? crPartnerId : currentPostId;
+  return vrPendings.filter(e => e.kind === kind && e.ref === ref).map(vrPendHtml).join('');
+}
+function vrPendRender(kind) {
+  const box = document.getElementById(kind === 'chat' ? 'cr-msgs' : 'detail-comments');
+  if (!box) return;
+  box.querySelectorAll('.vr-pw').forEach(n => n.remove());
+  const html = vrPendHtmlFor(kind);
+  if (!html) return;
+  if (kind === 'comment' && !box.querySelector('.comment-item')) box.innerHTML = '';
+  box.insertAdjacentHTML('beforeend', html);
+  const last = box.querySelector('.vr-pw:last-child');
+  if (kind === 'chat') box.scrollTop = box.scrollHeight; else if (last) last.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+function vrUpload(file, onProg, reg) { // same endpoint as uploadMedia, but reports progress
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append('file', file); fd.append('user_id', UID); fd.append('intent', 'voice');
+    const x = new XMLHttpRequest(); reg(x);
+    x.open('POST', API + '/api/mini-app/upload-media');
+    x.upload.onprogress = ev => { if (ev.lengthComputable) onProg(ev.loaded / ev.total); };
+    x.onload = () => {
+      let d = {}; try { d = JSON.parse(x.responseText); } catch (_) {}
+      if (x.status >= 200 && x.status < 300 && d.success) resolve({ media_type: d.media_type, media_id: d.file_id });
+      else reject(new Error(d.error || 'Upload failed'));
+    };
+    x.onerror = () => reject(new Error('Upload failed'));
+    x.onabort = () => reject(new Error('aborted'));
+    x.send(fd);
+  });
+}
+async function vrRun(e) {
+  e.status = 'uploading'; e.progress = 0; e.cancelled = false;
+  vrPendRender(e.kind);
+  try {
+    const media = await vrUpload(e.file, p => {
+      e.progress = p;
+      document.querySelectorAll('[data-pid="' + e.id + '"] .vr-ring').forEach(r => r.classList.remove('spin'));
+      document.querySelectorAll('[data-pid="' + e.id + '"] .fg').forEach(c => { c.style.strokeDashoffset = vrOff(p); });
+    }, x => { e.xhr = x; });
+    if (e.cancelled) return;
+    if (e.kind === 'chat') {
+      await api('/api/mini-app/chats/send', { method: 'POST', body: JSON.stringify({ sender_id: UID, receiver_id: e.ref, content: '', media_type: media.media_type, media_id: media.media_id }) });
+      await fetchCRMsgs(true);
+    } else {
+      await api('/api/mini-app/post/' + e.ref + '/comment', { method: 'POST', body: JSON.stringify({ user_id: UID, content: '', parent_comment_id: e.parentId, media_type: media.media_type, media_id: media.media_id }) });
+      await fetchAndRenderComments(e.ref, e.authorId);
+    }
+    // same task as the refresh above, so the real message replaces the bubble with no flicker
+    vrPendings = vrPendings.filter(x => x !== e);
+    vrPendRender(e.kind);
+  } catch (err) {
+    if (e.cancelled) return;
+    e.status = 'failed'; vrPendRender(e.kind); toast(err.message);
+  }
+}
+function vrAbort(id) {
+  const e = vrPendings.find(x => x.id === id); if (!e) return;
+  e.cancelled = true; try { e.xhr && e.xhr.abort(); } catch (_) {}
+  vrPendings = vrPendings.filter(x => x !== e); vrPendRender(e.kind);
+}
+function vrRetry(id) { const e = vrPendings.find(x => x.id === id); if (e) vrRun(e); }
+
 async function vrSend(v, blob, mime) {
-  const target = v.target;
-  const ext = mime.includes('ogg') ? 'ogg' : 'webm';
+  const target = v.target, dur = v.dur;
+  const file = new File([blob], 'voice.' + (mime.includes('ogg') ? 'ogg' : 'webm'), { type: mime });
   vrEnd(v, 'send', false);
   vrHaptic('light');
-  const ok = await handleVoiceFile(new File([blob], 'voice.' + ext, { type: mime }), target);
-  // Telegram sends on release. Vents need categories, so they stay attached for "Post Anonymously".
-  if (ok && target === 'chat') crSend();
-  else if (ok && target === 'comment') postComment();
+  if (target === 'chat' || target === 'comment') {
+    // Telegram-style: bubble appears instantly with upload progress; no attachment preview above the composer
+    if (target === 'chat' ? !crPartnerId : !currentPostId) return;
+    const e = { id: ++vrPendSeq, kind: target, file, dur, status: 'uploading', progress: 0,
+                ref: target === 'chat' ? crPartnerId : currentPostId,
+                parentId: target === 'comment' ? replyToId : 0, authorId: currentPostAuthorId };
+    if (target === 'comment') { replyToId = 0; const t = document.getElementById('comment-txt'); if (t) t.placeholder = 'Add a response…'; }
+    vrPendings.push(e);
+    vrRun(e);
+    return;
+  }
+  await handleVoiceFile(file, target); // vents: stays attached, user still taps "Post Anonymously"
 }
 
 // Telegram behaviour: mic shows when the input is empty, send arrow shows once there is text/media
@@ -13057,7 +13171,7 @@ async function loadOlderComments(){
 }
 function renderComments(comments,postAuthorId){
   const box=document.getElementById('detail-comments');
-  if(!comments.length){box.innerHTML='<div style="text-align:center;padding:30px 20px;color:var(--text3);font-size:14px">No responses yet — be the first!</div>';return}
+  if(!comments.length){box.innerHTML='<div style="text-align:center;padding:30px 20px;color:var(--text3);font-size:14px">No responses yet — be the first!</div>'+vrPendHtmlFor('comment');return}
   const map={};comments.forEach(c=>map[c.id]={...c,children:[]});
   const roots=[];comments.forEach(c=>c.parent_id&&map[c.parent_id]?map[c.parent_id].children.push(map[c.id]):roots.push(map[c.id]));
   const rr=(c,dep)=>{
@@ -13079,7 +13193,7 @@ function renderComments(comments,postAuthorId){
       <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>${c.children.map(ch=>rr(ch,dep+1)).join('')}`;
   };
   const olderBtn=cmtHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderComments()">Load older responses</button></div>':'';
-  box.innerHTML=olderBtn+roots.map(c=>rr(c,0)).join('');
+  box.innerHTML=olderBtn+roots.map(c=>rr(c,0)).join('')+vrPendHtmlFor('comment');
 }
 
 async function submitReaction(targetType,targetId,emoji,uiElement){
@@ -13446,7 +13560,7 @@ function crRenderMsgs(scroll,preserveAnchor){
     const editedTag=m.is_edited?' · edited':'';
     const menuBtn=m.is_mine?'<span class="msg-menu-btn">⋯</span>':'';
     return `<div class="msg-row ${m.is_mine?'me':'them'}" data-mid="${m.id}"><div class="msg-bubble">${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}${menuBtn}</div><div class="msg-time">${esc(m.timestamp||'')}${editedTag}</div></div>`;
-  }).join('');
+  }).join('')+vrPendHtmlFor('chat');
   box.querySelectorAll('.msg-row.me .msg-menu-btn').forEach(btn=>{
     btn.onclick=(e)=>{e.stopPropagation();msgActions(btn.closest('.msg-row').dataset.mid);};
   });
