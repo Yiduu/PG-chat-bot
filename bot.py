@@ -12335,7 +12335,7 @@ function vrSwipes(on) { // stop Telegram's swipe-down-to-close while the finger 
   } catch (e) {}
 }
 function getPreferredVoiceMimeType() {
-  const candidates = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'];
+  const candidates = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
   for (const type of candidates) {
     if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(type)) return type;
   }
@@ -12351,19 +12351,49 @@ function vrTip(btn, text) {
   setTimeout(() => tip.remove(), 2200);
 }
 
+// ---- Shared microphone: ask once, reuse for every recording, release when idle ----
+let vrMic = null, vrMicTimer = 0;
+const VR_MIC_IDLE_MS = 3 * 60 * 1000;
+const VR_AUDIO = { channelCount: 1, sampleRate: 48000, echoCancellation: false, noiseSuppression: true, autoGainControl: true };
+function vrHasMic() { return !!(vrMic && vrMic.getAudioTracks().some(t => t.readyState === 'live')); }
+function vrTouchMic() { clearTimeout(vrMicTimer); vrMicTimer = setTimeout(vrReleaseMic, VR_MIC_IDLE_MS); }
+function vrReleaseMic() {
+  if (vr) { vrTouchMic(); return; }
+  if (vrMic) { vrMic.getTracks().forEach(t => t.stop()); vrMic = null; }
+}
+function vrGetMic() {
+  if (vrHasMic()) { vrTouchMic(); return Promise.resolve(vrMic); }
+  return navigator.mediaDevices.getUserMedia({ audio: VR_AUDIO })
+    .catch(err => { // retry plain only if the device rejected the settings; never re-prompt after a denial
+      if (err && (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError')) return navigator.mediaDevices.getUserMedia({ audio: true });
+      throw err;
+    })
+    .then(stream => { vrMic = stream; vrTouchMic(); return stream; });
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) vrReleaseMic(); });
+window.addEventListener('pagehide', vrReleaseMic);
+
 function setupVoiceButton(btnId, target) {
   const btn = document.getElementById(btnId);
   if (!btn) return;
   btn.addEventListener('contextmenu', e => e.preventDefault());
   btn.addEventListener('pointerdown', e => {
-    if (vr) return;
+    if (vr || btn._vrWait) return;
     e.preventDefault();
     try { btn.setPointerCapture(e.pointerId); } catch (_) {}
-    vrStart(btn, target, e.clientX, e.clientY);
+    btn._vrDown = true;
+    const x = e.clientX, y = e.clientY;
+    if (vrHasMic()) { vrTouchMic(); vrStart(btn, target, x, y); return; }
+    btn._vrWait = true; // first use: only ask for permission, no recording UI under the system dialog
+    vrGetMic().then(() => {
+      btn._vrWait = false;
+      if (btn._vrDown && !vr) vrStart(btn, target, x, y);          // already allowed and finger still down
+      else vrTip(btn, 'Microphone ready. Hold to record.');          // the permission dialog ate the press
+    }).catch(() => { btn._vrWait = false; toast('Microphone access denied'); });
   });
   btn.addEventListener('pointermove', e => { if (vr && vr.btn === btn && vr.state === 'rec') vrMove(e.clientX, e.clientY); });
-  btn.addEventListener('pointerup', () => { if (vr && vr.btn === btn && vr.state === 'rec') vrFinish('send'); });
-  btn.addEventListener('pointercancel', () => { if (vr && vr.btn === btn && vr.state === 'rec') vrFinish('cancel'); });
+  btn.addEventListener('pointerup', () => { btn._vrDown = false; if (vr && vr.btn === btn && vr.state === 'rec') vrFinish('send'); });
+  btn.addEventListener('pointercancel', () => { btn._vrDown = false; if (vr && vr.btn === btn && vr.state === 'rec') vrFinish('cancel'); });
 }
 
 function vrStart(btn, target, x, y) {
@@ -12393,22 +12423,22 @@ function vrStart(btn, target, x, y) {
   vrHaptic('medium'); vrSwipes(false);
   const v = vr;
 
-  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-    if (v.aborted || v.dead) { stream.getTracks().forEach(t => t.stop()); return; } // released before the mic was ready
-    v.stream = stream;
-    const type = getPreferredVoiceMimeType();
-    v.rec = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream);
-    mediaRecorder = v.rec;
-    v.rec.ondataavailable = e => { if (e.data.size > 0) v.chunks.push(e.data); };
-    v.rec.onstop = () => vrStopped(v);
-    try {
-      v.ctx = new (window.AudioContext || window.webkitAudioContext)();
-      v.analyser = v.ctx.createAnalyser(); v.analyser.fftSize = 256;
-      v.ctx.createMediaStreamSource(stream).connect(v.analyser);
-    } catch (e) { v.analyser = null; }
-    v.rec.start();
-    v.t0 = Date.now();
-  }).catch(() => { toast('Microphone access denied'); v.aborted = true; vrEnd(v, 'cancel', true); });
+  const stream = vrMic;
+  v.stream = stream;
+  const type = getPreferredVoiceMimeType();
+  const opts = { audioBitsPerSecond: 64000 }; // clear speech; the browser default on phones is far lower
+  if (type) opts.mimeType = type;
+  try { v.rec = new MediaRecorder(stream, opts); } catch (e) { v.rec = new MediaRecorder(stream); }
+  mediaRecorder = v.rec;
+  v.rec.ondataavailable = e => { if (e.data.size > 0) v.chunks.push(e.data); };
+  v.rec.onstop = () => vrStopped(v);
+  try {
+    v.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    v.analyser = v.ctx.createAnalyser(); v.analyser.fftSize = 256;
+    v.ctx.createMediaStreamSource(stream).connect(v.analyser);
+  } catch (e) { v.analyser = null; }
+  v.rec.start();
+  v.t0 = Date.now();
 
   const buf = new Uint8Array(128);
   const loop = () => {
@@ -12463,7 +12493,7 @@ function vrFinish(action) {
 }
 
 function vrStopped(v) {
-  if (v.stream) v.stream.getTracks().forEach(t => t.stop());
+  vrTouchMic();
   try { v.ctx && v.ctx.close(); } catch (e) {}
   if (v.action === 'cancel' || v.action === 'short') { vrEnd(v, v.action, true); return; }
   const mime = (v.rec && v.rec.mimeType) || 'audio/webm';
@@ -12603,7 +12633,7 @@ function vrRetry(id) { const e = vrPendings.find(x => x.id === id); if (e) vrRun
 
 async function vrSend(v, blob, mime) {
   const target = v.target, dur = v.dur;
-  const file = new File([blob], 'voice.' + (mime.includes('ogg') ? 'ogg' : 'webm'), { type: mime });
+  const file = new File([blob], 'voice.' + (mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'm4a' : 'webm'), { type: mime });
   vrEnd(v, 'send', false);
   vrHaptic('light');
   if (target === 'chat' || target === 'comment') {
