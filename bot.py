@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone, time as dt_time
 import time
 import asyncio
 import html
+import urllib.parse
 from types import SimpleNamespace, MappingProxyType
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
@@ -979,6 +980,21 @@ def _clear_menu_jwt_cache(user_id=None):
             _menu_jwt_cache.clear()
         else:
             _menu_jwt_cache.pop(str(user_id), None)
+
+
+def build_open_chat_url(receiver_id, sender_id):
+    """Mini app URL that opens straight into the private chat with `sender_id`,
+    signed in as `receiver_id`. Returns None when RENDER_URL isn't configured or the
+    token can't be built, so callers can simply leave the button off."""
+    render_url = (os.getenv('RENDER_URL') or '').rstrip('/')
+    if not render_url:
+        return None
+    try:
+        token = _get_menu_jwt(receiver_id)
+    except Exception as e:
+        logger.error(f"build_open_chat_url: could not build token for {receiver_id}: {e}")
+        return None
+    return f"{render_url}/?token={token}&open_chat={urllib.parse.quote(str(sender_id), safe='')}"
 
 
 # ---- reaction weights + ONE scoring query shared by every aura/leaderboard path ----
@@ -2998,12 +3014,17 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         full_content = truncate_for_telegram(message_content or "", PM_TEXT_CONTENT_LIMIT)
         safe_preview_content = escape_markdown(full_content, version=2) if full_content else ""
 
-        keyboard = InlineKeyboardMarkup([
+        keyboard_rows = [
             [
                 InlineKeyboardButton("Reply", callback_data=f"reply_msg_{sender_id}"),
                 InlineKeyboardButton("Block", callback_data=f"block_user_{sender_id}")
             ]
-        ])
+        ]
+        # Third row: opens the mini app directly in this person's chat.
+        open_chat_url = build_open_chat_url(receiver_id, sender_id)
+        if open_chat_url:
+            keyboard_rows.append([InlineKeyboardButton("Open Chat", web_app=WebAppInfo(url=open_chat_url))])
+        keyboard = InlineKeyboardMarkup(keyboard_rows)
 
         header_lines = ["*New Private Message*", "", "From: " + safe_sender_name, ""]
         header = "\n".join(header_lines)
@@ -14374,6 +14395,28 @@ function skelComments(n){
 }
 function skelChats(){return Array(4).fill(`<div style="display:flex;gap:12px;padding:14px 16px;border-bottom:0.5px solid var(--border)"><div class="skel" style="width:44px;height:44px;border-radius:50%;flex-shrink:0"></div><div style="flex:1"><div class="skel" style="height:13px;width:50%;margin-bottom:6px"></div><div class="skel" style="height:11px;width:80%"></div></div></div>`).join('')}
 
+// Launched from the "Open Chat" button on a private message notification:
+// the URL carries ?open_chat=<sender id>. Open that conversation straight away.
+async function openChatFromLink(){
+  let id=null;
+  try{
+    const v=new URLSearchParams(location.search).get('open_chat');
+    if(v&&/^[0-9]{1,20}$/.test(v))id=v;
+  }catch(e){}
+  if(!id||!UID||String(id)===String(UID))return;
+  try{ // drop the parameter so a reload doesn't reopen the chat
+    const u=new URL(location.href);u.searchParams.delete('open_chat');
+    history.replaceState(null,'',u.pathname+u.search+u.hash);
+  }catch(e){}
+  go('chats',document.querySelector('.nav-item[data-page="chats"]'));
+  let name,ava;
+  try{
+    const d=await api(`/api/mini-app/profile/${id}?viewer_id=${UID}`);
+    name=d.data.name||'Anonymous';ava=d.data.avatar||d.data.sex;
+  }catch(e){}
+  openCR(id,name,ava);
+}
+
 async function init(){
   const tg=window.Telegram?.WebApp;
   if(tg){try{tg.expand();tg.ready()}catch(e){}}
@@ -14385,7 +14428,7 @@ async function init(){
   }
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='flex';
-  if(UID){loadFeed(); checkAdminStatus(); refreshVentSexRow();}
+  if(UID){loadFeed(); checkAdminStatus(); refreshVentSexRow(); openChatFromLink();}
   else{document.getElementById('feed-list').innerHTML='<div style="text-align:center;padding:60px 20px;color:var(--text3)"><div style="width:32px;height:32px;margin:0 auto 12px;color:var(--text3)">'+ICONS.lock+'</div><div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div><div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';}
 
   // Setup voice buttons after DOM ready
@@ -14631,12 +14674,15 @@ def notify_user_of_private_message_sync(sender_id, receiver_id, message_content,
         preview_content = truncate_for_telegram(message_content or "", PM_TEXT_CONTENT_LIMIT)
         safe_preview = html.escape(preview_content) if preview_content else ""
 
-        keyboard = {
-            "inline_keyboard": [[
-                {"text": "Reply", "callback_data": f"reply_msg_{sender_id}"},
-                {"text": "Block", "callback_data": f"block_user_{sender_id}"}
-            ]]
-        }
+        keyboard_rows = [[
+            {"text": "Reply", "callback_data": f"reply_msg_{sender_id}"},
+            {"text": "Block", "callback_data": f"block_user_{sender_id}"}
+        ]]
+        # Third row: opens the mini app directly in this person's chat.
+        open_chat_url = build_open_chat_url(receiver_id, sender_id)
+        if open_chat_url:
+            keyboard_rows.append([{"text": "Open Chat", "web_app": {"url": open_chat_url}}])
+        keyboard = {"inline_keyboard": keyboard_rows}
 
         header = f"<b>New Private Message</b>\n\nFrom: <b>{safe_sender_name}</b>\n\n"
         footer = "\n\n<i>Use /inbox to view all messages</i>"
