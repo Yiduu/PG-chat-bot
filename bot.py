@@ -997,6 +997,36 @@ def build_open_chat_url(receiver_id, sender_id):
     return f"{render_url}/?token={token}&open_chat={urllib.parse.quote(str(sender_id), safe='')}"
 
 
+def pm_notification_rows(receiver_id, sender_id):
+    """Button rows (Bot API JSON shape) for a private message notification:
+    Reply + Block, with Open Chat underneath when the mini app URL is configured.
+    Used when the notification is sent AND when it is edited, because Telegram
+    drops the inline keyboard from an edited message unless it is sent again."""
+    rows = [[
+        {"text": "Reply", "callback_data": f"reply_msg_{sender_id}"},
+        {"text": "Block", "callback_data": f"block_user_{sender_id}"}
+    ]]
+    open_chat_url = build_open_chat_url(receiver_id, sender_id)
+    if open_chat_url:
+        rows.append([{"text": "Open Chat", "web_app": {"url": open_chat_url}}])
+    return rows
+
+
+def pm_notification_markup(receiver_id, sender_id):
+    """Same buttons as pm_notification_rows, as a python-telegram-bot InlineKeyboardMarkup."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                b["text"],
+                callback_data=b.get("callback_data"),
+                web_app=WebAppInfo(url=b["web_app"]["url"]) if "web_app" in b else None
+            )
+            for b in row
+        ]
+        for row in pm_notification_rows(receiver_id, sender_id)
+    ])
+
+
 # ---- reaction weights + ONE scoring query shared by every aura/leaderboard path ----
 # Emoji are written as escapes on purpose: the previous dict literal lost its emoji
 # somewhere along the way and collapsed into duplicate '' keys.
@@ -3014,17 +3044,7 @@ async def notify_user_of_private_message(context: ContextTypes.DEFAULT_TYPE, sen
         full_content = truncate_for_telegram(message_content or "", PM_TEXT_CONTENT_LIMIT)
         safe_preview_content = escape_markdown(full_content, version=2) if full_content else ""
 
-        keyboard_rows = [
-            [
-                InlineKeyboardButton("Reply", callback_data=f"reply_msg_{sender_id}"),
-                InlineKeyboardButton("Block", callback_data=f"block_user_{sender_id}")
-            ]
-        ]
-        # Third row: opens the mini app directly in this person's chat.
-        open_chat_url = build_open_chat_url(receiver_id, sender_id)
-        if open_chat_url:
-            keyboard_rows.append([InlineKeyboardButton("Open Chat", web_app=WebAppInfo(url=open_chat_url))])
-        keyboard = InlineKeyboardMarkup(keyboard_rows)
+        keyboard = pm_notification_markup(receiver_id, sender_id)
 
         header_lines = ["*New Private Message*", "", "From: " + safe_sender_name, ""]
         header = "\n".join(header_lines)
@@ -3102,7 +3122,8 @@ async def edit_native_pm_notification(context: ContextTypes.DEFAULT_TYPE, receiv
                 chat_id=receiver_id,
                 message_id=notif_message_id,
                 caption=caption,
-                parse_mode=ParseMode.MARKDOWN_V2
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=pm_notification_markup(receiver_id, sender_id)
             )
         else:
             text_preview = truncate_for_telegram(new_content or "", PM_TEXT_CONTENT_LIMIT)
@@ -3113,7 +3134,8 @@ async def edit_native_pm_notification(context: ContextTypes.DEFAULT_TYPE, receiv
                 chat_id=receiver_id,
                 message_id=notif_message_id,
                 text=text,
-                parse_mode=ParseMode.MARKDOWN_V2
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=pm_notification_markup(receiver_id, sender_id)
             )
     except Exception as e:
         # Not fatal — e.g. the receiver already deleted the notification, blocked
@@ -12023,6 +12045,12 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .reply-bar{display:flex;align-items:center;gap:10px;padding:0 2px 8px;animation:vrIn .15s ease-out}
 .reply-bar .rb-line{width:3px;align-self:stretch;background:var(--gold);border-radius:2px}
 .reply-bar .rb-body{flex:1;min-width:0;cursor:pointer}
+.reply-bar .rb-ico{width:20px;height:20px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--gold)}
+.reply-bar .rb-ico svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+/* editing a sent message: the text moves into the composer, like Telegram */
+.cr-input.editing #chat-attach-btn,.cr-input.editing #chat-voice-btn,.cr-input.editing #chat-media-preview{display:none!important}
+.cr-send:disabled{opacity:.4;cursor:default;box-shadow:none}
+.msg-bubble.msg-editing{box-shadow:0 0 0 1.5px var(--gold)}
 .comment-input-bar .rb-x{width:32px;height:32px;background:none;box-shadow:none;border:none}
 .comment-input-bar .rb-x svg{width:18px;height:18px;stroke:var(--text3);fill:none;stroke-width:2}
 
@@ -12365,6 +12393,8 @@ let pendingMedia = null, pendingCommentMedia = null, pendingChatMedia = null;
 let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null;
 let chatsCache = [];
 let crMsgsCache = [];
+let crEditing = null;          // { id, partner, original, draft } while a sent message is being edited in the composer
+let crEditInFlight = false;    // true while the save request runs, so polling doesn't flash the old text back
 let crOlderMsgs = [], crHasMore = false, crLoadingOlder = false;
 let chatsPage = 1, chatsHasMore = false, chatsLoadingMore = false;
 const selCats = new Set();
@@ -12991,7 +13021,8 @@ function vrSyncComposer() {
   cfg.forEach(([micId, sendBtn, txtId, media]) => {
     const mic = document.getElementById(micId), txt = document.getElementById(txtId);
     if (!mic || !sendBtn || !txt) return;
-    const has = !!(txt.value.trim() || media());
+    // While editing a sent message the check button stays (disabled when empty); the mic never shows.
+    const has = !!(txt.value.trim() || media()) || (txtId === 'cr-txt' && !!crEditing);
     mic.style.display = has ? 'none' : 'flex';
     sendBtn.style.display = has ? 'flex' : 'none';
   });
@@ -14061,6 +14092,7 @@ function openCR(pid,name,ava){
   clearInterval(crPoll);crPoll=setInterval(fetchCRMsgs,3000);
 }
 function closeCR(){
+  crCancelEdit(false);
   document.getElementById('chat-room').classList.remove('open');
   clearInterval(crPoll); crPoll = null;
   clearInterval(adminMonitorPoll); adminMonitorPoll = null;
@@ -14080,7 +14112,8 @@ function crRenderMsgs(scroll,preserveAnchor){
     }
     const editedTag=m.is_edited?' · edited':'';
     const menuBtn='<span class="msg-menu-btn">⋯</span>';
-    return `<div class="msg-row ${m.is_mine?'me':'them'}" data-mid="${m.id}" id="msg-${m.id}"><div class="msg-bubble">${crQuoteHtml(m.reply_to)}${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}${menuBtn}</div><div class="msg-time">${esc(m.timestamp||'')}${editedTag}</div></div>`;
+    const editingCls=(crEditing&&String(crEditing.id)===String(m.id))?' msg-editing':'';
+    return `<div class="msg-row ${m.is_mine?'me':'them'}" data-mid="${m.id}" id="msg-${m.id}"><div class="msg-bubble${editingCls}">${crQuoteHtml(m.reply_to)}${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}${menuBtn}</div><div class="msg-time">${esc(m.timestamp||'')}${editedTag}</div></div>`;
   }).join('')+vrPendHtmlFor('chat');
   box.querySelectorAll('.msg-menu-btn').forEach(btn=>{
     btn.onclick=(e)=>{e.stopPropagation();msgActions(btn.closest('.msg-row').dataset.mid);};
@@ -14099,6 +14132,7 @@ async function fetchCRMsgs(scroll=false){
     // Skip this refresh cycle; the next poll picks up new messages once it's done.
     const isBusyVoice = ()=>Array.from(box.querySelectorAll('.voice-player-audio')).some(a=>!a.paused || a.dataset.loading==='1');
     if(isBusyVoice()) return;
+    if(crEditInFlight) return;   // an edit is being saved; the next poll picks up the saved text
     const partner=crPartnerId;
     // Poll only the newest 50; anything loaded via "Load older" is kept and merged in front.
     const d=await api(`/api/mini-app/chats/${partner}?user_id=${UID}&limit=50`);
@@ -14148,19 +14182,78 @@ function msgActions(id){
     mask.querySelector('#msgDelBtn').onclick=()=>{mask.remove();delMsg(m.id);};
   }
 }
+// ---- Telegram-style editing: the message text moves into the composer, an "Edit message"
+// bar sits above it, the send button becomes a check mark, and the X cancels. ----
+const CR_SEND_HTML=document.querySelector('.cr-send').innerHTML;
+const CR_CHECK_HTML='<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
+function crAutosize(){
+  const t=document.getElementById('cr-txt'); if(!t) return;
+  t.style.height='auto';
+  t.style.height=Math.min(t.scrollHeight,100)+'px';
+}
+function crEditSync(){ // check button is disabled while the edited text is empty
+  const b=document.querySelector('.cr-send'), t=document.getElementById('cr-txt');
+  if(b&&t) b.disabled=!!crEditing&&!t.value.trim();
+}
 function startEditMsg(m){
-  const newText=prompt('Edit message:',m.content||'');
-  if(newText===null)return;
-  const trimmed=newText.trim();
-  if(!trimmed||trimmed===m.content)return;
-  editMsg(m.id,trimmed);
+  if(!m||!m.is_mine||m.is_deleted) return;
+  crCancelReply();
+  const ta=document.getElementById('cr-txt');
+  const draft=crEditing?crEditing.draft:ta.value;   // keep the unsent draft; it comes back afterwards
+  crEditing={id:m.id,partner:crPartnerId,original:m.content||'',draft};
+  const bar=document.getElementById('cr-reply-bar');
+  bar.innerHTML='<div class="rb-line"></div><span class="rb-ico">'+PENCIL_SVG+'</span><div class="rb-body" onclick="crJump('+m.id+')"><div class="rq-name">Edit message</div><div class="rq-text">'+
+    esc(cmtSnippet(m))+'</div></div><button type="button" class="rb-x" onclick="crCancelEdit()">'+ICONS.close+'</button>';
+  bar.style.display='flex';
+  document.querySelector('.cr-input').classList.add('editing');
+  document.querySelector('.cr-send').innerHTML=CR_CHECK_HTML;
+  ta.value=m.content||'';
+  crAutosize(); crEditSync();
+  crRenderMsgs(false,false);
+  const el=document.getElementById('msg-'+m.id); if(el) el.scrollIntoView({block:'nearest'});
+  ta.focus();
+  try{ ta.setSelectionRange(ta.value.length,ta.value.length); }catch(_){}
 }
-async function editMsg(id,content){
+function crExitEdit(restoreDraft){
+  const e=crEditing; crEditing=null;
+  const ta=document.getElementById('cr-txt'), bar=document.getElementById('cr-reply-bar'), send=document.querySelector('.cr-send');
+  bar.style.display='none'; bar.innerHTML='';
+  document.querySelector('.cr-input').classList.remove('editing');
+  send.innerHTML=CR_SEND_HTML; send.disabled=false;
+  ta.value=(restoreDraft&&e&&e.partner===crPartnerId)?e.draft:'';
+  crAutosize();
+}
+function crCancelEdit(restoreDraft){
+  if(!crEditing) return;
+  crExitEdit(restoreDraft!==false);
+  crRenderMsgs(false,false);
+}
+async function crSaveEdit(){
+  const e=crEditing; if(!e||crEditInFlight) return;
+  const txt=document.getElementById('cr-txt').value.trim();
+  if(!txt) return;                                   // check button is disabled when empty
+  if(txt===e.original.trim()){ crCancelEdit(); return; }   // nothing changed
+  const setText=(c,edited)=>[crMsgsCache,crLocalSent].forEach(list=>list.forEach(x=>{
+    if(String(x.id)===String(e.id)){ x.content=c; x.is_edited=edited; }
+  }));
+  const before=crMsgsCache.find(x=>String(x.id)===String(e.id));
+  const prev={content:before?before.content:e.original,edited:before?!!before.is_edited:false};
+  crEditInFlight=true;
+  setText(txt,true);                                 // the bubble updates instantly
+  crExitEdit(true);
+  crRenderMsgs(false,false);
   try{
-    await api(`/api/mini-app/message/${id}`,{method:'PUT',body:JSON.stringify({user_id:UID,content})});
-    fetchCRMsgs(true);
-  }catch(e){toast(e.message)}
+    await api(`/api/mini-app/message/${e.id}`,{method:'PUT',body:JSON.stringify({user_id:UID,content:txt})});
+  }catch(err){
+    setText(prev.content,prev.edited); crRenderMsgs(false,false);
+    toast(err.message||'Could not edit message');
+  }finally{ crEditInFlight=false; }
+  fetchCRMsgs();
 }
+(function(){ // grow the composer with its text, and keep the check button in step while editing
+  const t=document.getElementById('cr-txt'); if(!t) return;
+  t.addEventListener('input',()=>{ crAutosize(); if(crEditing) crEditSync(); });
+})();
 async function delMsg(id){
   if(!confirm("Delete this message? It'll be removed from their chat too — no trace left behind."))return;
   try{
@@ -14204,6 +14297,7 @@ function crCancelReply(){
   if(bar){ bar.style.display='none'; bar.innerHTML=''; }
 }
 setInterval(()=>{ if(crReplyTo && crReplyTo.partner!==crPartnerId) crCancelReply(); },300); // never leaks into another chat
+setInterval(()=>{ if(crEditing && crEditing.partner!==crPartnerId) crCancelEdit(false); },300);
 (function(){ // swipe a message to the right to reply, like Telegram
   const box=document.getElementById('cr-msgs'); if(!box) return;
   let row=null,x0=0,y0=0,dx=0,drag=false,ico=null,buzzed=false;
@@ -14266,12 +14360,13 @@ async function crRunText(e) {
   } catch (err) { e.status = 'failed'; vrPendRender('chat'); toast(err.message); }
 }
 async function crSend(){
+  if(crEditing) return crSaveEdit();   // the check button saves the edit instead of sending a new message
   const ta=document.getElementById('cr-txt');
   const txt=ta.value.trim();
   if((!txt&&!pendingChatMedia)||!crPartnerId)return;
   const replyId=crReplyTo?crReplyTo.id:0;
   if(crReplyTo)crCancelReply();
-  ta.value='';
+  ta.value=''; crAutosize();
   if(!pendingChatMedia){
     // Text: the bubble appears instantly, the request runs in the background
     const e={id:++vrPendSeq,kind:'chat',text:txt,replyId,ref:crPartnerId,status:'sending'};
@@ -14674,15 +14769,7 @@ def notify_user_of_private_message_sync(sender_id, receiver_id, message_content,
         preview_content = truncate_for_telegram(message_content or "", PM_TEXT_CONTENT_LIMIT)
         safe_preview = html.escape(preview_content) if preview_content else ""
 
-        keyboard_rows = [[
-            {"text": "Reply", "callback_data": f"reply_msg_{sender_id}"},
-            {"text": "Block", "callback_data": f"block_user_{sender_id}"}
-        ]]
-        # Third row: opens the mini app directly in this person's chat.
-        open_chat_url = build_open_chat_url(receiver_id, sender_id)
-        if open_chat_url:
-            keyboard_rows.append([{"text": "Open Chat", "web_app": {"url": open_chat_url}}])
-        keyboard = {"inline_keyboard": keyboard_rows}
+        keyboard = {"inline_keyboard": pm_notification_rows(receiver_id, sender_id)}
 
         header = f"<b>New Private Message</b>\n\nFrom: <b>{safe_sender_name}</b>\n\n"
         footer = "\n\n<i>Use /inbox to view all messages</i>"
@@ -14753,6 +14840,9 @@ def edit_native_pm_notification_sync(receiver_id, notif_message_id, sender_id, n
                 "text": text,
                 "parse_mode": "HTML"
             }
+
+        # Without this Telegram strips the buttons from the edited notification.
+        payload["reply_markup"] = {"inline_keyboard": pm_notification_rows(receiver_id, sender_id)}
 
         resp = _tg_session.post(url, json=payload, timeout=10)
         result = resp.json()
