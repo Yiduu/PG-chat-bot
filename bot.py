@@ -11973,14 +11973,14 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   background:var(--bg);color:var(--text);border-radius:21px;animation:vrIn .18s ease-out;user-select:none;-webkit-user-select:none}
 .vr-dot{width:12px;height:12px;border-radius:50%;background:#f44336;flex-shrink:0;animation:vrBlink 1s ease-in-out infinite}
 .vr-time{font-size:17px;font-variant-numeric:tabular-nums;min-width:58px}
-.vr-slide{flex:1;display:flex;align-items:center;justify-content:center;gap:4px;color:var(--text3);font-size:15px;white-space:nowrap;padding-right:56px}
+.vr-slide{flex:1;display:flex;align-items:center;justify-content:center;gap:4px;color:var(--text3);font-size:15px;white-space:nowrap}
 .vr-slide svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;animation:vrNudge 1.2s ease-in-out infinite}
-.vr-textbtn{background:none;border:none;color:var(--tg-theme-link-color,#3390ec);font-size:16px;font-weight:500;padding:8px;cursor:pointer;margin-left:auto;margin-right:56px;font-family:inherit}
+.vr-textbtn{background:none;border:none;color:var(--tg-theme-link-color,#3390ec);font-size:16px;font-weight:500;padding:8px;cursor:pointer;margin-left:auto;font-family:inherit}
 .vr-iconbtn{width:36px;height:36px;border-radius:50%;border:none;background:none;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0}
 .vr-iconbtn svg{width:22px;height:22px;fill:none;stroke:var(--text3);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .vr-iconbtn.play{background:var(--tg-theme-button-color,#3390ec)}
 .vr-iconbtn.play svg{stroke:#fff;fill:#fff;width:16px;height:16px}
-.vr-track{flex:1;height:4px;border-radius:2px;background:var(--border);overflow:hidden;margin-right:56px}
+.vr-track{flex:1;height:4px;border-radius:2px;background:var(--border);overflow:hidden}
 .vr-track i{display:block;height:100%;width:0;background:var(--tg-theme-button-color,#3390ec)}
 .vr-bin{margin:0 auto;animation:vrBin .38s ease-in forwards}
 .vr-bin svg{width:26px;height:26px;fill:none;stroke:#f44336;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
@@ -11988,7 +11988,7 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .vr-halo{width:64px;height:64px;margin:-32px 0 0 -32px;background:var(--tg-theme-button-color,#3390ec);opacity:.25;z-index:1000;transform:scale(1);transition:transform .09s linear}
 .vr-orb{width:64px;height:64px;margin:-32px 0 0 -32px;background:var(--tg-theme-button-color,#3390ec);z-index:1002;
   display:flex;align-items:center;justify-content:center;box-shadow:0 2px 10px rgba(0,0,0,.3);
-  transition:width .2s,height .2s,margin .2s,transform .12s;animation:vrPop .16s ease-out}
+  transition:width .2s,height .2s,margin .2s,transform .12s,left .2s;animation:vrPop .16s ease-out}
 .vr-orb svg{width:28px;height:28px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .vr-orb.sm{width:44px;height:44px;margin:-22px 0 0 -22px;pointer-events:auto;cursor:pointer}
 .vr-orb.sm svg{width:20px;height:20px}
@@ -12758,7 +12758,16 @@ function vrStart(btn, target, x, y) {
 
   const bar = document.createElement('div');
   bar.className = 'vr-bar';
-  bar.style.paddingLeft = (parseFloat(cs.paddingLeft) || 0) + 6 + 'px';
+  // Keep the bar's content clear of the mic circle wherever the mic sits in its row
+  // (vent page: mid-row; chat and comments: right edge).
+  const padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0;
+  if (cx > rr.left + rr.width / 2) {
+    bar.style.paddingLeft = padL + 6 + 'px';
+    bar.style.paddingRight = Math.round(rr.right - cx + 38) + 'px';
+  } else {
+    bar.style.paddingLeft = Math.round(cx - rr.left + 38) + 'px';
+    bar.style.paddingRight = padR + 'px';
+  }
   bar.innerHTML = '<span class="vr-dot"></span><span class="vr-time">0:00,0</span>' +
     '<div class="vr-slide">' + VR_IC.left + '<span>Slide to cancel</span></div>';
   row.appendChild(bar);
@@ -12824,6 +12833,13 @@ function vrLock() { // finger slid up: keep recording hands-free
   const v = vr; if (!v || v.state !== 'rec') return;
   v.state = 'locked'; vrHaptic('medium');
   v.orb.style.transform = ''; v.orb.classList.add('sm'); v.orb.innerHTML = VR_IC.send;
+  // Park the send circle at the row's right edge and keep the bar's content clear of it.
+  const rr = v.row.getBoundingClientRect(), rcs = getComputedStyle(v.row);
+  const lpadL = parseFloat(rcs.paddingLeft) || 0, lpadR = parseFloat(rcs.paddingRight) || 0;
+  const ox = Math.round(rr.right - lpadR - 22);
+  v.cx = ox; v.orb.style.left = ox + 'px'; v.lock.style.left = ox + 'px';
+  v.bar.style.paddingLeft = lpadL + 6 + 'px';
+  v.bar.style.paddingRight = (lpadR + 52) + 'px';
   v.orb.onclick = () => vrFinish('send');
   v.lock.className = 'vr-lock stop'; v.lock.innerHTML = VR_IC.stop;
   v.lock.style.top = (v.cy - 64) + 'px';
@@ -12884,7 +12900,7 @@ function vrPreview(v, blob, mime) { // after tapping stop in locked mode: listen
     '<button type="button" class="vr-iconbtn play">' + VR_IC.play + '</button>' +
     '<div class="vr-track"><i></i></div>';
   const timeEl = document.createElement('span');
-  timeEl.className = 'vr-time'; timeEl.style.cssText = 'position:absolute;right:56px;font-size:14px;min-width:0';
+  timeEl.className = 'vr-time'; timeEl.style.cssText = 'font-size:14px;min-width:44px;text-align:right;flex-shrink:0';
   timeEl.textContent = vrFmt(v.dur); v.bar.appendChild(timeEl);
   const play = v.bar.querySelector('.play'), prog = v.bar.querySelector('.vr-track i');
   const total = () => (isFinite(v.audio.duration) && v.audio.duration > 0 ? v.audio.duration * 1000 : v.dur);
