@@ -7491,6 +7491,88 @@ async def notify_admin_of_new_report(
     except Exception as e:
         logger.error(f"Error notifying admin of report: {e}")
 
+
+async def notify_reported_user(
+    context: ContextTypes.DEFAULT_TYPE,
+    report_id: int,
+    reporter_id: str,
+    target_type: str,
+    target_id: int,
+    reason: str
+):
+    """Notify the user who was reported showing they have been reported by someone with a snippet."""
+    try:
+        reported_user_id = None
+        content_snippet = None
+
+        if target_type == 'post':
+            post = await db_fetch_one_async("SELECT author_id, content FROM posts WHERE post_id = %s", (target_id,))
+            if post:
+                reported_user_id = str(post['author_id'])
+                raw_text = (post.get('content') or '').strip()
+                if len(raw_text) > 90:
+                    content_snippet = raw_text[:87] + "..."
+                elif raw_text:
+                    content_snippet = raw_text
+                else:
+                    content_snippet = "[media/attachment]"
+        elif target_type == 'comment':
+            comment = await db_fetch_one_async("SELECT author_id, content FROM comments WHERE comment_id = %s", (target_id,))
+            if comment:
+                reported_user_id = str(comment['author_id'])
+                raw_text = (comment.get('content') or '').strip()
+                if len(raw_text) > 90:
+                    content_snippet = raw_text[:87] + "..."
+                elif raw_text:
+                    content_snippet = raw_text
+                else:
+                    content_snippet = "[media]"
+        elif target_type == 'user':
+            reported_user_id = str(target_id)
+
+        if not reported_user_id:
+            logger.warning(f"Could not find reported user ID for report #{report_id} ({target_type}={target_id})")
+            return
+
+        # Do not notify if the user reported themselves (sanity check)
+        if str(reported_user_id) == str(reporter_id):
+            return
+
+        safe_reason = html.escape(reason.strip()) if reason else "Not specified"
+
+        if target_type == 'post':
+            safe_snippet = html.escape(content_snippet or "")
+            text = (
+                "⚠️ <b>Report Notice</b>\n\n"
+                "Someone reported your post:\n"
+                f"<blockquote>{safe_snippet}</blockquote>\n"
+                f"<b>Reason:</b> {safe_reason}"
+            )
+        elif target_type == 'comment':
+            safe_snippet = html.escape(content_snippet or "")
+            text = (
+                "⚠️ <b>Report Notice</b>\n\n"
+                "Someone reported your comment:\n"
+                f"<blockquote>{safe_snippet}</blockquote>\n"
+                f"<b>Reason:</b> {safe_reason}"
+            )
+        else:
+            text = (
+                "⚠️ <b>Report Notice</b>\n\n"
+                "Someone reported your profile.\n"
+                f"<b>Reason:</b> {safe_reason}"
+            )
+
+        await context.bot.send_message(
+            chat_id=reported_user_id,
+            text=text,
+            parse_mode=ParseMode.HTML
+        )
+        logger.info(f"Report notification sent to user {reported_user_id} for report #{report_id}")
+    except Exception as e:
+        logger.warning(f"Failed to notify reported user: {e}")
+
+
 async def send_reaction_notification(context: ContextTypes.DEFAULT_TYPE, comment: dict, reactor_id: str, reaction_type: str, post_id: int):
     """Background helper to send interaction notification"""
     try:
@@ -10006,6 +10088,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 # Notify admin of new report
                 await notify_admin_of_new_report(context, report_id, user_id, target_type, reason)
+                # Notify reported user that they have been reported
+                await notify_reported_user(context, report_id, user_id, target_type, target_id, reason)
         finally:
             # ALWAYS clear reporting state here — success, failure, or
             # invalid input — so it can never linger into the next message.
