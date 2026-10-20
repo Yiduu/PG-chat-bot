@@ -58,15 +58,45 @@ TOKEN = os.getenv('TOKEN')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', 0))
 BOT_USERNAME = os.getenv('BOT_USERNAME')
 ADMIN_ID = os.getenv('ADMIN_ID')
-EXPLICIT_WARNING_HTML = (
-    "<pre>"
-    "        ⚠️ ማስጠንቀቂያ ⚠️\n"
-    "\n"
-    " የዚህ post ይዘት ለሁሉም አባላት ተገቢ አይደለም።\n"
-    " በራስዎ ሃላፊነት ይህንን ፖስት ማንበብ ከፈለጉ፣\n"
-    "ከታች ያለውን \"View Post\" የሚለውን ይጫኑ።"
-    "</pre>"
+EXPLICIT_WARNING_LINES = (
+    "⚠️ ማስጠንቀቂያ",
+    "",
+    "የዚህ post ይዘት ለሁሉም አባላት ተገቢ አይደለም።",
+    "በራስዎ ሃላፊነት ይህንን ፖስት ማንበብ ከፈለጉ፣",
+    "ከታች ያለውን \"View Post\" የሚለውን ይጫኑ።",
 )
+
+def _est_em(text):
+    """Rough width of a line in em units (Ethiopic ~1em, Latin ~0.55em, emoji ~1.2em)."""
+    w = 0.0
+    for ch in text.replace("⚠️", "\u0001"):
+        o = ord(ch)
+        if ch == "\u0001":
+            w += 1.2
+        elif ch == " ":
+            w += 0.28
+        elif 0x1361 <= o <= 0x1368:      # Ethiopic punctuation
+            w += 0.6
+        elif 0x1200 <= o <= 0x137F:      # Ethiopic syllables
+            w += 0.95
+        elif ch == '"':
+            w += 0.35
+        else:                            # Latin letters
+            w += 0.55
+    return w
+
+def _center_lines(lines):
+    widest = max(_est_em(l) for l in lines)
+    out = []
+    for l in lines:
+        if not l:
+            out.append("")
+            continue
+        pad = (widest - _est_em(l)) / 2
+        out.append("\u2003" * int(pad) + ("\u2002" if pad - int(pad) >= 0.5 else "") + l)
+    return "\n".join(out)
+
+EXPLICIT_WARNING_HTML = _center_lines(EXPLICIT_WARNING_LINES)
 # Per-vent "show my sex" question. Plain text on purpose: no emoji decoration.
 SHOW_SEX_QUESTION = "Show your sex under the vent number on this post?"
 SHOW_SEX_YES_LABEL = "Yes"
@@ -4180,10 +4210,7 @@ async def toggle_post_explicit(update: Update, context: ContextTypes.DEFAULT_TYP
             vent_display = f"Vent - {post['vent_number']:03d}" if post.get('vent_number') else f"Post #{post_id}"
 
             if new_explicit:
-                body_html = (
-                    "This post is marked as explicit content and may not be suitable for all members.\n"
-                    "Tap \"View Post\" below if you'd like to read it."
-                )
+                body_html = EXPLICIT_WARNING_HTML
             else:
                 body_html = html.escape(post['content'])
 
