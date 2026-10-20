@@ -96,7 +96,15 @@ def _center_lines(lines):
         out.append("\u2003" * int(pad) + ("\u2002" if pad - int(pad) >= 0.5 else "") + l)
     return "\n".join(out)
 
-EXPLICIT_WARNING_HTML = _center_lines(EXPLICIT_WARNING_LINES)
+# Only the heading is padded (5 em-spaces + 1 en-space ≈ 5.5em) so it sits
+# centred over the body lines. The body lines have no padding, so the last
+# line keeps its full width and "ይጫኑ።" no longer wraps.
+EXPLICIT_WARNING_HTML = (
+    "\u2003\u2003\u2003\u2003\u2003\u2002⚠️ ማስጠንቀቂያ\n\n"
+    "የዚህ post ይዘት ለሁሉም አባላት ተገቢ አይደለም።\n"
+    "በራስዎ ሃላፊነት ይህንን ፖስት ማንበብ ከፈለጉ፣\n"
+    "ከታች ያለውን \"View Post\" የሚለውን ይጫኑ።"
+)
 # Per-vent "show my sex" question. Plain text on purpose: no emoji decoration.
 SHOW_SEX_QUESTION = "Show your sex under the vent number on this post?"
 SHOW_SEX_YES_LABEL = "Yes"
