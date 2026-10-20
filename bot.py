@@ -1543,6 +1543,42 @@ def build_multi_category_keyboard(selected_codes):
 # Initialize Flask app for Render health checks
 flask_app = Flask(__name__, static_folder='static')
 
+import gzip as _gzip
+import hashlib as _hashlib
+
+@flask_app.after_request
+def _compress_response(resp):
+    try:
+        if (resp.status_code < 200 or resp.status_code >= 300 or resp.is_streamed
+                or resp.direct_passthrough or 'Content-Encoding' in resp.headers
+                or 'gzip' not in request.headers.get('Accept-Encoding', '').lower()):
+            return resp
+        ct = resp.mimetype or ''
+        if not (ct.startswith('text/') or ct in ('application/json', 'application/javascript', 'image/svg+xml')):
+            return resp
+        data = resp.get_data()
+        if len(data) < 1024:
+            return resp
+        zipped = _gzip.compress(data, compresslevel=5)
+        resp.set_data(zipped)
+        resp.headers['Content-Encoding'] = 'gzip'
+        resp.headers['Content-Length'] = str(len(zipped))
+        resp.headers['Vary'] = 'Accept-Encoding'
+    except Exception:
+        pass
+    return resp
+
+def _json_etag(payload):
+    body = json.dumps(payload, sort_keys=True, default=str)
+    etag = '"' + _hashlib.md5(body.encode('utf-8')).hexdigest() + '"'
+    if request.headers.get('If-None-Match') == etag:
+        r = Response(status=304)
+    else:
+        r = Response(body, mimetype='application/json')
+    r.headers['ETag'] = etag
+    r.headers['Cache-Control'] = 'private, no-cache'
+    return r
+
 # ==================== FLASK ROUTES ====================
 
 # Root shows mini app
@@ -1912,7 +1948,7 @@ def uptimerobot_ping():
 def static_files(filename):
     """Serve static files"""
     try:
-        return send_from_directory('static', filename)
+        return send_from_directory('static', filename, max_age=2592000)
     except Exception as e:
         return f"Error loading file: {e}", 404
 
@@ -12806,7 +12842,10 @@ function vrGetMic() {
     })
     .then(stream => { vrMic = stream; vrTouchMic(); return stream; });
 }
-document.addEventListener('visibilitychange', () => { if (document.hidden) vrReleaseMic(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) vrReleaseMic();
+  else if (typeof crPartnerId!=='undefined' && crPartnerId) fetchCRMsgs();
+});
 window.addEventListener('pagehide', vrReleaseMic);
 
 function setupVoiceButton(btnId, target) {
@@ -14088,7 +14127,7 @@ function openAdminTranscript(userA, userB, nameA, nameB){
   document.querySelector('.cr-input').style.display = 'none'; // admins observe, don't send
   fetchAdminTranscript(true);
   clearInterval(adminMonitorPoll);
-  adminMonitorPoll = setInterval(fetchAdminTranscript, 4000);
+  adminMonitorPoll = setInterval(()=>{ if(!document.hidden) fetchAdminTranscript(); }, 8000);
 }
 
 async function loadOlderAdminMessages(){
@@ -14187,9 +14226,9 @@ function openCR(pid,name,ava){
   document.getElementById('cr-ava').innerHTML=avaHtml(ava);
   document.getElementById('chat-room').classList.add('open');
   document.getElementById('cr-txt').value='';
-  crOlderMsgs=[]; crMsgsCache=[]; crHasMore=false;
+  crOlderMsgs=[]; crMsgsCache=[]; crHasMore=false; crLastSig='';
   fetchCRMsgs(true);
-  clearInterval(crPoll);crPoll=setInterval(fetchCRMsgs,3000);
+  clearInterval(crPoll);crPoll=setInterval(fetchCRMsgs,5000);
 }
 function closeCR(){
   crCancelEdit(false);
@@ -14221,6 +14260,7 @@ function crRenderMsgs(scroll,preserveAnchor){
   if(preserveAnchor)box.scrollTop=box.scrollHeight-prevScrollHeight+prevScrollTop;
   else if(scroll||wasBottom)box.scrollTop=box.scrollHeight;
 }
+let crLastSig='';
 async function fetchCRMsgs(scroll=false){
   if(!crPartnerId)return;
   try{
@@ -14233,6 +14273,7 @@ async function fetchCRMsgs(scroll=false){
     const isBusyVoice = ()=>Array.from(box.querySelectorAll('.voice-player-audio')).some(a=>!a.paused || a.dataset.loading==='1');
     if(isBusyVoice()) return;
     if(crEditInFlight) return;   // an edit is being saved; the next poll picks up the saved text
+    if(document.hidden && !scroll) return;
     const partner=crPartnerId;
     // Poll only the newest 50; anything loaded via "Load older" is kept and merged in front.
     const d=await api(`/api/mini-app/chats/${partner}?user_id=${UID}&limit=50`);
@@ -14243,6 +14284,9 @@ async function fetchCRMsgs(scroll=false){
     const seen=new Set(latest.map(m=>m.id));
     crMsgsCache=crOlderMsgs.filter(m=>!seen.has(m.id)).concat(latest);
     crMsgsCache=crMergeLocal(crMsgsCache,latest);
+    const sig=JSON.stringify(crMsgsCache.map(m=>[m.id,m.is_read,m.is_edited,m.is_deleted,m.content,m.timestamp,m.media_id]))+crHasMore;
+    if(sig===crLastSig && !scroll) return;
+    crLastSig=sig;
     crRenderMsgs(scroll,false);
   }catch(e){}
 }
@@ -14637,7 +14681,9 @@ init();
 </html>""")
     
     html = html.replace('SLOT_PRIMARY', _primary).replace('SLOT_BORDER', _border).replace('SLOT_TEXT', _text).replace('SLOT_RGB', _rgb).replace('SLOT_BOT', _bot)
-    return html
+    resp = Response(html, mimetype='text/html')
+    resp.headers['Cache-Control'] = 'public, max-age=300'
+    return resp
 
 
 # ==================== MINI APP API ENDPOINTS ====================
@@ -15282,7 +15328,7 @@ def mini_app_file_proxy(file_id):
             finally:
                 up.close()
 
-        headers = {'Cache-Control': 'private, max-age=3600'}
+        headers = {'Cache-Control': 'private, max-age=604800, immutable'}
         for name in ('Content-Range', 'Accept-Ranges'):
             if name in upstream.headers:
                 headers[name] = upstream.headers[name]
@@ -16141,7 +16187,7 @@ def mini_app_get_messages(partner_id):
                 'reply_to': None if is_deleted else _reply_info(r.get('reply_to_id'))
             })
             
-        return jsonify({'success': True, 'data': messages, 'has_more': has_more})
+        return _json_etag({'success': True, 'data': messages, 'has_more': has_more})
     except Exception as e:
         logger.error(f"Error getting messages: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
