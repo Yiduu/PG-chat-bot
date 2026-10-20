@@ -1447,6 +1447,37 @@ def fix_orphaned_comments_for_post(post_id: int):
         logger.error(f"Error fixing orphans for post {post_id}: {e}")
         return 0
 
+def delete_post_cascade(post_ids):
+    """Delete posts and EVERYTHING that references them, in one transaction.
+    Returns the list of post_ids that were actually deleted."""
+    ids = [int(i) for i in post_ids]
+    if not ids:
+        return []
+    conn = None
+    _acquire_db_slot()
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor() as cur:
+            cur.execute("""DELETE FROM reactions WHERE comment_id IN
+                           (SELECT comment_id FROM comments WHERE post_id = ANY(%s))""", (ids,))
+            cur.execute("DELETE FROM reactions WHERE post_id = ANY(%s)", (ids,))   # <- was missing
+            cur.execute("DELETE FROM comments WHERE post_id = ANY(%s)", (ids,))
+            cur.execute("DELETE FROM post_views WHERE post_id = ANY(%s)", (ids,))  # <- was missing
+            cur.execute("DELETE FROM post_categories WHERE post_id = ANY(%s)", (ids,))
+            cur.execute("UPDATE posts SET thread_from_post_id = NULL WHERE thread_from_post_id = ANY(%s)", (ids,))
+            cur.execute("DELETE FROM posts WHERE post_id = ANY(%s) RETURNING post_id", (ids,))
+            deleted = [r['post_id'] for r in cur.fetchall()]
+        conn.commit()
+        return deleted
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+        _db_slots.release()
+
 async def adopt_orphaned_replies(context: ContextTypes.DEFAULT_TYPE, post_id: int):
     """Helper to fix orphans and update channel count"""
     fixed_count = (await asyncio.to_thread(fix_orphaned_comments_for_post, post_id))
@@ -4163,21 +4194,25 @@ async def execute_bulk_delete(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     try:
         if mode == 'selected':
-            ids = list(context.user_data.get('bulk_delete_ids', set()))
-            if not ids:
+            sel_ids = list(context.user_data.get('bulk_delete_ids', set()))
+            if not sel_ids:
                 await query.answer("No posts selected.", show_alert=True)
                 return
-            rows = (await db_execute_async(
-                "DELETE FROM posts WHERE post_id = ANY(%s) AND approved = FALSE RETURNING post_id",
-                (ids,), fetch=True
+            rows = (await db_fetch_all_async(
+                "SELECT post_id FROM posts WHERE post_id = ANY(%s) AND approved = FALSE",
+                (sel_ids,)
             )) or []
+            ids = [r['post_id'] for r in rows]
+            deleted_ids = (await asyncio.to_thread(delete_post_cascade, ids)) if ids else []
         else:
-            rows = (await db_execute_async(
-                "DELETE FROM posts WHERE approved = FALSE RETURNING post_id",
-                (), fetch=True
+            rows = (await db_fetch_all_async(
+                "SELECT post_id FROM posts WHERE approved = FALSE",
+                ()
             )) or []
+            ids = [r['post_id'] for r in rows]
+            deleted_ids = (await asyncio.to_thread(delete_post_cascade, ids)) if ids else []
 
-        deleted_count = len(rows)
+        deleted_count = len(deleted_ids)
         context.user_data['bulk_delete_ids'] = set()
         logger.info(f"Admin {user_id} bulk-deleted {deleted_count} pending post(s) (mode={mode})")
 
@@ -4502,7 +4537,7 @@ async def finalize_rejection(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
         # Rejected posts are deleted outright rather than archived; if a status-based
         # soft-rejection flow is ever needed, add a `status` column instead of reusing this.
-        success = (await db_execute_async("DELETE FROM posts WHERE post_id = %s", (post_id,)))
+        await asyncio.to_thread(delete_post_cascade, [post_id])
         
         # Clear context flags
         context.user_data.pop('rejecting_post', None)
@@ -7537,6 +7572,111 @@ async def show_admin_reports(update: Update, context: ContextTypes.DEFAULT_TYPE,
             pass
 
 
+async def show_report_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, report_id: int):
+    query = update.callback_query
+    admin_id = str(query.from_user.id)
+    if not await mod_is_admin(admin_id):
+        await query.answer("No permission.", show_alert=True)
+        return
+
+    report = await db_fetch_one_async("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+    if not report:
+        await query.answer("Report not found.", show_alert=True)
+        return
+
+    t_type, t_id = report['target_type'], report['target_id']
+    reporter = await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (report['reporter_id'],))
+    reporter_name = html.escape((reporter or {}).get('anonymous_name') or 'Anonymous')
+
+    media_type, media_id = 'text', None
+    body = "<i>[Content has been deleted]</i>"
+    author_id = None
+    open_url = None
+    lines = []
+
+    if t_type == 'post':
+        post = await db_fetch_one_async("""
+            SELECT p.*, u.anonymous_name,
+                   (SELECT STRING_AGG(category_code, ', ') FROM post_categories WHERE post_id = p.post_id) AS cats
+            FROM posts p JOIN users u ON u.user_id = p.author_id
+            WHERE p.post_id = %s
+        """, (t_id,))
+        if post:
+            author_id = str(post['author_id'])
+            media_type, media_id = post.get('media_type') or 'text', post.get('media_id')
+            vent = f"Vent - {post['vent_number']:03d}" if post.get('vent_number') else f"Post #{t_id}"
+            lines.append(f"<b>Post:</b> {html.escape(vent)}")
+            lines.append(f"<b>Author:</b> {html.escape(post['anonymous_name'] or 'Anonymous')} (<code>{author_id}</code>)")
+            lines.append(f"<b>Categories:</b> {html.escape(post.get('cats') or 'Other')}")
+            if post.get('explicit'):
+                lines.append("<b>Marked explicit</b>")
+            if post.get('deleted'):
+                lines.append("<i>Author already deleted this post</i>")
+            body = html.escape(truncate_for_telegram(post['content'] or '', 3000)) or "<i>[no text]</i>"
+            open_url = f"https://t.me/{BOT_USERNAME}?start=comments_{t_id}"
+
+    elif t_type == 'comment':
+        c = await db_fetch_one_async("""
+            SELECT c.*, u.anonymous_name, p.content AS post_content
+            FROM comments c
+            JOIN users u ON u.user_id = c.author_id
+            LEFT JOIN posts p ON p.post_id = c.post_id
+            WHERE c.comment_id = %s
+        """, (t_id,))
+        if c:
+            author_id = str(c['author_id'])
+            media_type, media_id = c.get('type') or 'text', c.get('file_id')
+            lines.append(f"<b>Comment #{t_id}</b>")
+            lines.append(f"<b>Author:</b> {html.escape(c['anonymous_name'] or 'Anonymous')} (<code>{author_id}</code>)")
+            ctx_txt = html.escape(truncate_for_telegram(c.get('post_content') or '', 150))
+            if ctx_txt:
+                lines.append(f"<b>On post:</b> <i>{ctx_txt}</i>")
+            body = html.escape(truncate_for_telegram(c['content'] or '', 3000)) or "<i>[no text]</i>"
+            open_url = f"https://t.me/{BOT_USERNAME}?start=comments_{c['post_id']}"
+
+    elif t_type == 'user':
+        u = await mod_get_target(t_id)
+        if u:
+            author_id = str(u['user_id'])
+            lines.append(f"<b>User:</b> {html.escape(get_display_name(u))} (<code>{author_id}</code>)")
+            lines.append(f"<b>Warnings:</b> {int(u['warning_count'] or 0)}" + ("  |  <b>BANNED</b>" if u['is_banned'] else ""))
+            row = await db_fetch_one_async("SELECT bio FROM users WHERE user_id = %s", (author_id,))
+            body = html.escape((row or {}).get('bio') or 'No bio set.')
+
+    header = (
+        f"<b>Report #{report_id}</b> ({_report_type_label(t_type)})\n"
+        f"<b>Reported by:</b> {reporter_name}\n"
+        f"<b>Reason:</b> {html.escape(report['reason'])}\n"
+        f"<b>Status:</b> {html.escape(report['status'])}\n\n"
+    )
+    text = header + ("\n".join(lines) + "\n\n" if lines else "") + body
+    text = text[:4000]
+
+    kb_rows = []
+    if report['status'] == 'pending':
+        row1 = [InlineKeyboardButton("Dismiss", callback_data=f"report_dismiss_{report_id}")]
+        if t_type in ('post', 'comment'):
+            row1.append(InlineKeyboardButton("Delete Content", callback_data=f"report_delete_{report_id}"))
+        kb_rows.append(row1)
+        kb_rows.append([InlineKeyboardButton("Warn User", callback_data=f"report_warn_{report_id}")])
+    if author_id:
+        kb_rows.append([InlineKeyboardButton("🛡 Moderate author", callback_data=f"mod_rep_{report_id}")])
+    if open_url:
+        kb_rows.append([InlineKeyboardButton("Open in bot", url=open_url)])
+    kb_rows.append([InlineKeyboardButton("Back to Reports", callback_data='admin_reports')])
+    kb = InlineKeyboardMarkup(kb_rows)
+
+    chat_id = query.message.chat_id
+    # 1) the real attachment, if there is one
+    if media_id and media_type != 'text':
+        await send_telegram_media_async(
+            context, chat_id, media_type, media_id,
+            caption=f"Report #{report_id} attachment"
+        )
+    # 2) the full details + actions
+    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
 async def notify_admin_of_new_report(
     context: ContextTypes.DEFAULT_TYPE,
     report_id: int,
@@ -9841,37 +9981,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data.startswith('report_view_'):
             try:
                 report_id = int(query.data.split('_')[2])
-                report = (await db_fetch_one_async("SELECT * FROM reports WHERE report_id = %s", (report_id,)))
-                if not report:
-                    await query.answer("Report not found.", show_alert=True)
-                    return
-                preview, author_id = (await asyncio.to_thread(get_report_content_preview, report['target_type'], report['target_id']))
-                type_label = _report_type_label(report['target_type'])
-                preview_text = html.escape(preview or '[Content deleted]')
-                safe_reason = html.escape(report['reason'])
-                reporter = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (report['reporter_id'],)))
-                reporter_name = html.escape(reporter['anonymous_name'] if reporter else 'Anonymous')
-                view_text = (
-                    f"<b>Report #{report_id}</b>\n"
-                    f"Type: {type_label}\n"
-                    f"Reporter: {reporter_name}\n"
-                    f"Reason: {safe_reason}\n\n"
-                    f"<b>Content Preview:</b>\n{preview_text}"
-                )
-                keyboard = [
-                    [
-                        InlineKeyboardButton("Dismiss", callback_data=f"report_dismiss_{report_id}"),
-                        InlineKeyboardButton("Delete Content", callback_data=f"report_delete_{report_id}"),
-                    ],
-                    [InlineKeyboardButton("Warn User", callback_data=f"report_warn_{report_id}")],
-                    [InlineKeyboardButton("Back to Reports", callback_data='admin_reports')]
-                ]
-                try:
-                    await query.edit_message_text(view_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-                except Exception:
-                    await query.message.reply_text(view_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+                await query.answer()
+                await show_report_detail(update, context, report_id)
             except Exception as e:
-                logger.error(f"Error in report_view handler: {e}")
+                logger.error(f"Error in report_view handler: {e}", exc_info=True)
                 await query.answer("Error loading report", show_alert=True)
 
         elif query.data.startswith('report_dismiss_'):
@@ -9897,45 +10010,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 author_id = None
         
                 if target_type == 'post':
-                    # ---------- DELETE POST ----------
                     post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (target_id,)))
                     if not post:
                         await query.answer("Post already deleted.", show_alert=True)
                         return
-        
-                    # 1. Try to delete or hide channel message
+
+                    deleted_ids = await asyncio.to_thread(delete_post_cascade, [target_id])
+                    if not deleted_ids:
+                        raise Exception("Post deletion from database failed (no rows returned)")
+
                     if post.get('channel_message_id'):
                         try:
-                            await context.bot.delete_message(
-                                chat_id=CHANNEL_ID,
-                                message_id=post['channel_message_id']
-                            )
-                            logger.info(f"Deleted channel message for post {target_id}")
+                            await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=post['channel_message_id'])
                         except Exception as e:
                             logger.error(f"Failed to delete channel message: {e}")
-                            # Fallback: edit the message to show it's removed
                             try:
                                 await context.bot.edit_message_text(
-                                    chat_id=CHANNEL_ID,
-                                    message_id=post['channel_message_id'],
-                                    text="*This content has been removed by an admin.*",
-                                    parse_mode=ParseMode.MARKDOWN,
-                                    reply_markup=None
+                                    chat_id=CHANNEL_ID, message_id=post['channel_message_id'],
+                                    text="This content has been removed by an admin.", reply_markup=None
                                 )
                             except Exception as edit_err:
                                 logger.error(f"Also failed to edit channel message: {edit_err}")
-        
-                    # 2. Delete all associated data (comments, reactions, categories)
-                    (await db_execute_async("DELETE FROM reactions WHERE comment_id IN (SELECT comment_id FROM comments WHERE post_id = %s)", (target_id,)))
-                    (await db_execute_async("DELETE FROM comments WHERE post_id = %s", (target_id,)))
-                    (await db_execute_async("DELETE FROM post_categories WHERE post_id = %s", (target_id,)))
-                    # 3. Delete the post itself, verify it's gone
-                    deleted = (await db_execute_async("DELETE FROM posts WHERE post_id = %s RETURNING post_id", (target_id,), fetchone=True))
-                    calculate_user_rating.cache_clear()
-                    _leaderboard_cache_bust()
-                    if not deleted:
-                        raise Exception("Post deletion from database failed (no rows returned)")
-        
+
                     author_id = post.get('author_id')
                     logger.info(f"Post {target_id} deleted by admin {user_id}")
         
@@ -9969,6 +10065,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
                 # ---------- AFTER DELETION: update report, clear caches, notify author ----------
                 (await asyncio.to_thread(resolve_report, report_id, user_id, 'action_taken', 'deleted'))
+                await db_execute_async(
+                    "UPDATE reports SET status='action_taken', reviewed_by=%s, reviewed_at=NOW(), action_taken='deleted' "
+                    "WHERE target_type=%s AND target_id=%s AND status='pending'",
+                    (user_id, target_type, target_id)
+                )
         
                 # Clear aura caches (important for leaderboard updates)
                 calculate_user_rating.cache_clear()
