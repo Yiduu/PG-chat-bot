@@ -4543,7 +4543,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             post_id_str = arg.split("_", 1)[1]
             if post_id_str.isdigit():
                 post_id = int(post_id_str)
-                await show_comments_menu(update, context, post_id, page=1)
+                # The channel post already showed the explicit warning; don't show a second one here.
+                await show_comments_menu(update, context, post_id, page=1, force_reveal=True)
             return
 
         elif arg.startswith("viewpost_"):
