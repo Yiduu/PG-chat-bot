@@ -2281,6 +2281,14 @@ def get_display_sex(user_data):
             return user_data['sex']
     return ""
 
+def get_display_name_with_sex(user_data):
+    """Like get_display_name, but puts the 👨/👩 first (same look as the comment list)."""
+    if not user_data:
+        return "Anonymous"
+    prefix = " ".join(x for x in (get_display_sex(user_data), user_data.get('avatar_emoji') or "") if x)
+    name = user_data.get('anonymous_name') or "Anonymous"
+    return f"{prefix} {name}" if prefix else name
+
 def normalize_revealed_sex(value):
     """Only 👨 / 👩 are ever shown next to a vent number. Anything else (None, '', the
     unset 👤 placeholder, junk) means 'show nothing'."""
@@ -2824,8 +2832,8 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
         if not author or not author['notifications_enabled']:
             return
         
-        commenter = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (commenter_id,)))
-        commenter_name = get_display_name(commenter)
+        commenter = (await db_fetch_one_async("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (commenter_id,)))
+        commenter_name = get_display_name_with_sex(commenter)
         
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
         
@@ -2889,12 +2897,12 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
             return
             
         # === FIX: Vent author anonymization in reply notification ===
+        replier = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (replier_id,)))
         if str(replier_id) == str(post['author_id']):
-            replier_display = "Vent author"
-            safe_replier_name = replier_display
+            _vsex = get_display_sex(replier)
+            safe_replier_name = f"{_vsex} Vent author" if _vsex else "Vent author"
         else:
-            replier = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (replier_id,)))
-            replier_name = get_display_name(replier)
+            replier_name = get_display_name_with_sex(replier)
             safe_replier_name = escape_markdown(replier_name, version=2)
         
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
@@ -2964,10 +2972,10 @@ async def notify_post_author_of_thread_reply(context: ContextTypes.DEFAULT_TYPE,
         if not author or not author['notifications_enabled']:
             return
 
-        replier = await db_fetch_one_async("SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (replier_id,))
-        replier_name = get_display_name(replier)
-        parent_author = await db_fetch_one_async("SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (parent['author_id'],))
-        parent_name = get_display_name(parent_author)
+        replier = await db_fetch_one_async("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (replier_id,))
+        replier_name = get_display_name_with_sex(replier)
+        parent_author = await db_fetch_one_async("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (parent['author_id'],))
+        parent_name = get_display_name_with_sex(parent_author)
 
         post_preview = (post['content'][:60] + '...') if post['content'] and len(post['content']) > 60 else (post['content'] or "")
         media_labels = {'voice': '[Voice message]', 'gif': '[GIF]', 'sticker': '[Sticker]', 'photo': '[Photo]'}
@@ -12156,6 +12164,25 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .msg-row.me .msg-quote{border-left-color:#0c0b09;background:rgba(12,11,9,.13)}
 .msg-row.me .msg-quote .rq-name{color:#0c0b09}
 .msg-row.me .msg-quote .rq-text{color:rgba(12,11,9,.72)}
+/* --- private chat polish --- */
+.msg-row{min-width:0;max-width:82%}
+.msg-bubble{min-width:0;max-width:100%;overflow-wrap:anywhere}
+.msg-quote{min-width:0;width:100%;box-sizing:border-box;overflow:hidden}
+.msg-quote .rq-text{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.msg-text{white-space:pre-wrap}
+.msg-time{display:flex;align-items:center;gap:2px}
+.msg-time .msg-reply-btn,.msg-time .msg-menu-btn{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:24px;margin:0;padding:0 4px;cursor:pointer;opacity:.55;color:var(--text3);border-radius:12px;-webkit-tap-highlight-color:transparent}
+.msg-time .msg-reply-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.msg-time .msg-menu-btn{font-size:15px;line-height:1;letter-spacing:1px}
+.msg-time .msg-reply-btn:active,.msg-time .msg-menu-btn:active{opacity:1;background:var(--glass2)}
+#cr-reply-bar{background:rgba(var(--gold-rgb),.08);border-radius:12px;padding:8px 4px 8px 10px;gap:8px}
+#cr-reply-bar .rb-line{width:3px;align-self:stretch;min-height:30px}
+#cr-reply-bar .rq-text{white-space:nowrap}
+.cr-input{padding-bottom:calc(12px + env(safe-area-inset-bottom,0))!important}
+.cr-head{padding-top:calc(16px + env(safe-area-inset-top,0))}
+body.light .cr-input{background:rgba(245,243,240,0.97)}
+body.light #cr-reply-bar{background:rgba(var(--gold-rgb),.14)}
+body.light #cr-reply-bar .rq-text{color:#5a5345}
 .msg-bubble.msg-flash{animation:msgFlash 1.3s ease-out}
 @keyframes msgFlash{0%,40%{filter:brightness(1.4)}100%{filter:none}}
 .msg-swipe-ico{position:absolute;left:-40px;top:50%;margin-top:-15px;width:30px;height:30px;border-radius:50%;background:var(--bg3);color:var(--text2);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none}
@@ -12227,7 +12254,7 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 .cr-name{font-size:17px;font-weight:700}
 .cr-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
 .cr-msgs::-webkit-scrollbar{display:none}
-.msg-row{display:flex;flex-direction:column;max-width:75%}
+.msg-row{display:flex;flex-direction:column;max-width:82%}
 .msg-row.me{align-self:flex-end;align-items:flex-end}
 .msg-row.them{align-self:flex-start}
 .msg-bubble{
@@ -14250,12 +14277,16 @@ function crRenderMsgs(scroll,preserveAnchor){
       return `<div class="msg-row ${m.is_mine?'me':'them'}" id="msg-${m.id}"><div class="msg-bubble msg-deleted">Message deleted</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`;
     }
     const editedTag=m.is_edited?' · edited':'';
-    const menuBtn='<span class="msg-menu-btn">⋯</span>';
+    const menuBtn='<span class="msg-menu-btn" title="More">⋯</span>';
+    const replyBtn='<span class="msg-reply-btn" title="Reply">'+(ICONS.reply||'↩')+'</span>';
     const editingCls=(crEditing&&String(crEditing.id)===String(m.id))?' msg-editing':'';
-    return `<div class="msg-row ${m.is_mine?'me':'them'}" data-mid="${m.id}" id="msg-${m.id}"><div class="msg-bubble${editingCls}">${crQuoteHtml(m.reply_to)}${esc(m.content)}${m.media_id?renderMedia(m.media_type,m.media_id):''}${menuBtn}</div><div class="msg-time">${esc(m.timestamp||'')}${editedTag}</div></div>`;
+    return `<div class="msg-row ${m.is_mine?'me':'them'}" data-mid="${m.id}" id="msg-${m.id}"><div class="msg-bubble${editingCls}">${crQuoteHtml(m.reply_to)}<span class="msg-text">${esc(m.content)}</span>${m.media_id?renderMedia(m.media_type,m.media_id):''}</div><div class="msg-time"><span>${esc(m.timestamp||'')}${editedTag}</span>${replyBtn}${menuBtn}</div></div>`;
   }).join('')+vrPendHtmlFor('chat');
   box.querySelectorAll('.msg-menu-btn').forEach(btn=>{
     btn.onclick=(e)=>{e.stopPropagation();msgActions(btn.closest('.msg-row').dataset.mid);};
+  });
+  box.querySelectorAll('.msg-reply-btn').forEach(btn=>{
+    btn.onclick=(e)=>{e.stopPropagation();crReplyStart(btn.closest('.msg-row').dataset.mid);};
   });
   if(preserveAnchor)box.scrollTop=box.scrollHeight-prevScrollHeight+prevScrollTop;
   else if(scroll||wasBottom)box.scrollTop=box.scrollHeight;
@@ -14430,7 +14461,7 @@ function crReplyStart(id){
   const rt=crInfo(id); if(!rt||rt.deleted) return;
   crReplyTo={id:rt.id,partner:crPartnerId};
   const bar=document.getElementById('cr-reply-bar');
-  bar.innerHTML='<div class="rb-line"></div><div class="rb-body" onclick="crJump('+rt.id+')"><div class="rq-name">Reply to '+esc(rt.is_mine?'You':crPartnerName())+
+  bar.innerHTML='<div class="rb-ico">'+(ICONS.reply||'')+'</div><div class="rb-line"></div><div class="rb-body" onclick="crJump('+rt.id+')"><div class="rq-name">Reply to '+esc(rt.is_mine?'You':crPartnerName())+
     '</div><div class="rq-text">'+esc(cmtSnippet(rt))+'</div></div><button type="button" class="rb-x" onclick="crCancelReply()">'+ICONS.close+'</button>';
   bar.style.display='flex';
   const t=document.getElementById('cr-txt'); if(t) t.focus();
@@ -14453,7 +14484,7 @@ setInterval(()=>{ if(crEditing && crEditing.partner!==crPartnerId) crCancelEdit(
     row=null; ico=null; drag=false; dx=0; buzzed=false;
   };
   box.addEventListener('pointerdown',e=>{
-    if(e.target.closest('button,a,audio,video,.msg-menu-btn,.msg-quote,.voice-player')) return;
+    if(e.target.closest('button,a,audio,video,.msg-menu-btn,.msg-reply-btn,.msg-quote,.voice-player')) return;
     const r=e.target.closest('.msg-row');
     if(!r||!r.dataset.mid) return;
     row=r; x0=e.clientX; y0=e.clientY; dx=0; drag=false; buzzed=false;
@@ -15030,7 +15061,7 @@ def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_id=None, c
             return
 
         commenter = get_user_cached(commenter_id)
-        commenter_name = get_display_name(commenter)
+        commenter_name = get_display_name_with_sex(commenter)
 
         post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
         safe_commenter = html.escape(commenter_name)
@@ -15080,11 +15111,12 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_commen
         if not post:
             return
 
+        replier = get_user_cached(replier_id)
         if str(replier_id) == str(post['author_id']):
-            safe_replier_name = "Vent author"
+            _vsex = get_display_sex(replier)
+            safe_replier_name = f"{_vsex} Vent author" if _vsex else "Vent author"
         else:
-            replier = get_user_cached(replier_id)
-            safe_replier_name = html.escape(get_display_name(replier))
+            safe_replier_name = html.escape(get_display_name_with_sex(replier))
 
         post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
         safe_post_preview = html.escape(post_preview)
@@ -15140,9 +15172,9 @@ def notify_post_author_of_thread_reply_sync(post_id, parent_comment_id, replier_
             return
 
         replier = get_user_cached(replier_id)
-        replier_name = get_display_name(replier)
+        replier_name = get_display_name_with_sex(replier)
         parent_author = get_user_cached(parent['author_id'])
-        parent_name = get_display_name(parent_author)
+        parent_name = get_display_name_with_sex(parent_author)
 
         post_preview = (post['content'][:60] + '...') if post['content'] and len(post['content']) > 60 else (post['content'] or "")
         media_labels = {'voice': '[Voice message]', 'gif': '[GIF]', 'sticker': '[Sticker]', 'photo': '[Photo]'}
