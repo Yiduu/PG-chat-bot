@@ -8736,6 +8736,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (user_id, target_id)
                 ))
                 await query.answer("🔔 Reminder sent!", show_alert=False)
+                try:
+                    await query.message.reply_text("🔔 Reminder sent. You'll get a message here when they accept.")
+                except Exception as e:
+                    logger.error(f"Failed to send reminder confirmation: {e}")
 
                 sender_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,)))
                 sender_name = get_display_name(sender_data)
@@ -8767,12 +8771,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (%s, %s, 'pending')",
                     (user_id, target_id)
                 ))
-                await query.answer("Chat request sent!", show_alert=False)
-                
-                # Notify receiver
+            except Exception as e:
+                logger.error(f"ChatRequest insert error: {e}")
+                await query.answer("Failed to send request.", show_alert=True)
+                return
+
+            # The request is saved, so confirm to the sender with a persistent message
+            # (the toast from query.answer disappears in ~2s and is easy to miss).
+            target_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (target_id,)))
+            target_name = get_display_name(target_data) if target_data else "this user"
+            await query.answer("✅ Chat request sent!", show_alert=False)
+            try:
+                await query.message.reply_text(
+                    f"✅ Chat request sent to *{escape_markdown(target_name, version=2)}*\\!\n"
+                    f"_You'll get a message here as soon as they accept\\._",
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+            except Exception as e:
+                logger.error(f"Failed to send chat request confirmation: {e}")
+
+            # Notify receiver. A failure here (e.g. they blocked the bot) must not look like
+            # the request failed, since it is already stored.
+            try:
                 sender_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,)))
                 sender_name = get_display_name(sender_data)
-                
+
                 receiver_text = (
                     f"*New Chat Request\\!*\n"
                     f"_{escape_markdown(sender_name, version=2)}_ wants to chat with you\\.\n\n"
@@ -8785,7 +8808,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ],
                     [InlineKeyboardButton("View Profile", url=f'https://t.me/{BOT_USERNAME}?start=profileid_{user_id}')]
                 ])
-                
+
                 await context.bot.send_message(
                     chat_id=target_id,
                     text=receiver_text,
@@ -8793,8 +8816,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
             except Exception as e:
-                logger.error(f"ChatRequest error: {e}")
-                await query.answer("Failed to send request.", show_alert=True)
+                logger.error(f"Chat request notification to {target_id} failed: {e}")
 
         elif query.data.startswith('acceptchat_'):
             sender_id = query.data.split('_')[1]
