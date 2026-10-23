@@ -1082,6 +1082,75 @@ def pm_notification_markup(receiver_id, sender_id):
     ])
 
 
+async def accept_chat_request(bot, sender_id, receiver_id):
+    """Accept the pending request `sender_id` -> `receiver_id` and tell the sender.
+    Returns 'accepted', 'already' (nothing to do) or 'missing' (no such request any more,
+    e.g. the chat was deleted or the sender cancelled)."""
+    sender_id, receiver_id = str(sender_id), str(receiver_id)
+    row = await db_fetch_one_async(
+        "SELECT status FROM chat_requests WHERE sender_id = %s AND receiver_id = %s",
+        (sender_id, receiver_id))
+    if not row:
+        return 'missing'
+    if row['status'] == 'accepted':
+        return 'already'
+
+    # Bumping the timestamp sorts the new conversation to the top of both chat lists.
+    await db_execute_async(
+        "UPDATE chat_requests SET status = 'accepted', timestamp = CURRENT_TIMESTAMP "
+        "WHERE sender_id = %s AND receiver_id = %s",
+        (sender_id, receiver_id))
+    # Mutual chat permission (also upgrades a stale reverse request instead of ignoring it).
+    await db_execute_async(
+        "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (%s, %s, 'accepted') "
+        "ON CONFLICT (sender_id, receiver_id) DO UPDATE SET status = 'accepted'",
+        (receiver_id, sender_id))
+
+    receiver_data = await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (receiver_id,))
+    receiver_name = get_display_name(receiver_data)
+
+    # "Chat now" opens the mini app straight into the chat with the person who accepted,
+    # signed in as the sender. The button is simply left off if RENDER_URL isn't set.
+    markup = None
+    chat_url = build_open_chat_url(sender_id, receiver_id)
+    if chat_url:
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("💬 Chat now", web_app=WebAppInfo(url=chat_url))]])
+    try:
+        await bot.send_message(
+            chat_id=sender_id,
+            text=f"✅ {receiver_name} accepted your chat request.\nYou can chat now!",
+            reply_markup=markup
+        )
+    except Exception as e:
+        logger.warning(f"Could not tell {sender_id} their chat request was accepted: {e}")
+    return 'accepted'
+
+
+async def reject_chat_request(bot, sender_id, receiver_id):
+    """Reject (ignore) the pending request `sender_id` -> `receiver_id` and tell the sender.
+    Only a *pending* request is removed, so a stale Ignore button can't undo a chat that
+    was already accepted. Returns True if a pending request was rejected."""
+    sender_id, receiver_id = str(sender_id), str(receiver_id)
+    row = await db_fetch_one_async(
+        "SELECT status FROM chat_requests WHERE sender_id = %s AND receiver_id = %s",
+        (sender_id, receiver_id))
+    if not row or row['status'] != 'pending':
+        return False
+    await db_execute_async(
+        "DELETE FROM chat_requests WHERE sender_id = %s AND receiver_id = %s AND status = 'pending'",
+        (sender_id, receiver_id))
+    receiver_data = await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (receiver_id,))
+    receiver_name = get_display_name(receiver_data)
+    try:
+        await bot.send_message(
+            chat_id=sender_id,
+            text=f"❌ {receiver_name} rejected your chat request."
+        )
+    except Exception as e:
+        logger.warning(f"Could not tell {sender_id} their chat request was rejected: {e}")
+    return True
+
+
 # ---- reaction weights + ONE scoring query shared by every aura/leaderboard path ----
 # Emoji are written as escapes on purpose: the previous dict literal lost its emoji
 # somewhere along the way and collapsed into duplicate '' keys.
@@ -8820,32 +8889,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data.startswith('acceptchat_'):
             sender_id = query.data.split('_')[1]
-            (await db_execute_async(
-                "UPDATE chat_requests SET status = 'accepted' WHERE sender_id = %s AND receiver_id = %s",
-                (sender_id, user_id)
-            ))
-            # Mutual chat permission
-            (await db_execute_async(
-                "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (%s, %s, 'accepted') ON CONFLICT DO NOTHING",
-                (user_id, sender_id)
-            ))
-            
+            result = await accept_chat_request(context.bot, sender_id, user_id)
+            if result == 'missing':
+                await query.answer("This request is no longer available.", show_alert=True)
+                try:
+                    await query.message.edit_text("This chat request is no longer available.")
+                except Exception:
+                    pass
+                return
+
             await query.answer("✅ Request accepted!", show_alert=False)
             await query.message.edit_text("✅ *You accepted the chat request\\!*", parse_mode=ParseMode.MARKDOWN_V2)
-            
-            receiver_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,)))
-            receiver_name = get_display_name(receiver_data)
-            try:
-                await context.bot.send_message(
-                    chat_id=sender_id,
-                    text=f"*{escape_markdown(receiver_name, version=2)}* accepted your chat request\\! You can now send messages from their profile\\.",
-                    parse_mode=ParseMode.MARKDOWN_V2
-                )
-            except: pass
 
         elif query.data.startswith('declinechat_'):
             sender_id = query.data.split('_')[1]
-            (await db_execute_async("DELETE FROM chat_requests WHERE sender_id = %s AND receiver_id = %s", (sender_id, user_id)))
+            await reject_chat_request(context.bot, sender_id, user_id)
             await query.answer("Request ignored.", show_alert=False)
             await query.message.edit_text("❌ *Chat request ignored\\.*", parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -8873,32 +8931,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
                 if is_accept:
-                    (await db_execute_async(
-                        "UPDATE chat_requests SET status = 'accepted' WHERE sender_id = %s AND receiver_id = %s",
-                        (sender_id, user_id)
-                    ))
-                    # Mutual chat permission, mirroring the acceptchat_ flow
-                    (await db_execute_async(
-                        "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (%s, %s, 'accepted') ON CONFLICT DO NOTHING",
-                        (user_id, sender_id)
-                    ))
-                    await query.answer("✅ Request accepted!", show_alert=False)
-
-                    receiver_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (user_id,)))
-                    receiver_name = get_display_name(receiver_data)
-                    try:
-                        await context.bot.send_message(
-                            chat_id=sender_id,
-                            text=f"*{escape_markdown(receiver_name, version=2)}* accepted your chat request\\! You can now send messages from their profile\\.",
-                            parse_mode=ParseMode.MARKDOWN_V2
-                        )
-                    except Exception:
-                        pass
+                    result = await accept_chat_request(context.bot, sender_id, user_id)
+                    if result == 'missing':
+                        await query.answer("This request is no longer available.", show_alert=True)
+                    else:
+                        await query.answer("✅ Request accepted!", show_alert=False)
                 else:
-                    (await db_execute_async(
-                        "DELETE FROM chat_requests WHERE sender_id = %s AND receiver_id = %s",
-                        (sender_id, user_id)
-                    ))
+                    await reject_chat_request(context.bot, sender_id, user_id)
                     await query.answer("❌ Request rejected.", show_alert=False)
 
                 # Refresh the list in place so the user can keep working through it
@@ -15069,6 +15108,10 @@ function crEmptyHtml(){
     return '<div class="cr-empty">'+ico('<path d="M4 5h16v11H9l-5 4z"/><path d="M9 8.5l5 4M14 8.5l-5 4"/>')+
       '<div class="cr-empty-title">Chat deleted</div><div class="cr-empty-sub">This conversation no longer exists. Send a new chat request to start again.</div></div>';
   }
+  if(crChat.can_chat===true&&!crChat.cleared&&!crChat.blocked_by_me){
+    return '<div class="cr-empty">'+ico('<path d="M4 5h16v11H9l-5 4z"/>')+
+      '<div class="cr-empty-title">Chat request accepted</div><div class="cr-empty-sub">You can chat now. Say hi 👋</div></div>';
+  }
   if(crChat.cleared){
     return '<div class="cr-empty">'+ico('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>')+
       '<div class="cr-empty-title">Chat history cleared</div><div class="cr-empty-sub">'+
@@ -16785,6 +16828,57 @@ def mini_app_get_chats():
                     'is_mine': False,
                     'unread_count': 0,
                     '_ts': c_time
+                })
+
+            # Accepted chats with no messages yet (and not cleared, which is handled above) also
+            # belong in the list, so both people see each other as soon as a request is accepted.
+            accepted_rows = db_fetch_all("""
+                SELECT a.partner_id, MAX(a.ts) AS accepted_at,
+                       u.anonymous_name AS partner_name, u.sex AS partner_sex,
+                       u.avatar_emoji AS partner_avatar, u.is_admin AS partner_is_admin
+                FROM (
+                    SELECT CASE WHEN cr.sender_id = %s THEN cr.receiver_id ELSE cr.sender_id END AS partner_id,
+                           cr.timestamp AS ts
+                    FROM chat_requests cr
+                    WHERE cr.status = 'accepted' AND (cr.sender_id = %s OR cr.receiver_id = %s)
+                ) a
+                JOIN users u ON u.user_id = a.partner_id
+                WHERE NOT EXISTS (
+                        SELECT 1 FROM private_messages pm
+                        WHERE (pm.sender_id = %s AND pm.receiver_id = a.partner_id)
+                           OR (pm.sender_id = a.partner_id AND pm.receiver_id = %s))
+                  AND NOT EXISTS (
+                        SELECT 1 FROM chat_clears cc
+                        WHERE cc.user_id = %s AND cc.partner_id = a.partner_id)
+                GROUP BY a.partner_id, u.anonymous_name, u.sex, u.avatar_emoji, u.is_admin
+            """, (user_id, user_id, user_id, user_id, user_id, user_id))
+            listed = {str(ch['partner_id']) for ch in chats}
+            for ar in (accepted_rows or []):
+                if str(ar['partner_id']) in listed:
+                    continue
+                a_time = ar['accepted_at']
+                if isinstance(a_time, str):
+                    a_time = datetime.strptime(a_time, '%Y-%m-%d %H:%M:%S')
+                diff = datetime.now() - a_time
+                if diff.days > 0:
+                    a_str = f"{diff.days}d ago"
+                elif diff.seconds > 3600:
+                    a_str = f"{diff.seconds // 3600}h ago"
+                elif diff.seconds > 60:
+                    a_str = f"{diff.seconds // 60}m ago"
+                else:
+                    a_str = "Just now"
+                chats.append({
+                    'partner_id': ar['partner_id'],
+                    'partner_name': ar['partner_name'] or 'Anonymous',
+                    'partner_sex': ar['partner_sex'] or '👤',
+                    'partner_avatar': ar['partner_avatar'] or '',
+                    'partner_is_admin': ar['partner_is_admin'],
+                    'last_message': 'Chat request accepted. Say hi! 👋',
+                    'time_ago': a_str,
+                    'is_mine': False,
+                    'unread_count': 0,
+                    '_ts': a_time
                 })
             chats.sort(key=lambda x: x['_ts'], reverse=True)
         for ch in chats:
