@@ -11837,6 +11837,7 @@ def mini_app_page():
   --radius:16px;
   --radius-sm:10px;
   --radius-xs:6px;
+  --gold-dark:#8a6d1f;
 }
 body.light {
   --bg:#f5f3f0;
@@ -12093,20 +12094,14 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .setting-label{flex:1}
 .setting-label-title{font-size:15px;font-weight:600;color:var(--text)}
 .setting-label-sub{font-size:13px;color:var(--text3);margin-top:2px}
-.toggle{position:relative;width:46px;height:26px;cursor:pointer;flex-shrink:0}
+.toggle{position:relative;width:44px;height:26px;cursor:pointer;flex-shrink:0;-webkit-tap-highlight-color:transparent}
 .toggle input{opacity:0;width:0;height:0;position:absolute}
-.toggle-track{
-  position:absolute;inset:0;border-radius:25px;
-  background:var(--bg3);border:0.5px solid var(--border);
-  transition:background 0.25s;
-}
-.toggle input:checked + .toggle-track{background:rgba(var(--gold-rgb),0.3);border-color:var(--gold)}
-.toggle-thumb{
-  position:absolute;width:20px;height:20px;border-radius:50%;
-  top:3px;left:3px;
-  background:var(--text3);transition:all 0.25s cubic-bezier(.4,0,.2,1);
-}
-.toggle input:checked ~ .toggle-thumb{left:23px;background:var(--gold)}
+.toggle-track{position:absolute;inset:0;border-radius:13px;background:rgba(127,127,127,.3);transition:background .2s}
+.toggle input:checked + .toggle-track{background:var(--gold)}
+.toggle-thumb{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .2s ease}
+.toggle input:checked ~ .toggle-thumb{transform:translateX(18px)}
+.toggle input:focus-visible + .toggle-track{outline:2px solid var(--gold);outline-offset:2px}
+.toggle input:disabled + .toggle-track,.toggle input:disabled ~ .toggle-thumb{opacity:.55}
 /* ===== Me tab: profile, edit profile, avatars (flat, one accent) ===== */
 .av-svg{display:block;width:100%;height:100%}
 body svg.av-svg{color:var(--gold2)}
@@ -12114,16 +12109,16 @@ body.light svg.av-svg{color:var(--gold-dark,#8a6d1f)}
 .ava svg.av-svg,.modal-avatar svg.av-svg,.profile-ava-wrap svg.av-svg{width:62%;height:62%}
 .me-head{padding:22px 20px 0}
 .me-head h1{font-size:26px;font-weight:700;letter-spacing:-.5px;color:var(--text)}
-.me-hero{margin:22px 20px 0}
+.me-hero{margin:20px 20px 0}
 .me-top{display:flex;align-items:center;gap:16px}
 .me-ava{
-  position:relative;width:76px;height:76px;border-radius:50%;flex-shrink:0;cursor:pointer;
+  position:relative;width:64px;height:64px;border-radius:50%;flex-shrink:0;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
   background:var(--bg2);border:1px solid var(--border);-webkit-tap-highlight-color:transparent;
 }
 .me-ava svg.av-svg{width:56%;height:56%}
 .me-id{min-width:0}
-.me-name{font-size:22px;font-weight:700;letter-spacing:-.3px;line-height:1.2;word-break:break-word}
+.me-name{font-size:20px;font-weight:600;letter-spacing:-.2px;line-height:1.2;word-break:break-word}
 .me-meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;margin-top:6px;font-size:14px;color:var(--text2)}
 .me-meta:empty{display:none}
 .me-meta span{display:inline-flex;align-items:center;gap:6px}
@@ -12148,39 +12143,22 @@ body.light svg.av-svg{color:var(--gold-dark,#8a6d1f)}
 }
 .me-edit-btn:active{background:var(--glass2)}
 .me-edit-btn svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.me-label{padding:34px 20px 6px;font-size:17px;font-weight:700;letter-spacing:-.2px;color:var(--text)}
+.me-label{padding:30px 20px 8px;font-size:13px;font-weight:600;letter-spacing:.01em;color:var(--text3)}
 .me-group{margin:0 20px;border-top:1px solid var(--border)}
-.me-row{display:flex;align-items:center;gap:14px;padding:15px 0;border-bottom:1px solid var(--border)}
-.me-row.stack{flex-direction:column;align-items:stretch;gap:12px}
-.me-row-head{display:flex;align-items:center;gap:14px}
+.me-row{display:flex;align-items:center;gap:16px;min-height:54px;padding:10px 0;border-bottom:1px solid var(--border)}
 .me-row.tap{cursor:pointer;-webkit-tap-highlight-color:transparent}
 .me-row.tap:active{background:var(--glass2)}
-.me-ico{width:22px;height:22px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-.me-ico svg{width:20px;height:20px;stroke:var(--text2);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .me-text{flex:1;min-width:0}
-.me-title{font-size:15px;font-weight:600;color:var(--text)}
+.me-title{font-size:16px;font-weight:500;color:var(--text)}
 .me-sub{font-size:13px;color:var(--text3);margin-top:2px;line-height:1.4}
 .me-chev{width:16px;height:16px;stroke:var(--text3);fill:none;stroke-width:2;flex-shrink:0}
 .me-note{padding:12px 20px 0;font-size:13px;line-height:1.5;color:var(--text3)}
 .me-foot{padding:34px 20px 8px;font-size:12px;color:var(--text3)}
 .me-foot a{color:var(--text2)}
-.seg{display:flex;gap:4px}
-.seg button{
-  flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:10px 8px;border-radius:10px;
-  background:none;border:1px solid var(--border);color:var(--text3);
-  font-family:'Inter',sans-serif;font-size:14px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;
-}
-.seg button.on{border-color:var(--gold);color:var(--text)}
-.seg svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.swatches{display:flex;gap:14px}
-.sw{
-  --c:#c9a84c;width:30px;height:30px;border-radius:50%;padding:0;cursor:pointer;background:var(--c);
-  border:2px solid var(--bg);outline:2px solid transparent;display:flex;align-items:center;justify-content:center;
-  color:#0c0b09;-webkit-tap-highlight-color:transparent;
-}
-.sw svg{width:13px;height:13px;opacity:0}
-.sw.on{outline-color:var(--text)}
-.sw.on svg{opacity:1}
+.seg{display:inline-flex;gap:2px;padding:2px;border-radius:9px;background:var(--glass2);flex-shrink:0}
+.seg button{padding:6px 12px;border:0;border-radius:7px;background:none;color:var(--text3);font:500 13px 'Inter',sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.seg button.on{background:var(--text);color:var(--bg)}
+#me-recent .post-body{color:var(--text);font-size:15px;margin-bottom:0}
 .modal-bio{font-size:14px;line-height:1.5;color:var(--text2);margin:2px 8px 14px;word-break:break-word}
 .modal-role{display:inline-flex;align-items:center;gap:5px;margin:0 0 10px;font-size:13px;font-weight:600;color:var(--text2)}
 .modal-role .icon{width:13px;height:13px}
@@ -12888,47 +12866,31 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       <div class="ed-actions"><button class="btn-gold" id="save-profile-btn" disabled>Save changes</button><button type="button" class="ed-cancel" onclick="meBack()">Cancel</button></div>
     </div>
     <div class="page" id="page-settings">
-      <div class="me-head"><h1>Me</h1><div class="page-head-sub">Your profile and preferences</div></div>
+      <div class="me-head"><h1>Me</h1></div>
       <div id="me-hero"></div>
       <div id="me-recent"></div>
 
-      <div class="me-label">Appearance</div>
+      <div class="me-label">Preferences</div>
       <div class="me-group">
-        <div class="me-row stack">
-          <div class="me-row-head"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></div><div class="me-text"><div class="me-title">Theme</div><div class="me-sub">Auto follows your device</div></div></div>
-          <div class="seg" id="seg-theme">
-            <button type="button" data-v="dark" onclick="setTheme('dark')"><svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Dark</button>
-            <button type="button" data-v="light" onclick="setTheme('light')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>Light</button>
-            <button type="button" data-v="auto" onclick="setTheme('auto')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v18a9 9 0 0 0 0-18z" fill="currentColor"/></svg>Auto</button>
-          </div>
-        </div>
-        <div class="me-row stack">
-          <div class="me-row-head"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></div><div class="me-text"><div class="me-title">Accent color</div><div class="me-sub" id="accent-name">Gold</div></div></div>
-          <div class="swatches" id="swatches"></div>
-        </div>
-        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M2 8v8"/><path d="M6 6v12"/><rect x="9" y="3" width="6" height="18" rx="2"/><path d="M18 6v12"/><path d="M22 8v8"/></svg></div><div class="me-text"><div class="me-title">Haptic feedback</div><div class="me-sub">A light tap when you press things</div></div><label class="toggle"><input type="checkbox" id="set-haptics" onchange="setHaptics(this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-      </div>
-
-      <div class="me-label">Notifications</div>
-      <div class="me-group">
-        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div class="me-text"><div class="me-title">Replies and interactions</div><div class="me-sub">Get a message from the bot when someone responds</div></div><label class="toggle"><input type="checkbox" id="set-notif" onchange="saveSetting('notifications',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-text"><div class="me-title">Theme</div></div><div class="seg" id="seg-theme" role="group" aria-label="Theme"><button type="button" data-v="auto" onclick="setTheme('auto')">Auto</button><button type="button" data-v="light" onclick="setTheme('light')">Light</button><button type="button" data-v="dark" onclick="setTheme('dark')">Dark</button></div></div>
+        <div class="me-row"><div class="me-text"><div class="me-title">Reply notifications</div><div class="me-sub">The bot messages you when someone responds</div></div><label class="toggle"><input type="checkbox" id="set-notif" onchange="saveSetting('notifications',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
       </div>
 
       <div class="me-label">Privacy</div>
       <div class="me-group">
-        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="me-text"><div class="me-title">Public profile</div><div class="me-sub">Let others see your profile stats</div></div><label class="toggle"><input type="checkbox" id="set-priv" onchange="saveSetting('privacy_public',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><div class="me-text"><div class="me-title">Hide aura and points</div><div class="me-sub">Others see Hidden instead</div></div><label class="toggle"><input type="checkbox" id="set-hide-aura" onchange="saveSetting('hide_aura',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/></svg></div><div class="me-text"><div class="me-title">Share my Telegram username</div><div class="me-sub">Off by default. When on, people you chat with can share your real @username</div></div><label class="toggle"><input type="checkbox" id="set-share-username" onchange="saveShareUsername(this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg></div><div class="me-text"><div class="me-title">Hide bio</div><div class="me-sub">Keep your bio to yourself</div></div><label class="toggle"><input type="checkbox" id="set-hide-bio" onchange="saveSetting('hide_bio',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><div class="me-text"><div class="me-title">Hide follower count</div><div class="me-sub">Your followers stay private</div></div><label class="toggle"><input type="checkbox" id="set-hide-followers" onchange="saveSetting('hide_follower_count',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-        <div class="me-row" id="row-hide-role" style="display:none"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="me-text"><div class="me-title">Hide role</div><div class="me-sub">Don't show that you're an administrator</div></div><label class="toggle"><input type="checkbox" id="set-hide-role" onchange="saveSetting('hide_role',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-text"><div class="me-title">Public profile</div><div class="me-sub">Let others see your profile stats</div></div><label class="toggle"><input type="checkbox" id="set-priv" onchange="saveSetting('privacy_public',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-text"><div class="me-title">Hide aura and points</div><div class="me-sub">Others see Hidden instead</div></div><label class="toggle"><input type="checkbox" id="set-hide-aura" onchange="saveSetting('hide_aura',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-text"><div class="me-title">Share my Telegram username</div><div class="me-sub">Off by default. Lets people you chat with share your @username</div></div><label class="toggle"><input type="checkbox" id="set-share-username" onchange="saveShareUsername(this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-text"><div class="me-title">Hide bio</div></div><label class="toggle"><input type="checkbox" id="set-hide-bio" onchange="saveSetting('hide_bio',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-text"><div class="me-title">Hide follower count</div></div><label class="toggle"><input type="checkbox" id="set-hide-followers" onchange="saveSetting('hide_follower_count',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row" id="row-hide-role" style="display:none"><div class="me-text"><div class="me-title">Hide role</div><div class="me-sub">Don't show that you're an administrator</div></div><label class="toggle"><input type="checkbox" id="set-hide-role" onchange="saveSetting('hide_role',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
       </div>
       <div class="me-note">You and administrators always see your full profile. Changes save as soon as you toggle them.</div>
 
       <div class="me-label">Community</div>
       <div class="me-group">
-        <div class="me-row tap" onclick="inviteFriends()"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg></div><div class="me-text"><div class="me-title">Invite friends</div><div class="me-sub">Share the bot link in Telegram</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
-        <div class="me-row tap" onclick="openSupport()"><div class="me-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/></svg></div><div class="me-text"><div class="me-title">Contact support</div><div class="me-sub">Report a problem or ask a question</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="me-row tap" onclick="inviteFriends()"><div class="me-text"><div class="me-title">Invite friends</div><div class="me-sub">Share the bot link in Telegram</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="me-row tap" onclick="openSupport()"><div class="me-text"><div class="me-title">Contact support</div><div class="me-sub">Report a problem or ask a question</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
       </div>
       <div class="me-foot">Christian Vent · Built by <a href="https://t.me/YIDIDIYATAMIRUU">@YIDIDIYATAMIRUU</a></div>
     </div>
@@ -14336,7 +14298,7 @@ async function delComment(id){
 let lbPeriod='all',lbReq=0;
 function setLbPeriod(p){
   if(p===lbPeriod)return;
-  lbPeriod=p;hap('light');syncLbSeg();loadLB();
+  lbPeriod=p;hap('select');syncLbSeg();loadLB();
 }
 function syncLbSeg(){
   const seg=document.getElementById('lb-seg');if(!seg)return;
@@ -14400,18 +14362,21 @@ async function loadLB(){
 const PENCIL_SVG='<svg viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
 const CHECK_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 const AURA_TIERS=[[0,'White'],[10,'Yellow'],[25,'Green'],[50,'Blue'],[100,'Purple'],[500,'Crown']];
-const ACCENTS=[
-  {id:'gold',name:'Gold',rgb:'201,168,76',c1:'#c9a84c',c2:'#e8c97a',c3:'#f5e4b0',dark:'#8a6d1f'},
-  {id:'rose',name:'Rose',rgb:'217,112,147',c1:'#d97093',c2:'#ec9db8',c3:'#f8d2df',dark:'#a14465'},
-  {id:'sapphire',name:'Sapphire',rgb:'91,141,239',c1:'#5b8def',c2:'#8fb1f5',c3:'#cadbfa',dark:'#2f5ec4'},
-  {id:'emerald',name:'Emerald',rgb:'72,187,138',c1:'#48bb8a',c2:'#7fd6ae',c3:'#c3ecda',dark:'#23825a'},
-  {id:'violet',name:'Violet',rgb:'155,126,232',c1:'#9b7ee8',c2:'#bba6f1',c3:'#dfd5f8',dark:'#6a4fc0'}
-];
 let meRecent=[], botLink='';
 
 function lsGet(k,d){try{const v=localStorage.getItem(k);return v===null?d:v}catch(e){return d}}
 function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
-function hap(kind){if(lsGet('haptics','1')==='0')return;vrHaptic(kind||'light')}
+// Haptics follow the platform's intent: selection ticks for switches and pickers, a success
+// pulse when something is saved, impacts only for physical-feeling actions. Never on plain links.
+function hap(kind){
+  try{
+    const h=window.Telegram&&window.Telegram.WebApp&&window.Telegram.WebApp.HapticFeedback;
+    if(!h)return;
+    if(kind==='select')h.selectionChanged();
+    else if(kind==='success')h.notificationOccurred('success');
+    else h.impactOccurred(kind||'light');
+  }catch(e){}
+}
 
 // ---- appearance ----
 function themeMode(){const t=lsGet('theme','dark');return(t==='light'||t==='auto')?t:'dark'}
@@ -14421,30 +14386,13 @@ function applyTheme(mode){
   document.body.classList.toggle('light',light);
 }
 function quickTheme(){setTheme(document.body.classList.contains('light')?'dark':'light')}
-function setTheme(mode){lsSet('theme',mode);applyTheme(mode);syncAppearanceUI();hap('light')}
-function accentId(){const a=lsGet('accent','gold');return ACCENTS.some(x=>x.id===a)?a:'gold'}
-function applyAccent(id){
-  const a=ACCENTS.find(x=>x.id===id)||ACCENTS[0],st=document.documentElement.style;
-  st.setProperty('--gold',a.c1);st.setProperty('--gold2',a.c2);st.setProperty('--gold3',a.c3);
-  st.setProperty('--gold-rgb',a.rgb);st.setProperty('--gold-dark',a.dark);
-}
-function setAccent(id){lsSet('accent',id);applyAccent(id);syncAppearanceUI();hap('light')}
-function setHaptics(on){lsSet('haptics',on?'1':'0');if(on)hap('medium')}
-function buildSwatches(){
-  const box=document.getElementById('swatches');if(!box)return;
-  box.innerHTML=ACCENTS.map(a=>`<button type="button" class="sw" data-id="${a.id}" style="--c:${a.c1}" aria-label="${a.name}" onclick="setAccent('${a.id}')">${CHECK_SVG}</button>`).join('');
-}
+function setTheme(mode){lsSet('theme',mode);applyTheme(mode);syncAppearanceUI();hap('select')}
 function syncAppearanceUI(){
-  const m=themeMode(),id=accentId();
+  const m=themeMode();
   document.querySelectorAll('#seg-theme button').forEach(b=>b.classList.toggle('on',b.dataset.v===m));
-  document.querySelectorAll('#swatches .sw').forEach(s=>s.classList.toggle('on',s.dataset.id===id));
-  const nm=document.getElementById('accent-name');
-  if(nm){const a=ACCENTS.find(x=>x.id===id);nm.textContent=a?a.name:'Gold'}
-  const hp=document.getElementById('set-haptics');
-  if(hp)hp.checked=lsGet('haptics','1')!=='0';
 }
 function initAppearance(){
-  applyTheme(themeMode());applyAccent(accentId());buildSwatches();syncAppearanceUI();
+  applyTheme(themeMode());syncAppearanceUI();
   try{
     const mq=window.matchMedia('(prefers-color-scheme: light)');
     const h=()=>{if(themeMode()==='auto')applyTheme('auto')};
@@ -14486,7 +14434,7 @@ function renderMe(){
   const hero=document.getElementById('me-hero'),rec=document.getElementById('me-recent');
   if(!hero||!profileCache)return;
   hero.innerHTML=meHeroHtml(profileCache);
-  rec.innerHTML=meRecent.length?`<div class="me-label">Recent vents</div><div style="padding:0 16px">${meRecent.map(p=>`<div class="post-card" onclick="openPost(${p.id})" style="margin:0 0 10px"><div class="post-body" style="-webkit-line-clamp:2">${esc(p.content)}</div><div style="font-size:12px;color:var(--text3);margin-top:6px">${esc(p.time_ago)}</div></div>`).join('')}</div>`:'';
+  rec.innerHTML=meRecent.length?`<div class="me-label">Recent vents</div><div style="padding:0 20px">${meRecent.map(p=>`<div class="post-card" onclick="openPost(${p.id})" style="margin:0 0 10px"><div class="post-body" style="-webkit-line-clamp:2">${esc(p.content)}</div><div style="font-size:12px;color:var(--text3);margin-top:6px">${esc(p.time_ago)}</div></div>`).join('')}</div>`:'';
 }
 async function loadMe(){
   if(!UID)return;
@@ -14518,9 +14466,9 @@ function applySettings(d){
 }
 async function saveSetting(key,input){
   const val=input.checked;input.disabled=true;
+  hap('select');   // on the tap itself, not after the network round-trip
   try{
     await api(`/api/mini-app/settings/${UID}`,{method:'POST',body:JSON.stringify({[key]:val})});
-    hap('light');toast('Saved');
   }catch(e){input.checked=!val;toast(e.message||'Could not save')}
   finally{input.disabled=false}
 }
@@ -14535,9 +14483,10 @@ async function saveShareUsername(input){
     if(!confirm('Allow people you chat with to share your real Telegram username (@'+uname+')? You can turn this off any time.')){ input.checked=false; return; }
   }
   input.disabled=true;
+  hap('select');
   try{
     await api('/api/mini-app/settings/'+UID,{method:'POST',body:JSON.stringify({share_username:val,init_data:(tg&&tg.initData)||''})});
-    hap('light');toast(val?'Username sharing is on':'Username sharing is off');
+    toast(val?'Username sharing is on':'Username sharing is off');
   }catch(e){input.checked=!val;toast(e.message||'Could not save')}
   finally{input.disabled=false}
 }
@@ -14548,10 +14497,9 @@ function openTg(url){
 }
 function inviteFriends(){
   if(!botLink){toast('Link not available yet');return}
-  hap('light');
   openTg('https://t.me/share/url?url='+encodeURIComponent(botLink)+'&text='+encodeURIComponent('Come join me on Christian Vent.'));
 }
-function openSupport(){hap('light');openTg('https://t.me/YIDIDIYATAMIRUU')}
+function openSupport(){openTg('https://t.me/YIDIDIYATAMIRUU')}
 function meBack(){go('settings',document.querySelector('.nav-item[data-page="settings"]'))}
 
 // ---- edit profile ----
@@ -14569,8 +14517,8 @@ function buildEmojiPicker(){
   const selK=avKey(selEmoji);
   grid.innerHTML=Object.keys(AV).filter(k=>AV[k].c).map(k=>`<button type="button" class="av-tile${k===selK?' sel':''}" onclick="pickAvatar('${k}')">${avSvg(k)}</button>`).join('');
 }
-function pickAvatar(k){selEmoji=avEmoji(k);buildEmojiPicker();updateEditUI();hap('light')}
-function clearAvatar(){selEmoji=null;buildEmojiPicker();updateEditUI();hap('light')}
+function pickAvatar(k){selEmoji=avEmoji(k);buildEmojiPicker();updateEditUI();hap('select')}
+function clearAvatar(){selEmoji=null;buildEmojiPicker();updateEditUI();hap('select')}
 function updateEditUI(){
   const name=document.getElementById('ep-name').value,bio=document.getElementById('ep-bio').value;
   document.getElementById('ep-name-cnt').textContent=name.length+'/30';
@@ -14588,7 +14536,7 @@ async function saveProfile(){
   try{
     await api(`/api/mini-app/profile/${UID}`,{method:'PUT',body:JSON.stringify({name,bio,avatar:selEmoji||''})});
     if(profileCache)Object.assign(profileCache,{name,bio,avatar:selEmoji||''});
-    hap('medium');toast('Profile updated');meBack();
+    hap('success');toast('Profile updated');meBack();
   }catch(e){toast(e.message||'Could not save');updateEditUI()}
 }
 
