@@ -12551,6 +12551,14 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 .brand-mark img{width:175%;height:175%;max-width:none;flex-shrink:0;object-fit:contain;display:block}
 .brand-mark.sm{width:34px;height:34px}
 .brand-mark.lg{width:96px;height:96px}
+.theme-quick{margin-left:auto;width:44px;height:44px;margin-top:-6px;margin-bottom:-6px;margin-right:-8px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;background:none;border:none;cursor:pointer;color:var(--gold);-webkit-tap-highlight-color:transparent}
+.theme-quick svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.theme-quick:active{background:var(--glass2)}
+.theme-quick .th-moon{display:none}
+body.light .theme-quick .th-sun{display:none}
+body.light .theme-quick .th-moon{display:block}
+body.light .theme-quick{color:var(--gold-dark,#8a6d1f)}
 .brand-word{font-size:16px;font-weight:700;letter-spacing:.3px;color:var(--text)}
 #nav{padding-bottom:var(--sa-bottom)!important}
 .cr-head{padding-top:calc(16px + var(--sa-top))!important}
@@ -12618,7 +12626,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
 
 <div id="app" style="display:none;height:100vh;flex-direction:column">
 <div id="shell">
-  <div id="brandbar"><div class="brand-mark"><img src="/static/images/vent logo.png" alt="Christian Vent logo"></div><div class="brand-word">Christian Vent</div></div>
+  <div id="brandbar"><div class="brand-mark"><img src="/static/images/vent logo.png" alt="Christian Vent logo"></div><div class="brand-word">Christian Vent</div><button type="button" class="theme-quick" onclick="quickTheme()" aria-label="Switch between dark and light theme"><svg class="th-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg><svg class="th-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button></div>
   <div id="pages">
     <div class="page active" id="page-vent">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Share</h1><div class="page-head-sub">Speak your heart, anonymously</div></div></div></div>
@@ -12755,7 +12763,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
 </div>
 
 <div id="chat-room">
-  <div class="cr-head"><button onclick="closeCR()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button><div class="ava" id="cr-ava" style="width:36px;height:36px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="icon"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div><div class="cr-name" id="cr-name">Chat</div></div><div class="brand-mark sm" style="margin-left:auto"><img src="/static/images/vent logo.png" alt="Christian Vent logo"></div></div>
+  <div class="cr-head"><button onclick="closeCR()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button><div class="ava" id="cr-ava" style="width:36px;height:36px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="icon"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div><div class="cr-name" id="cr-name">Chat</div></div><div class="brand-mark sm" style="margin-left:auto"><img src="/static/images/vent logo.png" alt="Christian Vent logo"></div><button type="button" class="theme-quick" style="margin-left:0" onclick="quickTheme()" aria-label="Switch between dark and light theme"><svg class="th-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg><svg class="th-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button></div>
   <div class="cr-msgs" id="cr-msgs"></div>
   <div class="cr-input" style="padding-top:12px;flex-direction:column;gap:6px">
     <div id="cr-reply-bar" class="reply-bar" style="display:none"></div>
@@ -14166,6 +14174,7 @@ function applyTheme(mode){
   if(mode==='auto'){try{light=window.matchMedia('(prefers-color-scheme: light)').matches}catch(e){light=false}}
   document.body.classList.toggle('light',light);
 }
+function quickTheme(){setTheme(document.body.classList.contains('light')?'dark':'light')}
 function setTheme(mode){lsSet('theme',mode);applyTheme(mode);syncAppearanceUI();hap('light')}
 function accentId(){const a=lsGet('accent','gold');return ACCENTS.some(x=>x.id===a)?a:'gold'}
 function applyAccent(id){
