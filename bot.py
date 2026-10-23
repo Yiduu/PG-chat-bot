@@ -12538,6 +12538,49 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 .modal-btn-primary:active{transform:scale(0.97);}
 .modal-btn-secondary{background:var(--bg2);border:1.5px solid var(--border);color:var(--text);}
 .modal-btn-secondary:active{background:var(--glass);}
+/* ===== Posting options: sensitive (18+) marking + gender visibility ===== */
+:root{--warn:#e58a6b;--warn-rgb:229,138,107}
+body.light{--warn:#b4532f;--warn-rgb:180,83,47}
+.opt-card{margin:14px 16px 0;background:var(--glass);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.opt-row{display:flex;align-items:center;gap:14px;padding:14px 16px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.opt-row + .opt-row,.opt-row + #vent-sex-row,.opt-row.sep{border-top:1px solid var(--border)}
+.opt-ico{width:40px;height:40px;border-radius:12px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(var(--gold-rgb),0.12);border:1px solid var(--border2)}
+.opt-ico svg{width:20px;height:20px;stroke:var(--gold);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.opt-ico.warn{background:rgba(var(--warn-rgb),0.12);border-color:rgba(var(--warn-rgb),0.4)}
+.opt-ico.warn svg{stroke:var(--warn)}
+.opt-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.opt-title{font-size:15px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:8px}
+.opt-sub{font-size:13px;line-height:1.4;color:var(--text2)}
+.age-tag{font-size:11px;font-weight:800;letter-spacing:.4px;padding:1px 6px;border-radius:6px;border:1.5px solid var(--warn);color:var(--warn)}
+.opt-card .toggle input:checked + .toggle-track{background:rgba(var(--gold-rgb),0.3);border-color:var(--gold)}
+.opt-row.warn-row .toggle input:checked + .toggle-track{background:rgba(var(--warn-rgb),0.3);border-color:var(--warn)}
+.opt-row.warn-row .toggle input:checked ~ .toggle-thumb{background:var(--warn)}
+.opt-note{display:none;margin:0 16px 14px;padding:11px 13px;border-radius:12px;font-size:13px;line-height:1.5;color:var(--text2);
+  background:rgba(var(--warn-rgb),0.08);border:1px solid rgba(var(--warn-rgb),0.3)}
+.opt-note.show{display:block}
+#vent-sex-row{padding:14px 16px}
+.sex-head{display:flex;align-items:center;gap:14px}
+.seg2{display:flex;gap:8px;margin-top:12px}
+.seg2 label{flex:1;position:relative;cursor:pointer}
+.seg2 input{position:absolute;opacity:0;inset:0;width:100%;height:100%;margin:0;cursor:pointer}
+.seg2 span{display:flex;align-items:center;justify-content:center;gap:7px;min-height:44px;border-radius:12px;
+  border:1.5px solid var(--border);color:var(--text2);font-size:14px;font-weight:600;background:var(--bg2);transition:all .15s}
+.seg2 input:checked + span{border-color:var(--gold);background:rgba(var(--gold-rgb),0.14);color:var(--text)}
+.seg2 input:focus-visible + span{outline:2px solid var(--gold);outline-offset:2px}
+.seg2 svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.sens-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:13px;font-size:12px;font-weight:800;letter-spacing:.4px;
+  color:var(--warn);background:rgba(var(--warn-rgb),0.12);border:1px solid rgba(var(--warn-rgb),0.45)}
+.sens-chip svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.sens-veil{margin-bottom:12px;padding:18px 16px;border-radius:12px;background:var(--bg2);border:1px solid rgba(var(--warn-rgb),0.3);text-align:center}
+.sens-veil-bars{display:flex;flex-direction:column;gap:8px;filter:blur(3px);opacity:.5;margin-bottom:14px}
+.sens-veil-bars i{display:block;height:9px;border-radius:5px;background:var(--text3)}
+.sens-veil-t{font-size:14px;font-weight:700;color:var(--text)}
+.sens-veil-s{font-size:12.5px;color:var(--text2);margin-top:2px}
+.sens-gate{padding:28px 22px;text-align:center}
+.sens-gate-ico{width:60px;height:60px;margin:0 auto 14px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:rgba(var(--warn-rgb),0.12);border:1.5px solid rgba(var(--warn-rgb),0.5)}
+.sens-gate-ico svg{width:28px;height:28px;stroke:var(--warn);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 </style>
 </head>
 <body>
@@ -12549,12 +12592,23 @@ body.light .cr-head button svg{stroke:#1a1a1a}
     <div class="page active" id="page-vent">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Share</h1><div class="page-head-sub">Speak your heart, anonymously</div></div><img src="/static/images/vent logo.png" class="logo-img" onerror="this.style.display='none'"></div></div>
       <div class="section-label">Categories</div><div style="padding:0 16px"><div id="cat-grid" class="cat-grid"></div></div>
-      <div style="padding:0 16px;margin-top:12px;display:flex;align-items:flex-start;gap:8px"><input type="checkbox" id="vent-explicit-check" style="margin-top:3px;width:16px;height:16px;flex-shrink:0"><label for="vent-explicit-check" style="font-size:12.5px;color:var(--text2);line-height:1.4">This post contains explicit content (may not be suitable for all viewers)</label></div>
-      <div id="vent-sex-row" style="display:none;padding:0 16px;margin-top:12px">
-        <div style="font-size:12.5px;color:var(--text2);line-height:1.4;margin-bottom:6px">Show your sex under the vent number on this post?</div>
-        <div style="display:flex;gap:18px">
-          <label style="font-size:13px;color:var(--text);display:flex;align-items:center;gap:6px"><input type="radio" name="vent-show-sex" value="no" checked> No</label>
-          <label style="font-size:13px;color:var(--text);display:flex;align-items:center;gap:6px"><input type="radio" name="vent-show-sex" value="yes"> Yes</label>
+      <div class="section-label">Posting options</div>
+      <div class="opt-card">
+        <label class="opt-row warn-row" for="vent-explicit-check">
+          <span class="opt-ico warn"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span>
+          <span class="opt-text"><span class="opt-title">Mark as sensitive <span class="age-tag">18+</span></span><span class="opt-sub">Readers see a warning and tap to view.</span></span>
+          <span class="toggle"><input type="checkbox" id="vent-explicit-check" onchange="document.getElementById('vent-explicit-note').classList.toggle('show',this.checked)"><span class="toggle-track"></span><span class="toggle-thumb"></span></span>
+        </label>
+        <div class="opt-note" id="vent-explicit-note">This post will be blurred in the feed and its replies stay hidden until a reader chooses to view it. Please mark honestly.</div>
+        <div id="vent-sex-row" style="display:none">
+          <div class="sex-head">
+            <span class="opt-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M12 11.5L6.3 21h11.4z"/></svg></span>
+            <span class="opt-text"><span class="opt-title">Show my gender</span><span class="opt-sub">A small badge under your vent number. Your name stays hidden.</span></span>
+          </div>
+          <div class="seg2" role="radiogroup" aria-label="Show gender on this post">
+            <label><input type="radio" name="vent-show-sex" value="no" checked><span>Hidden</span></label>
+            <label><input type="radio" name="vent-show-sex" value="yes"><span>Show badge</span></label>
+          </div>
         </div>
       </div>
       <div style="padding:0 16px;margin-top:14px"><textarea id="vent-txt" class="input-area" rows="5" placeholder="What's on your heart today…" maxlength="5000"></textarea><div class="char-count"><span id="vent-cnt">0</span> / 5000</div></div>
@@ -13733,6 +13787,7 @@ async function submitVent(){
     document.getElementById('vent-txt').value='';
     document.getElementById('vent-cnt').textContent='0';
     document.getElementById('vent-explicit-check').checked=false;
+    document.getElementById('vent-explicit-note').classList.remove('show');
     resetVentShowSex();
     selCats.clear();document.querySelectorAll('.cat-chip').forEach(c=>c.classList.remove('on'));
     pendingMedia=null;document.getElementById('vent-file-input').value='';
@@ -13788,11 +13843,11 @@ function renderPost(p){
     }
   }
   return `<div class="post-card">
-    <div class="post-meta"><div class="ava" style="width:34px;height:34px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name"${p.author?.is_admin ? '' : ` onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:13px">${esc(p.author?.aura||'')}</span></div></div><div class="post-time">${esc(p.time_ago||'')}</div></div>
+    <div class="post-meta"><div class="ava" style="width:34px;height:34px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name"${p.author?.is_admin ? '' : ` onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:13px">${esc(p.author?.aura||'')}</span></div></div>${p.explicit?`<span class="sens-chip" style="margin-left:auto"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>18+</span>`:`<div class="post-time">${esc(p.time_ago||'')}</div>`}</div>
     ${ventLabel(p)}
     ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${cats}</div>`:''}
-    <div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
-    ${p.media_id?`<div onclick="openPost(${p.id})">${renderMedia(p.media_type,p.media_id)}</div>`:''}
+    ${p.content_hidden?`<div class="sens-veil" onclick="openPost(${p.id})"><div class="sens-veil-bars"><i style="width:96%"></i><i style="width:88%"></i><i style="width:60%"></i></div><div class="sens-veil-t">Sensitive content</div><div class="sens-veil-s">Tap to view. May not be suitable for all viewers.</div></div>`:`<div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
+    ${p.media_id?`<div onclick="openPost(${p.id})">${renderMedia(p.media_type,p.media_id)}</div>`:''}`}
     <div onclick="event.stopPropagation();">
       ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
     </div>
@@ -13821,11 +13876,12 @@ async function openPost(id, reveal){
       currentPostAuthorId = p.author_id;
       document.getElementById('detail-post').innerHTML=`
         <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
-          <div style="padding:20px;text-align:center">
-            <div style="width:32px;height:32px;margin:0 auto 8px;color:var(--gold)">${ICONS.alert}</div>
-            <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">Explicit Content Warning</div>
-            <div style="font-size:14px;color:var(--text3);margin-bottom:14px">${esc(p.content)}</div>
-            <button class="btn-gold" onclick="openPost(${id},true)">View Content</button>
+          <div class="sens-gate">
+            <div class="sens-gate-ico"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg></div>
+            <span class="sens-chip" style="margin-bottom:12px">18+ SENSITIVE</span>
+            <div style="font-size:19px;font-weight:700;color:var(--text);margin-bottom:8px">This post may be difficult to read</div>
+            <div style="font-size:14px;line-height:1.55;color:var(--text2);margin:0 auto 18px;max-width:290px">The author marked it as sensitive. It may not be suitable for all viewers, and replies stay hidden until you view it.</div>
+            <button class="btn-gold" onclick="openPost(${id},true)">View post</button>
           </div>
         </div>`;
       document.getElementById('detail-comments').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3);font-size:14px">Comments are hidden until you view the post.</div>';
@@ -13842,7 +13898,7 @@ async function openPost(id, reveal){
         }
       }
     }
-    const explicitTag=p.explicit?`<div style="display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;color:var(--gold);border:1px solid var(--gold);border-radius:10px;padding:3px 9px;margin-bottom:8px">${ICONS.alert.replace('class="icon"','class="icon badge-icon"')} Explicit</div>`:'';
+    const explicitTag=p.explicit?`<div class="sens-chip" style="margin-bottom:10px"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>18+ SENSITIVE</div>`:'';
     document.getElementById('detail-post').innerHTML=`
       <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
         <div class="post-meta"><div class="ava" style="width:38px;height:38px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name" style="font-size:15px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}')"`}>${ICONS.shield.replace('class="icon"','class="icon badge-icon"')} Vent author</div><div style="font-size:12px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
