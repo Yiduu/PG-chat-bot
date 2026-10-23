@@ -2125,11 +2125,12 @@ def get_user_ratings_batch(user_ids):
             ratings[orig] = int(row['score'] or 0)
     return ratings
 
-def calculate_top_weekly_contributors():
-    """Calculate top 3 users by aura points earned in the last 7 days."""
+def calculate_top_weekly_contributors(limit=3):
+    """Calculate top `limit` (default 3) users by aura points earned in the last 7 days."""
+    limit = max(1, min(int(limit), 50))
     query = """
         SELECT 
-            u.user_id,
+            u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge,
             COALESCE(p.post_points, 0) + 
             COALESCE(c.comment_points, 0) + 
             COALESCE(r.reaction_points, 0) - 
@@ -2166,8 +2167,8 @@ def calculate_top_weekly_contributors():
         WHERE u.is_admin = FALSE
           AND (COALESCE(p.post_points,0) + COALESCE(c.comment_points,0) + COALESCE(r.reaction_points,0) - COALESCE(b.block_points,0)) > 0
         ORDER BY weekly_points DESC
-        LIMIT 3
-    """
+        LIMIT %d
+    """ % limit
     return db_fetch_all(query)
 
 
@@ -12576,6 +12577,45 @@ body.light .theme-quick{color:var(--gold-dark,#8a6d1f)}
 @keyframes nsBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}
 .btn-gold.attn{animation:btnPulse 1.4s ease-in-out infinite}
 @keyframes btnPulse{0%,100%{box-shadow:0 4px 14px rgba(var(--gold-rgb),0.3)}50%{box-shadow:0 0 0 6px rgba(var(--gold-rgb),0.22),0 4px 18px rgba(var(--gold-rgb),0.5)}}
+/* ===== Rankings: period switch + podium ===== */
+.lb-seg{position:relative;display:flex;margin:16px 16px 0;padding:4px;border-radius:16px;background:var(--bg2);border:1px solid var(--border)}
+.lb-seg button{position:relative;z-index:1;flex:1;min-height:44px;border:none;background:none;cursor:pointer;border-radius:12px;
+  font-family:'Inter',sans-serif;font-size:14px;font-weight:700;letter-spacing:.2px;color:var(--text2);transition:color .25s;-webkit-tap-highlight-color:transparent}
+.lb-seg button.on{color:#0c0b09}
+.lb-seg-thumb{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);border-radius:12px;background:var(--gold);
+  box-shadow:0 4px 14px rgba(var(--gold-rgb),0.35);transition:transform .3s cubic-bezier(.4,0,.2,1)}
+.lb-seg.all .lb-seg-thumb{transform:translateX(100%)}
+.pod{display:grid;grid-template-columns:1fr 1.18fr 1fr;align-items:end;gap:8px;margin:26px 16px 0}
+.pod-col{display:flex;flex-direction:column;align-items:center;min-width:0;text-align:center}
+.pod-ava-wrap{position:relative;margin-bottom:10px}
+.pod-ava{width:58px;height:58px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:var(--bg3);border:2px solid var(--rc,var(--gold));box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.pod-col.p1 .pod-ava{width:76px;height:76px;border-width:2.5px;box-shadow:0 0 0 5px rgba(var(--gold-rgb),0.12),0 8px 24px rgba(var(--gold-rgb),0.3)}
+.pod-ava svg.av-svg{width:60%;height:60%}
+.pod-crown{position:absolute;left:50%;top:-22px;transform:translateX(-50%);width:26px;height:26px;color:var(--gold);font-size:22px;line-height:26px}
+.pod-crown svg{width:26px;height:26px;fill:var(--gold);stroke:var(--gold)}
+.pod-badge{position:absolute;right:-4px;bottom:-4px;width:22px;height:22px;border-radius:50%;background:var(--rc,var(--gold));color:#0c0b09;
+  font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg)}
+.pod-name{font-size:13.5px;font-weight:700;color:var(--text);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;padding:0 2px}
+.pod-pts{font-size:12.5px;font-weight:700;color:var(--rc,var(--gold));margin-top:2px;font-variant-numeric:tabular-nums}
+.pod-plinth{width:100%;margin-top:10px;border-radius:14px 14px 0 0;display:flex;align-items:flex-start;justify-content:center;padding-top:10px;
+  font-size:24px;font-weight:800;color:var(--rc,var(--gold));
+  background:linear-gradient(180deg,rgba(var(--rcrgb,var(--gold-rgb)),0.2),rgba(var(--rcrgb,var(--gold-rgb)),0.03));
+  border:1px solid rgba(var(--rcrgb,var(--gold-rgb)),0.35);border-bottom:none}
+.pod-col.p1{--rc:var(--gold);--rcrgb:var(--gold-rgb)}.pod-col.p1 .pod-plinth{height:96px}
+.pod-col.p2{--rc:#c0c4cc;--rcrgb:192,196,204}.pod-col.p2 .pod-plinth{height:68px}
+.pod-col.p3{--rc:#c9814a;--rcrgb:201,129,74}.pod-col.p3 .pod-plinth{height:52px}
+.pod-col.empty{visibility:hidden}
+.lb-list2{margin:0 16px;border-radius:18px;background:var(--glass);border:1px solid var(--border);overflow:hidden}
+.lb-row2{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--border)}
+.lb-row2:last-child{border-bottom:none}
+.lb-rank2{width:28px;height:28px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:800;color:var(--gold2);background:rgba(var(--gold-rgb),0.1);border:1px solid var(--border2)}
+.lb-row2 .lb-info-name{font-size:15px;font-weight:600}
+.lb-pts2{font-size:15px;font-weight:800;color:var(--gold);font-variant-numeric:tabular-nums;text-align:right}
+.lb-pts2 small{display:block;font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px}
+.lb-empty{margin:36px 24px 0;text-align:center;color:var(--text2);font-size:14px;line-height:1.55}
+.lb-empty b{display:block;font-size:17px;color:var(--text);margin-bottom:4px}
 /* ===== Posting options: sensitive (18+) marking + gender visibility ===== */
 :root{--warn:#e58a6b;--warn-rgb:229,138,107}
 body.light{--warn:#b4532f;--warn-rgb:180,83,47}
@@ -12671,7 +12711,15 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       <div class="section-label">Responses</div>
       <div id="detail-comments" style="padding:0 16px 80px"></div>
     </div>
-    <div class="page" id="page-leaderboard"><div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Top Voices</h1><div class="page-head-sub">Weekly community leaders</div></div></div></div><div id="lb-content"></div></div>
+    <div class="page" id="page-leaderboard">
+      <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Top Voices</h1><div class="page-head-sub" id="lb-sub">Community leaders, all time</div></div></div></div>
+      <div class="lb-seg" id="lb-seg" role="tablist" aria-label="Ranking period">
+        <div class="lb-seg-thumb"></div>
+        <button type="button" role="tab" data-p="weekly" onclick="setLbPeriod('weekly')">This week</button>
+        <button type="button" role="tab" data-p="all" class="on" onclick="setLbPeriod('all')">All time</button>
+      </div>
+      <div id="lb-content"></div>
+    </div>
     <div class="page" id="page-edit">
       <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
       <div class="ed-head"><h1>Edit profile</h1><div class="page-head-sub">How you appear to others</div></div>
@@ -14132,22 +14180,51 @@ async function delComment(id){
     toast('Deleted');await fetchAndRenderComments(currentPostId,currentPostAuthorId);}catch(e){toast(e.message)}
 }
 
+let lbPeriod='all',lbReq=0;
+function setLbPeriod(p){
+  if(p===lbPeriod)return;
+  lbPeriod=p;hap('light');syncLbSeg();loadLB();
+}
+function syncLbSeg(){
+  const seg=document.getElementById('lb-seg');if(!seg)return;
+  seg.classList.toggle('all',lbPeriod==='all');
+  seg.querySelectorAll('button').forEach(b=>{const on=b.dataset.p===lbPeriod;b.classList.toggle('on',on);b.setAttribute('aria-selected',on)});
+  const sub=document.getElementById('lb-sub');
+  if(sub)sub.textContent=lbPeriod==='weekly'?'Top 10 this week, last 7 days':'Community leaders, all time';
+}
+function lbPodCol(u,place){
+  if(!u)return '<div class="pod-col empty p'+place+'"><div class="pod-plinth"></div></div>';
+  const crown=place===1?`<span class="pod-crown">${u.weekly_badge&&lbPeriod==='all'?esc(u.weekly_badge):ICONS.crown}</span>`:'';
+  const pts=lbPeriod==='weekly'?`+${u.points} pts`:`${u.points} pts`;
+  return `<div class="pod-col p${place}"><div class="pod-ava-wrap">${crown}<div class="pod-ava" onclick="showUserProfile('${u.id}')">${avaHtml(u.avatar||u.sex)}</div><span class="pod-badge">${place}</span></div><div class="pod-name" onclick="showUserProfile('${u.id}')">${esc(u.name)}</div><div class="pod-pts">${pts}</div><div class="pod-plinth">${place}</div></div>`;
+}
 async function loadLB(){
   const box=document.getElementById('lb-content');box.innerHTML=skelLB();
+  syncLbSeg();
+  const req=++lbReq;
   try{
-    const d=await api('/api/mini-app/leaderboard');
+    const d=await api('/api/mini-app/leaderboard?period='+(lbPeriod==='weekly'?'weekly':'all'));
+    if(req!==lbReq)return;
     const users=d.data||[];
-    if(!users.length){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">No data yet</div>';return}
-    const [g,s,b,...rest]=users;
-    let html='';
-    if(g){const crownHtml=g.weekly_badge?esc(g.weekly_badge):ICONS.crown;html+=`<div class="lb-hero"><span class="lb-crown">${crownHtml}</span><div class="lb-top-name">${esc(g.name)}</div><div class="lb-top-pts">${esc(g.aura)} ${g.points} pts</div><div class="lb-medals">${s?`<div class="lb-medal-card"><div class="lb-medal-rank silver">${ICONS.medal}</div><div class="lb-medal-name">${esc(s.name)}</div><div class="lb-medal-pts">${s.points} pts</div></div>`:''}${b?`<div class="lb-medal-card"><div class="lb-medal-rank bronze">${ICONS.medal}</div><div class="lb-medal-name">${esc(b.name)}</div><div class="lb-medal-pts">${b.points} pts</div></div>`:''}</div></div>`}
+    if(!users.length){
+      box.innerHTML=lbPeriod==='weekly'
+        ?'<div class="lb-empty"><b>No one has earned points yet this week</b>Share a vent or respond to someone to take the first spot.</div>'
+        :'<div class="lb-empty"><b>No data yet</b>Rankings will appear here soon.</div>';
+      return;
+    }
+    const [g,s2,b,...rest]=users;
+    let html=`<div class="pod">${lbPodCol(s2,2)}${lbPodCol(g,1)}${lbPodCol(b,3)}</div>`;
     if(rest.length){
-      html+='<div class="section-label">More contributors</div><div class="lb-list card">';
-      rest.forEach((u,i)=>{html+=`<div class="lb-row"><div class="lb-rank">${i+4}</div><div class="ava" style="width:36px;height:36px">${avaHtml(u.avatar||u.sex)}</div><div class="lb-info"><div class="lb-info-name" onclick="showUserProfile('${u.id}')">${esc(u.weekly_badge||'')} ${esc(u.name)}</div><div class="lb-info-aura">${esc(u.aura)}</div></div><div class="lb-pts">${u.points}</div></div>`});
+      html+='<div class="section-label">'+(lbPeriod==='weekly'?'Rising this week':'More contributors')+'</div><div class="lb-list2">';
+      rest.forEach((u,i)=>{
+        const pts=lbPeriod==='weekly'?`+${u.points}<small>THIS WEEK</small>`:`${u.points}<small>POINTS</small>`;
+        const sub=u.aura?`<div class="lb-info-aura">${esc(u.aura)}</div>`:'';
+        html+=`<div class="lb-row2"><div class="lb-rank2">${i+4}</div><div class="ava" style="width:38px;height:38px">${avaHtml(u.avatar||u.sex)}</div><div class="lb-info"><div class="lb-info-name" onclick="showUserProfile('${u.id}')">${lbPeriod==='all'&&u.weekly_badge?esc(u.weekly_badge)+' ':''}${esc(u.name)}</div>${sub}</div><div class="lb-pts2">${pts}</div></div>`;
+      });
       html+='</div>';
     }
     box.innerHTML=html;
-  }catch(e){box.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load</div>'}
+  }catch(e){if(req===lbReq)box.innerHTML='<div class="lb-empty">Failed to load</div>'}
 }
 
 // ===== Me tab =====
@@ -16728,10 +16805,34 @@ def mini_app_send_chat_request():
         logger.error(f"Failed to send chat request notification: {e}")
     
     return jsonify({'success': True, 'status': 'pending', 'message': 'Chat request sent'})
+_WEEKLY_LB_CACHE = {}
+
 @flask_app.route('/api/mini-app/leaderboard', methods=['GET'])
 def mini_app_leaderboard():
     """API endpoint for leaderboard data"""
     try:
+        if request.args.get('period') == 'weekly':
+            # Top 10 by points earned in the last 7 days (cached ~60s)
+            now = time.time()
+            cached = _WEEKLY_LB_CACHE.get('rows')
+            if not cached or now - _WEEKLY_LB_CACHE.get('at', 0) > 60:
+                rows = [dict(r) for r in (calculate_top_weekly_contributors(10) or [])]
+                _WEEKLY_LB_CACHE['rows'] = rows
+                _WEEKLY_LB_CACHE['at'] = now
+            else:
+                rows = cached
+            weekly = [{
+                'id': str(r['user_id']),
+                'rank': i,
+                'name': r['anonymous_name'],
+                'sex': r['sex'],
+                'avatar': r['avatar_emoji'] or "",
+                'points': r['weekly_points'],
+                'aura': '',
+                'weekly_badge': r['weekly_badge'] or ""
+            } for i, r in enumerate(rows, start=1)]
+            return jsonify({'success': True, 'period': 'weekly', 'data': weekly})
+
         # Top 10 users with weighted aura (single CTE query, cached for ~60s)
         top_users = get_leaderboard_rows(10)
 
