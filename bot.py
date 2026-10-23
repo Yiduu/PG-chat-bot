@@ -12538,6 +12538,19 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 .modal-btn-primary:active{transform:scale(0.97);}
 .modal-btn-secondary{background:var(--bg2);border:1.5px solid var(--border);color:var(--text);}
 .modal-btn-secondary:active{background:var(--glass);}
+/* ===== Brand bar: logo on every page + full-screen safe areas ===== */
+:root{--sa-top:max(env(safe-area-inset-top,0px),calc(var(--tg-safe-area-inset-top,0px) + var(--tg-content-safe-area-inset-top,0px)));--sa-bottom:max(env(safe-area-inset-bottom,0px),var(--tg-safe-area-inset-bottom,0px))}
+#brandbar{flex-shrink:0;display:flex;align-items:center;gap:10px;padding:calc(8px + var(--sa-top)) 16px 8px;
+  background:var(--bg);border-bottom:0.5px solid var(--border);position:relative;z-index:50}
+.brand-mark{width:34px;height:34px;border-radius:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;
+  background:var(--bg2);border:1px solid rgba(var(--gold-rgb),0.45)}
+/* the logo file has wide transparent margins, so scale it up inside the badge */
+.brand-mark img{width:175%;height:175%;max-width:none;flex-shrink:0;object-fit:contain;display:block}
+.brand-mark.sm{width:30px;height:30px;border-radius:10px}
+.brand-mark.lg{width:76px;height:76px;border-radius:24px}
+.brand-word{font-size:16px;font-weight:700;letter-spacing:.3px;color:var(--text)}
+#nav{padding-bottom:var(--sa-bottom)!important}
+.cr-head{padding-top:calc(16px + var(--sa-top))!important}
 /* ===== Posting options: sensitive (18+) marking + gender visibility ===== */
 :root{--warn:#e58a6b;--warn-rgb:229,138,107}
 body.light{--warn:#b4532f;--warn-rgb:180,83,47}
@@ -12584,13 +12597,14 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
 </style>
 </head>
 <body>
-<div id="auth"><div class="auth-ring"></div><span class="auth-label">Connecting…</span></div>
+<div id="auth"><div class="brand-mark lg"><img src="/static/images/vent logo.png" alt="Christian Vent logo"></div><div class="auth-ring"></div><span class="auth-label">Connecting…</span></div>
 
 <div id="app" style="display:none;height:100vh;flex-direction:column">
 <div id="shell">
+  <div id="brandbar"><div class="brand-mark"><img src="/static/images/vent logo.png" alt="Christian Vent logo"></div><div class="brand-word">Christian Vent</div></div>
   <div id="pages">
     <div class="page active" id="page-vent">
-      <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Share</h1><div class="page-head-sub">Speak your heart, anonymously</div></div><img src="/static/images/vent logo.png" class="logo-img" onerror="this.style.display='none'"></div></div>
+      <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Share</h1><div class="page-head-sub">Speak your heart, anonymously</div></div></div></div>
       <div class="section-label">Categories</div><div style="padding:0 16px"><div id="cat-grid" class="cat-grid"></div></div>
       <div class="section-label">Posting options</div>
       <div class="opt-card">
@@ -12723,7 +12737,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
 </div>
 
 <div id="chat-room">
-  <div class="cr-head"><button onclick="closeCR()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button><div class="ava" id="cr-ava" style="width:36px;height:36px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="icon"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div><div class="cr-name" id="cr-name">Chat</div></div></div>
+  <div class="cr-head"><button onclick="closeCR()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button><div class="ava" id="cr-ava" style="width:36px;height:36px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="icon"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div><div class="cr-name" id="cr-name">Chat</div></div><div class="brand-mark sm" style="margin-left:auto"><img src="/static/images/vent logo.png" alt="Christian Vent logo"></div></div>
   <div class="cr-msgs" id="cr-msgs"></div>
   <div class="cr-input" style="padding-top:12px;flex-direction:column;gap:6px">
     <div id="cr-reply-bar" class="reply-bar" style="display:none"></div>
@@ -14904,7 +14918,12 @@ async function openChatFromLink(){
 
 async function init(){
   const tg=window.Telegram?.WebApp;
-  if(tg){try{tg.expand();tg.ready()}catch(e){}}
+  if(tg){try{tg.expand();tg.ready()}catch(e){}
+    try{
+      const mobile=['android','android_x','ios'].includes(tg.platform);
+      if(mobile&&tg.isVersionAtLeast&&tg.isVersionAtLeast('8.0')&&tg.requestFullscreen&&!tg.isFullscreen)tg.requestFullscreen();
+    }catch(e){}
+  }
   const user=tg?.initDataUnsafe?.user;
   if(user?.id){UID=String(user.id)}
   if(!UID){
