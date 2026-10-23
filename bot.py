@@ -15086,7 +15086,8 @@ function crOpenMenu(){
   m.onclick=e=>{ if(e.target===m) crCloseMenu(); };
   m.innerHTML='<div class="cr-menu" role="menu">'+
     '<button type="button" role="menuitem" onclick="crViewProfile()">'+S('<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>')+'View profile</button>'+
-    '<button type="button" role="menuitem" onclick="crShare()">'+S('<path d="M4 12v7h16v-7"/><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/>')+(crChat.share_username?'Share Telegram username':'Share profile')+'</button>'+
+    '<button type="button" role="menuitem" onclick="crShare()">'+S('<path d="M4 12v7h16v-7"/><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/>')+'Share profile</button>'+
+    '<button type="button" role="menuitem" onclick="crShareMyUsername()">'+S('<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/>')+'Send my Telegram username</button>'+
     '<button type="button" role="menuitem" onclick="crAskClear()">'+S('<path d="M4 6h16M4 12h10M4 18h6"/>')+'Clear history</button>'+
     '<button type="button" role="menuitem" onclick="'+(crChat.blocked_by_me?'crDoUnblock()':'crAskBlock()')+'">'+S('<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>')+blockLbl+'</button>'+
     '<div class="cr-menu-sep"></div>'+
@@ -15106,15 +15107,36 @@ function crCloseSheet(){ const m=document.getElementById('cr-sheet-mask'); if(m)
 function crViewProfile(){ crCloseMenu(); if(crPartnerId) showUserProfile(crPartnerId); }
 function crShare(){
   crCloseMenu();
-  // Real Telegram username only if the person allowed it; otherwise their anonymous profile link.
-  const uname=crChat.share_username;
-  const url=uname?('https://t.me/'+uname):crChat.share_url;
+  const url=crChat.share_url;
   if(!url){ toast('Sharing is not available right now'); return; }
-  const text=uname?(crPartnerName()+' on Telegram: @'+uname):(crPartnerName()+' on Christian Vent');
+  const text=crPartnerName()+' on Christian Vent';
   const link='https://t.me/share/url?url='+encodeURIComponent(url)+'&text='+encodeURIComponent(text);
   const tg=window.Telegram&&window.Telegram.WebApp;
   try{ if(tg&&tg.openTelegramLink){ tg.openTelegramLink(link); return; } }catch(e){}
   window.open(link,'_blank');
+}
+// Sends the user's own real Telegram @username into this chat as a message, but only with their
+// permission (the same opt-in as the Me > settings toggle; it is switched on here if still off).
+async function crShareMyUsername(){
+  crCloseMenu();
+  const pid=crPartnerId; if(!pid||crBusy) return;
+  if(crChat.blocked_by_me||crChat.can_chat===false){ toast('You cannot message this user right now'); return; }
+  const tg=window.Telegram&&window.Telegram.WebApp;
+  const uname=tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.username;
+  if(!uname){ toast('Set a Telegram username in Telegram settings first'); return; }
+  crBusy=true;
+  try{
+    const st=await api('/api/mini-app/settings/'+UID);
+    if(!st.data.share_username){
+      if(!confirm('Allow sharing your real Telegram username (@'+uname+') in chats? '+crPartnerName()+' will see it. You can turn this off any time in settings.')) return;
+      await api('/api/mini-app/settings/'+UID,{method:'POST',body:JSON.stringify({share_username:true,init_data:tg.initData||''})});
+      const sw=document.getElementById('set-share-username'); if(sw) sw.checked=true;
+    }
+    const res=await api('/api/mini-app/chats/send',{method:'POST',body:JSON.stringify({sender_id:UID,receiver_id:pid,content:'My Telegram username: @'+uname})});
+    crAddLocal(res.data);
+    toast('Username sent');
+  }catch(e){ toast(e.message||'Could not send username'); }
+  finally{ crBusy=false; }
 }
 function crAskClear(){
   const n=esc(crPartnerName());
@@ -16830,12 +16852,7 @@ def _chat_meta(user_id, partner_id):
           AND ((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s))
         LIMIT 1
     """, (user_id, partner_id, partner_id, user_id))
-    # The partner's real Telegram @username, only if they opted in to sharing it.
-    pu = db_fetch_one(
-        "SELECT tg_username FROM users WHERE user_id = %s AND COALESCE(share_username, FALSE) = TRUE",
-        (partner_id,))
     return {
-        'partner_username': (pu['tg_username'] if pu and pu.get('tg_username') else None),
         'blocked_by_me': blocked_by_me,
         'blocked_me': blocked_me,
         'can_chat': bool(accepted or has_history or clear or other_clear),
@@ -16951,8 +16968,6 @@ def mini_app_get_messages(partner_id):
                 # Telegram deep link to this person's profile. Users here are anonymous and no
                 # Telegram @username is stored, so sharing is by profile link + display name.
                 'share_url': f"https://t.me/{BOT_USERNAME}?start=profileid_{partner_id}" if BOT_USERNAME else '',
-                # Set only when the partner allowed sharing their real Telegram username.
-                'share_username': meta['partner_username'],
             }
         })
     except Exception as e:
