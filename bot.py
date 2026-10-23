@@ -432,6 +432,16 @@ def init_db():
                     logger.info("Adding missing column: thread_from_post_id to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN thread_from_post_id BIGINT DEFAULT NULL")
 
+                # approved_at: the moment an admin approved the post. The feed is ordered by this
+                # (not by the submission `timestamp`) so a vent that waited for approval shows up
+                # where it was published, and a thread continuation bumps its thread to the top.
+                if ('posts', 'approved_at') not in existing_columns:
+                    logger.info("Adding missing column: approved_at to posts table")
+                    c.execute("ALTER TABLE posts ADD COLUMN approved_at TIMESTAMP DEFAULT NULL")
+                # Backfill (idempotent): approved posts without a stamp take their submission time,
+                # which keeps the old order for history.
+                c.execute("UPDATE posts SET approved_at = timestamp WHERE approved = TRUE AND approved_at IS NULL")
+
                 # Check if vent_number column exists, if not add it
                 if ('posts', 'vent_number') not in existing_columns:
                     logger.info("Adding missing column: vent_number to posts table")
@@ -588,9 +598,14 @@ def init_db():
                 # Partial index that lets the mini-app feed (approved, not deleted, newest first)
                 # read one page straight off the index instead of sorting every post.
                 c.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_posts_feed
-                    ON posts (timestamp DESC) WHERE approved = TRUE AND deleted = FALSE
+                    CREATE INDEX IF NOT EXISTS idx_posts_feed_approved
+                    ON posts (approved_at DESC NULLS LAST, post_id DESC) WHERE approved = TRUE AND deleted = FALSE
                 """)
+                c.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_posts_thread_parent
+                    ON posts (thread_from_post_id) WHERE thread_from_post_id IS NOT NULL
+                """)
+                c.execute("DROP INDEX IF EXISTS idx_posts_feed")
 
                 # ---------------- Create admin user if specified ----------------
                 if ADMIN_ID:
@@ -4554,7 +4569,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         
         # Update the post in database with vent number
         success = (await db_execute_async(
-            "UPDATE posts SET approved = TRUE, admin_approved_by = %s, channel_message_id = %s, vent_number = %s WHERE post_id = %s",
+            "UPDATE posts SET approved = TRUE, approved_at = CURRENT_TIMESTAMP, admin_approved_by = %s, channel_message_id = %s, vent_number = %s WHERE post_id = %s",
             (user_id, msg.message_id, next_vent_number, post_id)
         ))
         
@@ -12025,6 +12040,33 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   -webkit-tap-highlight-color:transparent;padding:0}
 .stat-btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
 .read-more{font-size:13px;font-weight:700;color:var(--gold);display:flex;align-items:center;gap:3px}
+.day-div{display:flex;align-items:center;gap:10px;padding:16px 16px 0}
+.day-div span{font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3)}
+.day-div i{flex:1;height:1px;background:var(--border)}
+.post-card.is-thread{border-color:rgba(var(--gold-rgb),0.3)}
+.thread-chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 10px;border-radius:999px;
+  background:rgba(var(--gold-rgb),0.14);border:0.5px solid rgba(var(--gold-rgb),0.5);color:var(--gold2);
+  font-size:12px;font-weight:700}
+.thread-chip svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.thread-box{margin:0 0 12px;padding:12px;border-radius:12px;background:rgba(var(--gold-rgb),0.05);
+  border:0.5px solid rgba(var(--gold-rgb),0.18)}
+.thread-label{font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:10px}
+.thread-row{position:relative;padding:0 0 14px 22px;cursor:pointer}
+.thread-row.last{padding-bottom:0}
+.thread-row::before{content:'';position:absolute;left:0;top:3px;width:10px;height:10px;box-sizing:border-box;
+  border-radius:50%;border:2px solid var(--gold);background:var(--bg)}
+.thread-row::after{content:'';position:absolute;left:4px;top:15px;bottom:-4px;width:2px;background:rgba(var(--gold-rgb),0.3)}
+.thread-row.last::after{display:none}
+.thread-row.cur{cursor:default}
+.thread-row.cur::before{background:var(--gold)}
+.thread-meta{font-size:12px;line-height:16px;color:var(--text3)}
+.thread-meta b{color:var(--gold);font-weight:700}
+.thread-prev{font-size:14px;line-height:1.5;color:var(--text2);display:-webkit-box;-webkit-line-clamp:2;
+  -webkit-box-orient:vertical;overflow:hidden}
+.thread-row.cur .thread-prev{color:var(--text)}
+.thread-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:44px;margin-top:12px;
+  border-radius:10px;background:none;border:0.5px solid rgba(var(--gold-rgb),0.45);color:var(--gold2);
+  font-family:'Inter',sans-serif;font-size:14px;font-weight:600;cursor:pointer}
 .lb-hero{
   margin:20px 16px 0;
   background:linear-gradient(135deg,rgba(var(--gold-rgb),0.1),rgba(var(--gold-rgb),0.04));
@@ -12952,7 +12994,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
 const API = location.origin;
 let UID = null, profileCache = null, crPartnerId = null, crPoll = null, currentPostAuthorId = null;
 let pendingMedia = null, pendingCommentMedia = null, pendingChatMedia = null;
-let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null;
+let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null, feedLastDay = '';
 let chatsCache = [];
 let crMsgsCache = [];
 let crChat = {};   // chat-level state from the server: blocked_by_me, can_chat, cleared, share_url, ...
@@ -14036,10 +14078,16 @@ async function loadFeed(append=false){
     if(searchQ)url=`/api/mini-app/search?q=${encodeURIComponent(searchQ)}&page=${feedPage}&user_id=${UID}`;
     const d=await api(url);
     const posts=d.data||[];feedHasMore=d.has_more;
-    if(!append){list.innerHTML='';}
+    if(!append){list.innerHTML='';feedLastDay='';}
     else{const sk=document.getElementById('feed-load-skel');if(sk)sk.remove();}
     if(!posts.length&&!append){list.innerHTML='<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:14px">Nothing here yet</div>';return}
-    posts.forEach(p=>list.insertAdjacentHTML('beforeend',renderPost(p)));
+    posts.forEach(p=>{
+      if(!searchQ&&p.day_label&&p.day_label!==feedLastDay){
+        feedLastDay=p.day_label;
+        list.insertAdjacentHTML('beforeend',`<div class="day-div"><span>${esc(p.day_label)}</span><i></i></div>`);
+      }
+      list.insertAdjacentHTML('beforeend',renderPost(p));
+    });
     more.style.display=feedHasMore?'block':'none';
     if(feedHasMore)feedPage++;
   }catch(e){
@@ -14051,6 +14099,34 @@ async function loadFeed(append=false){
     const loadBtn=document.getElementById('load-more-btn');
     loadBtn.disabled=false;loadBtn.textContent='Load more';
   }
+}
+
+function ventNo(n){return n===null||n===undefined?'':String(n).padStart(3,'0')}
+function threadChip(p){
+  if(!p.thread)return '';
+  return `<div style="margin-bottom:10px"><span class="thread-chip"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>Thread · ${p.thread.count} vents</span></div>`;
+}
+// Feed card: earlier vents of the thread, newest first (the card itself is the newest approved vent).
+function threadPanel(p){
+  const t=p.thread;
+  if(!t||!t.earlier||!t.earlier.length)return '';
+  const rows=t.earlier.map((e,i)=>{
+    const last=i===t.earlier.length-1;
+    const prev=e.content_hidden?'<i>Sensitive content</i>':esc(e.preview||'');
+    return `<div class="thread-row${last?' last':''}" onclick="openPost(${e.id})"><div class="thread-meta"><b>Vent - ${ventNo(e.vent_number)}</b> · approved ${esc(e.time_ago||'')}${last?' · start of thread':''}</div><div class="thread-prev">${prev}</div></div>`;
+  }).join('');
+  return `<div class="thread-box"><div class="thread-label">Earlier in this thread</div>${rows}<button class="thread-btn" onclick="openPost(${p.id})">View full thread →</button></div>`;
+}
+// Detail page: the whole thread, oldest to newest, with the open vent marked.
+function threadTimeline(list){
+  if(!list||list.length<2)return '';
+  const rows=list.map((e,i)=>{
+    const first=i===0,last=i===list.length-1;
+    const prev=e.content_hidden?'<i>Sensitive content</i>':esc(e.preview||'');
+    const tags=(first?' · start of thread':'')+(last?' · newest':'')+(e.current?' · you are here':'');
+    return `<div class="thread-row${last?' last':''}${e.current?' cur':''}"${e.current?'':` onclick="openPost(${e.id})"`}><div class="thread-meta"><b>Vent - ${ventNo(e.vent_number)}</b> · approved ${esc(e.time_ago||'')}${tags}</div><div class="thread-prev">${prev}</div></div>`;
+  }).join('');
+  return `<div class="thread-box" style="margin:0;border-radius:0;border-left:none;border-right:none;border-top:none"><div class="thread-label">Thread · ${list.length} vents, oldest to newest</div>${rows}</div>`;
 }
 
 function renderPost(p){
@@ -14065,12 +14141,14 @@ function renderPost(p){
       }
     }
   }
-  return `<div class="post-card">
-    <div class="post-meta"><div class="ava" style="width:34px;height:34px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name"${p.author?.is_admin ? '' : ` onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:13px">${esc(p.author?.aura||'')}</span></div></div>${p.explicit?`<span class="sens-chip" style="margin-left:auto"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>18+</span>`:`<div class="post-time">${esc(p.time_ago||'')}</div>`}</div>
+  return `<div class="post-card${p.thread?' is-thread':''}">
+    <div class="post-meta"><div class="ava" style="width:34px;height:34px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name"${p.author?.is_admin ? '' : ` onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:13px">${esc(p.author?.aura||'')}</span></div></div>${p.explicit?`<span class="sens-chip" style="margin-left:auto"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>18+</span>`:`<div class="post-time">${esc(p.day_label?'Approved '+(p.time_ago||''):(p.time_ago||''))}</div>`}</div>
+    ${threadChip(p)}
     ${ventLabel(p)}
     ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${cats}</div>`:''}
     ${p.content_hidden?`<div class="sens-veil" onclick="openPost(${p.id})"><div class="sens-veil-bars"><i style="width:96%"></i><i style="width:88%"></i><i style="width:60%"></i></div><div class="sens-veil-t">Sensitive content</div><div class="sens-veil-s">Tap to view. May not be suitable for all viewers.</div></div>`:`<div class="post-body" onclick="openPost(${p.id})">${esc(p.content)}</div>
     ${p.media_id?`<div onclick="openPost(${p.id})">${renderMedia(p.media_type,p.media_id)}</div>`:''}`}
+    ${threadPanel(p)}
     <div onclick="event.stopPropagation();">
       ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
     </div>
@@ -14122,7 +14200,7 @@ async function openPost(id, reveal){
       }
     }
     const explicitTag=p.explicit?`<div class="sens-chip" style="margin-bottom:10px"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>18+ SENSITIVE</div>`:'';
-    document.getElementById('detail-post').innerHTML=`
+    document.getElementById('detail-post').innerHTML=`${threadTimeline(p.thread)}
       <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
         <div class="post-meta"><div class="ava" style="width:38px;height:38px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name" style="font-size:15px;cursor:pointer"${p.author?.is_admin ? '' : ` onclick="showUserProfile('${p.author?.id}')"`}>${ICONS.shield.replace('class="icon"','class="icon badge-icon"')} Vent author</div><div style="font-size:12px;color:var(--text3)">${esc(p.time_ago||'')}</div></div></div>
         ${ventLabel(p)}
@@ -16102,12 +16180,20 @@ def mini_app_file_proxy(file_id):
 # a window function so the separate COUNT(*) is only needed for out-of-range pages.
 _FEED_SQL = f"""
     WITH page_posts AS (
-        SELECT p.post_id, p.content, p.timestamp, p.comment_count, p.media_type,
+        SELECT p.post_id, p.content, p.timestamp, p.approved_at, p.thread_from_post_id,
+               p.comment_count, p.media_type,
                p.media_id, p.explicit, p.author_id, p.vent_number, p.revealed_sex,
                COUNT(*) OVER () AS total_count
         FROM posts p
         WHERE p.approved = TRUE AND p.deleted = FALSE
-        ORDER BY p.timestamp DESC, p.post_id DESC
+          -- A vent with an approved continuation is folded into the continuation's thread card,
+          -- so only the newest vent of each thread is a feed entry.
+          AND NOT EXISTS (
+              SELECT 1 FROM posts nx
+              WHERE nx.thread_from_post_id = p.post_id
+                AND nx.approved = TRUE AND nx.deleted = FALSE
+          )
+        ORDER BY p.approved_at DESC NULLS LAST, p.post_id DESC
         LIMIT %s OFFSET %s
     ),
     score_authors AS (
@@ -16115,7 +16201,8 @@ _FEED_SQL = f"""
     ),
     {_SCORE_CTES_SQL}
     SELECT
-        pp.post_id, pp.content, pp.timestamp, pp.comment_count, pp.media_type,
+        pp.post_id, pp.content, pp.timestamp, pp.approved_at, pp.thread_from_post_id,
+        pp.comment_count, pp.media_type,
         pp.media_id, pp.explicit, pp.total_count, pp.vent_number, pp.revealed_sex,
         u.user_id AS author_id,
         u.sex AS author_sex,
@@ -16153,8 +16240,112 @@ _FEED_SQL = f"""
     ) ur ON TRUE
     LEFT JOIN author_scores asr ON asr.author_id = pp.author_id
     LEFT JOIN users v ON v.user_id = %s
-    ORDER BY pp.timestamp DESC, pp.post_id DESC
+    ORDER BY pp.approved_at DESC NULLS LAST, pp.post_id DESC
 """
+
+# Earlier vents of each thread tip on the current page, newest first (depth 1 = direct parent).
+# Walks thread_from_post_id upward; depth-capped so a bad cycle can never loop forever.
+_THREAD_ANCESTORS_SQL = """
+    WITH RECURSIVE chain AS (
+        SELECT t.post_id AS tip_id, t.thread_from_post_id AS anc_id, 1 AS depth
+        FROM posts t
+        WHERE t.post_id = ANY(%s) AND t.thread_from_post_id IS NOT NULL
+        UNION ALL
+        SELECT ch.tip_id, a.thread_from_post_id, ch.depth + 1
+        FROM chain ch JOIN posts a ON a.post_id = ch.anc_id
+        WHERE a.thread_from_post_id IS NOT NULL AND ch.depth < 25
+    )
+    SELECT ch.tip_id, ch.depth, a.post_id, a.vent_number, a.content, a.explicit, a.author_id,
+           a.approved_at, a.timestamp
+    FROM chain ch JOIN posts a ON a.post_id = ch.anc_id
+    WHERE a.approved = TRUE AND a.deleted = FALSE
+    ORDER BY ch.tip_id, ch.depth ASC
+"""
+
+# Every approved vent in the thread that contains %s (root, then all continuations), oldest first.
+_THREAD_MEMBERS_SQL = """
+    WITH RECURSIVE up AS (
+        SELECT post_id, thread_from_post_id, 1 AS d FROM posts WHERE post_id = %s
+        UNION ALL
+        SELECT p.post_id, p.thread_from_post_id, up.d + 1
+        FROM posts p JOIN up ON p.post_id = up.thread_from_post_id
+        WHERE up.d < 50
+    ),
+    root AS (SELECT post_id FROM up ORDER BY d DESC LIMIT 1),
+    down AS (
+        SELECT r.post_id, 1 AS d FROM root r
+        UNION ALL
+        SELECT c.post_id, down.d + 1
+        FROM posts c JOIN down ON c.thread_from_post_id = down.post_id
+        WHERE down.d < 50
+    )
+    SELECT DISTINCT p.post_id, p.vent_number, p.content, p.explicit, p.author_id,
+           COALESCE(p.approved_at, p.timestamp) AS shown_at
+    FROM down JOIN posts p ON p.post_id = down.post_id
+    WHERE p.approved = TRUE AND p.deleted = FALSE
+    ORDER BY shown_at ASC, p.post_id ASC
+"""
+
+
+def _feed_time_ago(ts):
+    """'4m ago' style label for a naive DB timestamp (None -> '')."""
+    if not ts:
+        return ""
+    if isinstance(ts, str):
+        ts = datetime.strptime(ts[:19], '%Y-%m-%d %H:%M:%S')
+    diff = datetime.now() - ts
+    if diff.days > 0:
+        return f"{diff.days}d ago"
+    if diff.seconds > 3600:
+        return f"{diff.seconds // 3600}h ago"
+    if diff.seconds > 60:
+        return f"{diff.seconds // 60}m ago"
+    return "Just now"
+
+
+def _feed_day_label(ts):
+    """Divider label for grouping the feed by approval day: Today / Yesterday / 'Oct 21'."""
+    if not ts:
+        return ""
+    if isinstance(ts, str):
+        ts = datetime.strptime(ts[:19], '%Y-%m-%d %H:%M:%S')
+    days = (datetime.now().date() - ts.date()).days
+    if days <= 0:
+        return "Today"
+    if days == 1:
+        return "Yesterday"
+    return ts.strftime('%b %d').replace(' 0', ' ')
+
+
+def _thread_preview(row, can_see_explicit, limit=140):
+    """Short preview of a thread member; explicit vents stay veiled for other viewers."""
+    if row.get('explicit') and not can_see_explicit:
+        return "", True
+    text = (row.get('content') or '').strip()
+    if not text:
+        return "[media]", False
+    return (text if len(text) <= limit else text[:limit - 1].rstrip() + '\u2026'), False
+
+
+def _build_thread_payload(post_id, viewer_id, viewer_is_admin):
+    """Whole thread containing post_id, oldest to newest, or None when it is a stand-alone vent."""
+    rows = db_fetch_all(_THREAD_MEMBERS_SQL, (post_id,)) or []
+    seen, members = set(), []
+    for r in rows:
+        if r['post_id'] in seen:
+            continue
+        seen.add(r['post_id'])
+        can_see = viewer_is_admin or (bool(viewer_id) and str(r.get('author_id')) == str(viewer_id))
+        preview, hidden = _thread_preview(r, can_see, limit=180)
+        members.append({
+            'id': r['post_id'],
+            'vent_number': r.get('vent_number'),
+            'preview': preview,
+            'content_hidden': hidden,
+            'time_ago': _feed_time_ago(r['shown_at']),
+            'current': r['post_id'] == post_id,
+        })
+    return members if len(members) > 1 else None
 
 
 @flask_app.route('/api/mini-app/get-posts', methods=['GET'])
@@ -16171,24 +16362,19 @@ def mini_app_get_posts():
 
         formatted_posts = []
         is_admin_viewer = bool(posts and posts[0].get('viewer_is_admin'))
+
+        # Earlier vents for every thread tip on this page, in one query.
+        earlier_by_tip = {}
+        tip_ids = [p['post_id'] for p in posts if p.get('thread_from_post_id')]
+        if tip_ids:
+            for row in db_fetch_all(_THREAD_ANCESTORS_SQL, (tip_ids,)) or []:
+                earlier_by_tip.setdefault(row['tip_id'], []).append(row)
+
         for post in posts:
-            if isinstance(post['timestamp'], str):
-                post_time = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S')
-            else:
-                post_time = post['timestamp']
-            
-            now = datetime.now()
-            time_diff = now - post_time
-            
-            if time_diff.days > 0:
-                time_ago = f"{time_diff.days}d ago"
-            elif time_diff.seconds > 3600:
-                time_ago = f"{time_diff.seconds // 3600}h ago"
-            elif time_diff.seconds > 60:
-                time_ago = f"{time_diff.seconds // 60}m ago"
-            else:
-                time_ago = "Just now"
-            
+            # Ordering AND the time label follow the admin's approval, not the submission.
+            shown_at = post.get('approved_at') or post['timestamp']
+            time_ago = _feed_time_ago(shown_at)
+
             # Truncate content
             content_preview = post['content']
             if len(content_preview) > 300:
@@ -16210,10 +16396,28 @@ def mini_app_get_posts():
             if isinstance(reaction_counts, str):  # jsonb normally arrives already parsed
                 reaction_counts = json.loads(reaction_counts)
             
+            thread = None
+            earlier_rows = earlier_by_tip.get(post['post_id'])
+            if earlier_rows:
+                earlier = []
+                for r in earlier_rows:
+                    can_see = is_admin_viewer or (bool(uid) and str(r.get('author_id')) == uid)
+                    preview, hidden = _thread_preview(r, can_see)
+                    earlier.append({
+                        'id': r['post_id'],
+                        'vent_number': r.get('vent_number'),
+                        'preview': preview,
+                        'content_hidden': hidden,
+                        'time_ago': _feed_time_ago(r.get('approved_at') or r['timestamp']),
+                    })
+                thread = {'count': len(earlier) + 1, 'earlier': earlier}
+
             formatted_posts.append({
                 'id': post['post_id'],
                 'vent_number': post.get('vent_number'),
                 'revealed_sex': normalize_revealed_sex(post.get('revealed_sex')),
+                'thread': thread,
+                'day_label': _feed_day_label(shown_at),
                 'content': content_preview,
                 'full_content': post['content'] if not hide_content else content_preview,
                 'categories': category_list,
@@ -16244,7 +16448,11 @@ def mini_app_get_posts():
             total = int(posts[0]['total_count'])
         elif offset > 0:
             # Page past the end: the window count has no rows to ride on, so ask directly.
-            total_row = db_fetch_one("SELECT COUNT(*) AS count FROM posts WHERE approved = TRUE AND deleted = FALSE")
+            total_row = db_fetch_one(
+                "SELECT COUNT(*) AS count FROM posts p WHERE p.approved = TRUE AND p.deleted = FALSE "
+                "AND NOT EXISTS (SELECT 1 FROM posts nx WHERE nx.thread_from_post_id = p.post_id "
+                "AND nx.approved = TRUE AND nx.deleted = FALSE)"
+            )
             total = int(total_row['count']) if total_row else 0
         else:
             total = 0
@@ -16268,7 +16476,7 @@ def mini_app_get_single_post(post_id):
     try:
         post = db_fetch_one('''
             SELECT 
-                p.post_id, p.vent_number, p.revealed_sex, p.content, p.timestamp, p.comment_count, p.media_type, p.media_id, p.deleted, p.explicit,
+                p.post_id, p.vent_number, p.revealed_sex, p.content, p.timestamp, p.approved_at, p.comment_count, p.media_type, p.media_id, p.deleted, p.explicit,
                 u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
                 u.is_admin as author_is_admin,
                 STRING_AGG(pc.category_code, ', ') as categories
@@ -16282,24 +16490,9 @@ def mini_app_get_single_post(post_id):
         if not post:
             return jsonify({'success': False, 'error': 'Post not found or pending approval'}), 404
             
-        # Format time
-        if isinstance(post['timestamp'], str):
-            post_time = datetime.strptime(post['timestamp'], '%Y-%m-%d %H:%M:%S')
-        else:
-            post_time = post['timestamp']
-            
-        now = datetime.now()
-        time_diff = now - post_time
-        
-        if time_diff.days > 0:
-            time_ago = f"{time_diff.days}d ago"
-        elif time_diff.seconds > 3600:
-            time_ago = f"{time_diff.seconds // 3600}h ago"
-        elif time_diff.seconds > 60:
-            time_ago = f"{time_diff.seconds // 60}m ago"
-        else:
-            time_ago = "Just now"
-            
+        # Format time (approval time, to match the feed)
+        time_ago = _feed_time_ago(post.get('approved_at') or post['timestamp'])
+
         rating = calculate_user_rating(post['author_id'])
         
         # Parse categories
@@ -16386,6 +16579,9 @@ def mini_app_get_single_post(post_id):
                 'user_reaction': user_reaction if show_content else None
             }
         }
+        if show_content:
+            formatted_post['thread'] = _build_thread_payload(
+                post_id, viewer_id, bool(viewer_row and viewer_row.get('is_admin')))
         return jsonify({'success': True, 'data': formatted_post})
 
     except Exception as e:
@@ -17755,9 +17951,11 @@ def mini_app_admin_approve_post():
             return jsonify({'success': False, 'error': 'Post ID required'}), 400
         
         # Update the post to approved
+        # Stamp approved_at only on the first approval so re-clicking never reorders the feed.
         success = db_execute(
-            "UPDATE posts SET approved = TRUE WHERE post_id = %s",
-            (post_id,)
+            "UPDATE posts SET approved_at = COALESCE(CASE WHEN approved THEN approved_at END, CURRENT_TIMESTAMP), "
+            "approved = TRUE, admin_approved_by = COALESCE(admin_approved_by, %s) WHERE post_id = %s",
+            (str(admin_id), post_id)
         )
         calculate_user_rating.cache_clear()  # an approved post is +10 aura
         _leaderboard_cache_bust()
