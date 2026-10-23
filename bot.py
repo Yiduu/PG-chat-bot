@@ -12655,6 +12655,17 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 .cr-menu button.danger{color:#e05252}
 .cr-menu button.danger svg{stroke:#e05252}
 .cr-menu .cr-menu-sep{height:1px;background:var(--border);margin:4px 8px}
+.msg-pop-mask{position:fixed;inset:0;z-index:1150;background:rgba(0,0,0,0.28);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);animation:msgPopFade .14s ease}
+.msg-pop{position:fixed;width:224px;background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:5px;box-shadow:0 14px 38px rgba(0,0,0,0.45);animation:msgPopIn .16s cubic-bezier(.2,.9,.3,1.15)}
+.msg-pop button{display:flex;align-items:center;gap:14px;width:100%;min-height:42px;padding:0 12px;background:none;border:none;border-radius:11px;color:var(--text);font:500 15px 'Inter',sans-serif;cursor:pointer;text-align:left;-webkit-tap-highlight-color:transparent}
+.msg-pop button:active{background:var(--glass2)}
+.msg-pop button svg{width:18px;height:18px;stroke:var(--text2);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.msg-pop button.danger{color:#e05252}
+.msg-pop button.danger svg{stroke:#e05252}
+.msg-pop .msg-pop-sep{height:1px;background:var(--border);margin:4px 8px}
+.msg-row.menu-open .msg-bubble{box-shadow:0 0 0 2px var(--gold)}
+@keyframes msgPopIn{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+@keyframes msgPopFade{from{opacity:0}to{opacity:1}}
 .cr-sheet-mask{position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center}
 .cr-sheet{width:100%;max-width:480px;background:var(--bg);border:1px solid var(--border);border-bottom:none;border-radius:28px 28px 0 0;padding:22px 20px calc(20px + env(safe-area-inset-bottom,0px));animation:crSheetUp .22s ease}
 @keyframes crSheetUp{from{transform:translateY(20px);opacity:0}to{transform:none;opacity:1}}
@@ -14796,6 +14807,7 @@ function closeCR(){
   adminViewingPair = null;
   crChat = {}; crApplyChatState(); // also restores the input bar hidden by admin view or a block
   crCloseSheet();
+  msgPopClose();
   loadChats();
 }
 function crRenderMsgs(scroll,preserveAnchor){
@@ -14869,26 +14881,71 @@ async function loadOlderCRMsgs(){
     crRenderMsgs(false,true);   // keep the viewport anchored to what the user was reading
   }catch(e){toast(e.message)}finally{crLoadingOlder=false}
 }
+function msgPopClose(){
+  const m=document.getElementById('msg-pop-mask'); if(m) m.remove();
+  document.querySelectorAll('.msg-row.menu-open').forEach(r=>r.classList.remove('menu-open'));
+}
+async function msgCopy(text){
+  try{ await navigator.clipboard.writeText(text); toast('Copied'); }
+  catch(e){
+    const ta=document.createElement('textarea'); ta.value=text; ta.style.cssText='position:fixed;opacity:0;top:0;left:0';
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); toast('Copied'); }catch(_){ toast('Could not copy'); }
+    ta.remove();
+  }
+}
+// Telegram-style message menu: a compact popup anchored to the tapped message.
 function msgActions(id){
   const m=crMsgsCache.find(x=>String(x.id)===String(id));
   if(!m||m.is_deleted)return;
-  const mask=document.createElement('div');
-  mask.className='modal-mask active';
-  mask.onclick=(e)=>{if(e.target===mask)mask.remove();};
-  mask.innerHTML=`<div class="modal-container" style="padding:16px">
-    <div style="font-weight:700;margin-bottom:12px">Message options</div>
-    <button class="modal-btn modal-btn-secondary" id="msgReplyBtn">Reply</button>
-    ${m.is_mine?`<button class="modal-btn modal-btn-secondary" id="msgEditBtn">Edit</button>
-    <button class="modal-btn modal-btn-secondary" id="msgDelBtn" style="color:#e05252">Delete</button>`:''}
-    <button class="modal-btn modal-btn-primary" id="msgCancelBtn">Cancel</button>
-  </div>`;
-  document.body.appendChild(mask);
-  mask.querySelector('#msgCancelBtn').onclick=()=>mask.remove();
-  mask.querySelector('#msgReplyBtn').onclick=()=>{mask.remove();crReplyStart(m.id);};
-  if(m.is_mine){
-    mask.querySelector('#msgEditBtn').onclick=()=>{mask.remove();startEditMsg(m);};
-    mask.querySelector('#msgDelBtn').onclick=()=>{mask.remove();delMsg(m.id);};
+  msgPopClose();
+  const S=p=>'<svg viewBox="0 0 24 24" aria-hidden="true">'+p+'</svg>';
+  const items=[
+    {label:'Reply', ico:'<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>', fn:()=>crReplyStart(m.id)}
+  ];
+  if((m.content||'').trim()){
+    items.push({label:'Copy text', ico:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>', fn:()=>msgCopy(m.content)});
   }
+  if(m.is_mine){
+    items.push({label:'Edit', ico:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', fn:()=>startEditMsg(m)});
+    items.push({sep:true});
+    items.push({label:'Delete', danger:true, ico:'<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>', fn:()=>delMsg(m.id)});
+  }
+  const mask=document.createElement('div');
+  mask.className='msg-pop-mask'; mask.id='msg-pop-mask';
+  mask.onclick=e=>{ if(e.target===mask) msgPopClose(); };
+  const pop=document.createElement('div');
+  pop.className='msg-pop'; pop.setAttribute('role','menu');
+  items.forEach(it=>{
+    if(it.sep){ const d=document.createElement('div'); d.className='msg-pop-sep'; pop.appendChild(d); return; }
+    const b=document.createElement('button');
+    b.type='button'; b.setAttribute('role','menuitem');
+    if(it.danger) b.className='danger';
+    b.innerHTML=S(it.ico)+'<span></span>';
+    b.lastChild.textContent=it.label;
+    b.onclick=()=>{ msgPopClose(); it.fn(); };
+    pop.appendChild(b);
+  });
+  mask.appendChild(pop);
+  document.body.appendChild(mask);
+
+  // Anchor under the tapped message (above it if there's no room), on the side the bubble is on.
+  const row=document.getElementById('msg-'+m.id);
+  if(row) row.classList.add('menu-open');
+  const bub=row?(row.querySelector('.msg-bubble')||row):null;
+  const vw=window.innerWidth, vh=window.innerHeight, M=12, GAP=8;
+  const pw=pop.offsetWidth, ph=pop.offsetHeight;
+  let left=(vw-pw)/2, top=(vh-ph)/2;
+  if(bub){
+    const r=bub.getBoundingClientRect();
+    left=m.is_mine?r.right-pw:r.left;
+    top=r.bottom+GAP;
+    if(top+ph>vh-M) top=r.top-ph-GAP;
+  }
+  left=Math.max(M,Math.min(left,vw-pw-M));
+  top=Math.max(M,Math.min(top,vh-ph-M));
+  pop.style.left=left+'px'; pop.style.top=top+'px';
+  pop.style.transformOrigin=(m.is_mine?'right':'left')+' top';
 }
 // ---- Telegram-style editing: the message text moves into the composer, an "Edit message"
 // bar sits above it, the send button becomes a check mark, and the X cancels. ----
