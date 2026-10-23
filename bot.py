@@ -1175,7 +1175,7 @@ def _leaderboard_rows_cached(top_n, gen, bucket):
             SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
         ),
         {_SCORE_CTES_SQL}
-        SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge, s.score AS total
+        SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge, COALESCE(u.hide_aura, FALSE) AS hide_aura, s.score AS total
         FROM author_scores s
         JOIN users u ON u.user_id = s.author_id
         ORDER BY s.score DESC, u.user_id
@@ -2156,7 +2156,7 @@ def calculate_top_weekly_contributors(limit=3):
     limit = max(1, min(int(limit), 5000))
     query = """
         SELECT 
-            u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge,
+            u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge, COALESCE(u.hide_aura, FALSE) AS hide_aura,
             COALESCE(p.post_points, 0) + 
             COALESCE(c.comment_points, 0) + 
             COALESCE(r.reaction_points, 0) - 
@@ -14231,7 +14231,7 @@ function syncLbSeg(){
 function lbPodCol(u,place){
   if(!u)return '<div class="pod-col empty p'+place+'"><div class="pod-plinth"></div></div>';
   const crown=place===1?`<span class="pod-crown">${u.weekly_badge&&lbPeriod==='all'?esc(u.weekly_badge):ICONS.crown}</span>`:'';
-  const pts=lbPeriod==='weekly'?`+${u.points} pts`:`${u.points} pts`;
+  const pts=typeof u.points!=='number'?'Hidden':(lbPeriod==='weekly'?`+${u.points} pts`:`${u.points} pts`);
   return `<div class="pod-col p${place}"><div class="pod-ava-wrap">${crown}<div class="pod-ava" onclick="showUserProfile('${u.id}')">${avaHtml(u.avatar||u.sex)}</div><span class="pod-badge">${place}</span></div><div class="pod-name" onclick="showUserProfile('${u.id}')">${esc(u.name)}</div><div class="pod-pts">${pts}</div><div class="pod-plinth">${place}</div></div>`;
 }
 function renderLbMe(me){
@@ -14269,7 +14269,7 @@ async function loadLB(){
     if(rest.length){
       html+='<div class="section-label">'+(lbPeriod==='weekly'?'Rising this week':'More contributors')+'</div><div class="lb-list2">';
       rest.forEach((u,i)=>{
-        const pts=lbPeriod==='weekly'?`+${u.points}<small>THIS WEEK</small>`:`${u.points}<small>POINTS</small>`;
+        const hid=typeof u.points!=='number';const pts=hid?'Hidden':(lbPeriod==='weekly'?`+${u.points}<small>THIS WEEK</small>`:`${u.points}<small>POINTS</small>`);
         const sub=u.aura?`<div class="lb-info-aura">${esc(u.aura)}</div>`:'';
         html+=`<div class="lb-row2"><div class="lb-rank2">${i+4}</div><div class="ava" style="width:38px;height:38px">${avaHtml(u.avatar||u.sex)}</div><div class="lb-info"><div class="lb-info-name" onclick="showUserProfile('${u.id}')">${lbPeriod==='all'&&u.weekly_badge?esc(u.weekly_badge)+' ':''}${esc(u.name)}</div>${sub}</div><div class="lb-pts2">${pts}</div></div>`;
       });
@@ -16859,6 +16859,15 @@ def mini_app_send_chat_request():
     return jsonify({'success': True, 'status': 'pending', 'message': 'Chat request sent'})
 _WEEKLY_LB_CACHE = {}
 
+def _lb_can_see(viewer_id, target_id):
+    """Hidden aura/points are still visible to the owner and to admins."""
+    if not viewer_id:
+        return False
+    if str(viewer_id) == str(target_id):
+        return True
+    row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(viewer_id),))
+    return bool(row and row.get('is_admin'))
+
 def _viewer_is_ranked(viewer_id):
     """Admins are excluded from rankings, so they get no 'your rank' bar."""
     row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(viewer_id),))
@@ -16891,7 +16900,7 @@ def mini_app_leaderboard():
                 'name': r['anonymous_name'],
                 'sex': r['sex'],
                 'avatar': r['avatar_emoji'] or "",
-                'points': r['weekly_points'],
+                'points': ("Hidden" if (r.get('hide_aura') and not _lb_can_see(viewer_id, r['user_id'])) else r['weekly_points']),
                 'aura': '',
                 'weekly_badge': r['weekly_badge'] or ""
             } for i, r in enumerate(rows, start=1)]
@@ -16919,8 +16928,8 @@ def mini_app_leaderboard():
                 'name': user['anonymous_name'],
                 'sex': user['sex'],
                 'avatar': user['avatar_emoji'] or "",
-                'points': user['total'],
-                'aura': format_aura(user['total']),
+                'points': ("Hidden" if (user.get('hide_aura') and not _lb_can_see(viewer_id, user['user_id'])) else user['total']),
+                'aura': ("Hidden" if (user.get('hide_aura') and not _lb_can_see(viewer_id, user['user_id'])) else format_aura(user['total'])),
                 'weekly_badge': user['weekly_badge'] or ""
             })
 
@@ -16969,11 +16978,12 @@ def mini_app_profile(user_id):
         rating_display = rating
         
         # Apply privacy
+        profile_private = user.get('privacy_public') is False   # NULL (old rows) counts as public
         if not is_viewer_admin and not is_owner:
-            if user.get('hide_aura'):
+            if user.get('hide_aura') or profile_private:
                 aura_display = "Hidden"
                 rating_display = "Hidden"
-            if user.get('hide_follower_count'):
+            if user.get('hide_follower_count') or profile_private:
                 follower_count = "Hidden"
 
         posts = db_fetch_one(
@@ -16991,7 +17001,7 @@ def mini_app_profile(user_id):
         bio_display = (user.get('bio') or "").strip()
         role_display = "Administrator" if is_target_admin else ""
         if not is_viewer_admin and not is_owner:
-            if user.get('hide_bio'):
+            if user.get('hide_bio') or profile_private:
                 bio_display = ""
             if user.get('hide_role'):
                 role_display = ""
@@ -17011,8 +17021,8 @@ def mini_app_profile(user_id):
                 'is_admin': is_target_admin,
                 'stats': {
                     'followers': follower_count,
-                    'posts': posts['count'] if posts else 0,
-                    'comments': comments['count'] if comments else 0
+                    'posts': "Hidden" if (profile_private and not is_viewer_admin and not is_owner) else (posts['count'] if posts else 0),
+                    'comments': "Hidden" if (profile_private and not is_viewer_admin and not is_owner) else (comments['count'] if comments else 0)
                 }
             }
         })
@@ -17168,6 +17178,7 @@ def mini_app_search():
         sql = '''
             SELECT p.post_id, p.vent_number, p.revealed_sex, p.content, p.timestamp, p.comment_count, p.explicit, p.media_type, p.media_id,
                    u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
+                   COALESCE(u.hide_aura, FALSE) AS author_hide_aura,
                    STRING_AGG(DISTINCT pc.category_code, ',') as categories
             FROM posts p
             JOIN users u ON p.author_id = u.user_id
@@ -17215,7 +17226,7 @@ def mini_app_search():
                 'author': {
                     'name': 'Anonymous',
                     'avatar': post['author_avatar'] or "",
-                    'aura': format_aura(rating)
+                    'aura': "" if (post.get('author_hide_aura') and not is_owner and not is_admin_viewer) else format_aura(rating)
                 }
             })
             
