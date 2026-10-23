@@ -12554,6 +12554,20 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 .brand-word{font-size:16px;font-weight:700;letter-spacing:.3px;color:var(--text)}
 #nav{padding-bottom:var(--sa-bottom)!important}
 .cr-head{padding-top:calc(16px + var(--sa-top))!important}
+/* ===== Next-step guide after attaching media to a vent ===== */
+.next-step{display:none;align-items:center;gap:12px;margin:10px 16px 0;padding:12px 14px;border-radius:14px;
+  background:rgba(var(--gold-rgb),0.1);border:1px solid var(--gold)}
+.next-step.show{display:flex;animation:nsIn .25s ease}
+.ns-num{width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:var(--gold);color:#0c0b09;font-size:13px;font-weight:800}
+.ns-t{font-size:14px;font-weight:700;color:var(--text)}
+.ns-s{font-size:13px;line-height:1.4;color:var(--text2);margin-top:1px}
+.ns-s b{color:var(--gold2)}
+.next-step svg{width:20px;height:20px;flex-shrink:0;margin-left:auto;stroke:var(--gold);fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;animation:nsBounce 1s ease-in-out infinite}
+@keyframes nsIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@keyframes nsBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}
+.btn-gold.attn{animation:btnPulse 1.4s ease-in-out infinite}
+@keyframes btnPulse{0%,100%{box-shadow:0 4px 14px rgba(var(--gold-rgb),0.3)}50%{box-shadow:0 0 0 6px rgba(var(--gold-rgb),0.22),0 4px 18px rgba(var(--gold-rgb),0.5)}}
 /* ===== Posting options: sensitive (18+) marking + gender visibility ===== */
 :root{--warn:#e58a6b;--warn-rgb:229,138,107}
 body.light{--warn:#b4532f;--warn-rgb:180,83,47}
@@ -12630,6 +12644,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       </div>
       <div style="padding:0 16px;margin-top:14px"><textarea id="vent-txt" class="input-area" rows="5" placeholder="What's on your heart today…" maxlength="5000"></textarea><div class="char-count"><span id="vent-cnt">0</span> / 5000</div></div>
       <div id="vent-media-preview" style="display:none"></div>
+      <div id="vent-next-step" class="next-step" role="status"><span class="ns-num">2</span><div><div class="ns-t" id="vent-next-title">Attached, but not posted yet</div><div class="ns-s" id="vent-next-sub">Tap <b>Post Anonymously</b> below to share it.</div></div><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></div>
       <div style="padding:0 16px;margin-top:14px;display:flex;gap:10px;align-items:center">
         <button type="button" class="media-attach-btn" id="vent-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
         <input type="file" id="vent-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
@@ -12979,7 +12994,24 @@ async function uploadMedia(file, intent){
   return {media_type:d.media_type,media_id:d.file_id,name:file.name,previewUrl:URL.createObjectURL(file)};
 }
 
+function ventAttachedGuide(){
+  const box=document.getElementById('vent-next-step'),btn=document.getElementById('submit-vent');
+  if(!box||!btn||!pendingMedia)return;
+  const voice=pendingMedia.media_type==='voice'||pendingMedia.media_type==='audio';
+  document.getElementById('vent-next-title').textContent=(voice?'Voice message attached':'File attached')+', but not posted yet';
+  const needCat=!selCats.size;
+  document.getElementById('vent-next-sub').innerHTML=(needCat?'Pick a topic, then tap ':'Tap ')+'<b>Post Anonymously</b> below to share it.';
+  box.classList.add('show');btn.classList.add('attn');
+  toast('Attached. Now tap "Post Anonymously"');
+  try{btn.scrollIntoView({behavior:'smooth',block:'center'})}catch(e){}
+}
+function ventGuideClear(){
+  const box=document.getElementById('vent-next-step'),btn=document.getElementById('submit-vent');
+  if(box)box.classList.remove('show');
+  if(btn)btn.classList.remove('attn');
+}
 function renderMediaPreview(container,media,onRemove){
+  if(!media&&container&&container.id==='vent-media-preview')ventGuideClear();
   if(!media){container.style.display='none';container.innerHTML='';container.classList.remove('media-preview');return;}
   container.classList.add('media-preview');
   container.style.display='flex';
@@ -13042,6 +13074,7 @@ const VR_IC = {
   stop: '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
   left: '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>',
   play: '<svg viewBox="0 0 24 24"><polygon points="7 4 20 12 7 20 7 4"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>',
   pause: '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>'
 };
 let vr = null; // active recording session
@@ -13212,7 +13245,7 @@ function vrMove(x, y) {
 function vrLock() { // finger slid up: keep recording hands-free
   const v = vr; if (!v || v.state !== 'rec') return;
   v.state = 'locked'; vrHaptic('medium');
-  v.orb.style.transform = ''; v.orb.classList.add('sm'); v.orb.innerHTML = VR_IC.send;
+  v.orb.style.transform = ''; v.orb.classList.add('sm'); v.orb.innerHTML = v.target === 'vent' ? VR_IC.check : VR_IC.send;
   // Park the send circle at the row's right edge and keep the bar's content clear of it.
   const rr = v.row.getBoundingClientRect(), rcs = getComputedStyle(v.row);
   const lpadL = parseFloat(rcs.paddingLeft) || 0, lpadR = parseFloat(rcs.paddingRight) || 0;
@@ -13438,6 +13471,7 @@ async function handleVoiceFile(file, target) {
         renderMediaPreview(preview, null);
       });
       document.getElementById('vent-attach-btn').classList.add('has-media');
+      ventAttachedGuide();
     } else if (target === 'comment') {
       pendingCommentMedia = media;
       const preview = document.getElementById('comment-media-preview');
@@ -13712,6 +13746,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         pendingMedia=null;ventFileInput.value='';ventAttachBtn.classList.remove('has-media');
         renderMediaPreview(ventMediaPreview,null);
       });
+      ventAttachedGuide();
     }catch(e){toast(e.message);ventFileInput.value=''}
     finally{ventAttachBtn.disabled=false}
   });
@@ -13795,7 +13830,7 @@ async function submitVent(){
   if(!txt&&!pendingMedia)return toast('Write something first');
   if(!cats.length)return toast('Pick at least one category');
   const btn=document.getElementById('submit-vent');
-  btn.disabled=true;btn.textContent='Posting…';
+  btn.disabled=true;btn.textContent='Posting…';btn.classList.remove('attn');
   try{
     const payload={user_id:UID,content:txt,categories:cats,explicit:document.getElementById('vent-explicit-check').checked,reveal_sex:ventShowSexChoice()};
     if(pendingMedia){payload.media_type=pendingMedia.media_type;payload.media_id=pendingMedia.media_id}
