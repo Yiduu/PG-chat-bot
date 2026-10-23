@@ -1659,8 +1659,11 @@ def main_page():
     token = request.args.get('token')
     
     if not token:
-        # No token - redirect to login page
-        return redirect('/login')
+        # No token: opened from the BotFather Main Mini App / menu button / direct link.
+        # Serve the mini app straight away so Telegram users see the normal branded
+        # loading screen. The page authenticates via Telegram initData and sends
+        # non-Telegram visitors to /login by itself (see init()).
+        return mini_app_page()
     
     # Verify the token
     try:
@@ -12542,12 +12545,12 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 :root{--sa-top:max(env(safe-area-inset-top,0px),calc(var(--tg-safe-area-inset-top,0px) + var(--tg-content-safe-area-inset-top,0px)));--sa-bottom:max(env(safe-area-inset-bottom,0px),var(--tg-safe-area-inset-bottom,0px))}
 #brandbar{flex-shrink:0;display:flex;align-items:center;gap:10px;padding:calc(8px + var(--sa-top)) 16px 8px;
   background:var(--bg);border-bottom:0.5px solid var(--border);position:relative;z-index:50}
-.brand-mark{width:34px;height:34px;border-radius:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;
-  background:var(--bg2);border:1px solid rgba(var(--gold-rgb),0.45)}
+.brand-mark{width:38px;height:38px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;
+  background:none;border:none}
 /* the logo file has wide transparent margins, so scale it up inside the badge */
 .brand-mark img{width:175%;height:175%;max-width:none;flex-shrink:0;object-fit:contain;display:block}
-.brand-mark.sm{width:30px;height:30px;border-radius:10px}
-.brand-mark.lg{width:76px;height:76px;border-radius:24px}
+.brand-mark.sm{width:34px;height:34px}
+.brand-mark.lg{width:96px;height:96px}
 .brand-word{font-size:16px;font-weight:700;letter-spacing:.3px;color:var(--text)}
 #nav{padding-bottom:var(--sa-bottom)!important}
 .cr-head{padding-top:calc(16px + var(--sa-top))!important}
@@ -14930,6 +14933,7 @@ async function init(){
     const t=new URLSearchParams(location.search).get('token');
     if(t){try{const r=await fetch(API+'/api/verify-token/'+t);const d=await r.json();if(d.success)UID=String(d.user_id)}catch(e){}}
   }
+  if(!UID&&!(tg&&tg.initData)){location.replace('/login');return}
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='flex';
   if(UID){loadFeed(); checkAdminStatus(); refreshVentSexRow(); openChatFromLink();}
