@@ -317,7 +317,10 @@ def init_db():
                     ('hide_aura', 'BOOLEAN DEFAULT FALSE'),
                     ('hide_bio', 'BOOLEAN DEFAULT FALSE'),
                     ('hide_follower_count', 'BOOLEAN DEFAULT FALSE'),
-                    ('hide_role', 'BOOLEAN DEFAULT FALSE')
+                    ('hide_role', 'BOOLEAN DEFAULT FALSE'),
+                    # Opt-in: lets chat partners share this user's real Telegram @username.
+                    ('share_username', 'BOOLEAN DEFAULT FALSE'),
+                    ('tg_username', 'TEXT')
                 ]
                 for col_name, col_type in privacy_columns:
                     if ('users', col_name) not in existing_columns:
@@ -12843,6 +12846,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       <div class="me-group">
         <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="me-text"><div class="me-title">Public profile</div><div class="me-sub">Let others see your profile stats</div></div><label class="toggle"><input type="checkbox" id="set-priv" onchange="saveSetting('privacy_public',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><div class="me-text"><div class="me-title">Hide aura and points</div><div class="me-sub">Others see Hidden instead</div></div><label class="toggle"><input type="checkbox" id="set-hide-aura" onchange="saveSetting('hide_aura',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/></svg></div><div class="me-text"><div class="me-title">Share my Telegram username</div><div class="me-sub">Off by default. When on, people you chat with can share your real @username</div></div><label class="toggle"><input type="checkbox" id="set-share-username" onchange="saveShareUsername(this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg></div><div class="me-text"><div class="me-title">Hide bio</div><div class="me-sub">Keep your bio to yourself</div></div><label class="toggle"><input type="checkbox" id="set-hide-bio" onchange="saveSetting('hide_bio',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><div class="me-text"><div class="me-title">Hide follower count</div><div class="me-sub">Your followers stay private</div></div><label class="toggle"><input type="checkbox" id="set-hide-followers" onchange="saveSetting('hide_follower_count',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row" id="row-hide-role" style="display:none"><div class="me-ico"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="me-text"><div class="me-title">Hide role</div><div class="me-sub">Don't show that you're an administrator</div></div><label class="toggle"><input type="checkbox" id="set-hide-role" onchange="saveSetting('hide_role',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
@@ -14435,6 +14439,7 @@ function applySettings(d){
   set('set-notif',d.notifications);set('set-priv',d.privacy_public);
   set('set-hide-aura',d.hide_aura);set('set-hide-bio',d.hide_bio);
   set('set-hide-followers',d.hide_follower_count);set('set-hide-role',d.hide_role);
+  set('set-share-username',d.share_username);
   const rr=document.getElementById('row-hide-role');
   if(rr)rr.style.display=d.is_admin?'flex':'none';
   botLink=d.bot_link||botLink;
@@ -14444,6 +14449,23 @@ async function saveSetting(key,input){
   try{
     await api(`/api/mini-app/settings/${UID}`,{method:'POST',body:JSON.stringify({[key]:val})});
     hap('light');toast('Saved');
+  }catch(e){input.checked=!val;toast(e.message||'Could not save')}
+  finally{input.disabled=false}
+}
+// Opt-in: allow chat partners to share this user's real Telegram @username. Turning it on sends
+// Telegram's signed initData so the server can confirm the username really belongs to this account.
+async function saveShareUsername(input){
+  const val=input.checked;
+  const tg=window.Telegram&&window.Telegram.WebApp;
+  if(val){
+    const uname=tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.username;
+    if(!uname){ input.checked=false; toast('Set a Telegram username in Telegram settings first'); return; }
+    if(!confirm('Allow people you chat with to share your real Telegram username (@'+uname+')? You can turn this off any time.')){ input.checked=false; return; }
+  }
+  input.disabled=true;
+  try{
+    await api('/api/mini-app/settings/'+UID,{method:'POST',body:JSON.stringify({share_username:val,init_data:(tg&&tg.initData)||''})});
+    hap('light');toast(val?'Username sharing is on':'Username sharing is off');
   }catch(e){input.checked=!val;toast(e.message||'Could not save')}
   finally{input.disabled=false}
 }
@@ -15064,7 +15086,7 @@ function crOpenMenu(){
   m.onclick=e=>{ if(e.target===m) crCloseMenu(); };
   m.innerHTML='<div class="cr-menu" role="menu">'+
     '<button type="button" role="menuitem" onclick="crViewProfile()">'+S('<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>')+'View profile</button>'+
-    '<button type="button" role="menuitem" onclick="crShare()">'+S('<path d="M4 12v7h16v-7"/><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/>')+'Share profile</button>'+
+    '<button type="button" role="menuitem" onclick="crShare()">'+S('<path d="M4 12v7h16v-7"/><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/>')+(crChat.share_username?'Share Telegram username':'Share profile')+'</button>'+
     '<button type="button" role="menuitem" onclick="crAskClear()">'+S('<path d="M4 6h16M4 12h10M4 18h6"/>')+'Clear history</button>'+
     '<button type="button" role="menuitem" onclick="'+(crChat.blocked_by_me?'crDoUnblock()':'crAskBlock()')+'">'+S('<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>')+blockLbl+'</button>'+
     '<div class="cr-menu-sep"></div>'+
@@ -15084,9 +15106,11 @@ function crCloseSheet(){ const m=document.getElementById('cr-sheet-mask'); if(m)
 function crViewProfile(){ crCloseMenu(); if(crPartnerId) showUserProfile(crPartnerId); }
 function crShare(){
   crCloseMenu();
-  const url=crChat.share_url;
+  // Real Telegram username only if the person allowed it; otherwise their anonymous profile link.
+  const uname=crChat.share_username;
+  const url=uname?('https://t.me/'+uname):crChat.share_url;
   if(!url){ toast('Sharing is not available right now'); return; }
-  const text=crPartnerName()+' on Christian Vent';
+  const text=uname?(crPartnerName()+' on Telegram: @'+uname):(crPartnerName()+' on Christian Vent');
   const link='https://t.me/share/url?url='+encodeURIComponent(url)+'&text='+encodeURIComponent(text);
   const tg=window.Telegram&&window.Telegram.WebApp;
   try{ if(tg&&tg.openTelegramLink){ tg.openTelegramLink(link); return; } }catch(e){}
@@ -16806,7 +16830,12 @@ def _chat_meta(user_id, partner_id):
           AND ((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s))
         LIMIT 1
     """, (user_id, partner_id, partner_id, user_id))
+    # The partner's real Telegram @username, only if they opted in to sharing it.
+    pu = db_fetch_one(
+        "SELECT tg_username FROM users WHERE user_id = %s AND COALESCE(share_username, FALSE) = TRUE",
+        (partner_id,))
     return {
+        'partner_username': (pu['tg_username'] if pu and pu.get('tg_username') else None),
         'blocked_by_me': blocked_by_me,
         'blocked_me': blocked_me,
         'can_chat': bool(accepted or has_history or clear or other_clear),
@@ -16922,6 +16951,8 @@ def mini_app_get_messages(partner_id):
                 # Telegram deep link to this person's profile. Users here are anonymous and no
                 # Telegram @username is stored, so sharing is by profile link + display name.
                 'share_url': f"https://t.me/{BOT_USERNAME}?start=profileid_{partner_id}" if BOT_USERNAME else '',
+                # Set only when the partner allowed sharing their real Telegram username.
+                'share_username': meta['partner_username'],
             }
         })
     except Exception as e:
@@ -17779,12 +17810,36 @@ def mini_app_mark_post_viewed(post_id):
     except Exception as e:
         logger.error(f"Error marking post as viewed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+def _verify_tg_init_data(init_data, max_age=86400):
+    """Validate Telegram WebApp initData (HMAC with the bot token). Returns the Telegram user
+    dict (id, username, ...) or None. Used so a Telegram @username can only be stored by the
+    account that actually owns it."""
+    import hmac, hashlib, json as _json
+    from urllib.parse import parse_qsl
+    try:
+        pairs = dict(parse_qsl(init_data or '', keep_blank_values=True))
+        got_hash = pairs.pop('hash', None)
+        if not got_hash or not TOKEN:
+            return None
+        check = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs))
+        secret = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
+        calc = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calc, got_hash):
+            return None
+        if time.time() - int(pairs.get('auth_date', 0)) > max_age:
+            return None
+        return _json.loads(pairs.get('user') or 'null')
+    except Exception:
+        return None
+
+
 @flask_app.route('/api/mini-app/settings/<user_id>', methods=['GET'])
 def mini_app_get_settings(user_id):
     """API endpoint for fetching user settings"""
     try:
         user = db_fetch_one(
             "SELECT notifications_enabled, privacy_public, is_admin, "
+            "COALESCE(share_username, FALSE) AS share_username, tg_username, "
             "COALESCE(hide_aura, FALSE) AS hide_aura, COALESCE(hide_bio, FALSE) AS hide_bio, "
             "COALESCE(hide_follower_count, FALSE) AS hide_follower_count, "
             "COALESCE(hide_role, FALSE) AS hide_role "
@@ -17803,6 +17858,7 @@ def mini_app_get_settings(user_id):
                 'hide_bio': bool(user['hide_bio']),
                 'hide_follower_count': bool(user['hide_follower_count']),
                 'hide_role': bool(user['hide_role']),
+                'share_username': bool(user['share_username']) and bool(user['tg_username']),
                 'is_admin': bool(user['is_admin']),
                 'bot_link': f"https://t.me/{BOT_USERNAME}" if BOT_USERNAME else ""
             }
@@ -17832,6 +17888,24 @@ def mini_app_update_settings(user_id):
                 if not isinstance(data[key], bool):
                     return jsonify({'success': False, 'error': f'{key} must be true or false'}), 400
                 fields[column] = data[key]
+
+        # Opt-in sharing of the real Telegram @username. Turning it on needs Telegram's signed
+        # initData so only the account owner can attach a username; turning it off deletes it.
+        if 'share_username' in data and data['share_username'] is not None:
+            if not isinstance(data['share_username'], bool):
+                return jsonify({'success': False, 'error': 'share_username must be true or false'}), 400
+            if data['share_username']:
+                tg_user = _verify_tg_init_data(data.get('init_data'))
+                if not tg_user or str(tg_user.get('id')) != str(user_id):
+                    return jsonify({'success': False, 'error': 'Could not verify your Telegram account. Reopen the app from Telegram and try again.'}), 403
+                uname = (tg_user.get('username') or '').strip()
+                if not re.fullmatch(r'[A-Za-z0-9_]{5,32}', uname):
+                    return jsonify({'success': False, 'error': 'You have no Telegram username yet. Set one in Telegram settings first.'}), 400
+                fields['share_username'] = True
+                fields['tg_username'] = uname
+            else:
+                fields['share_username'] = False
+                fields['tg_username'] = None
 
         if not fields:
             return jsonify({'success': False, 'error': 'No settings to update'}), 400
