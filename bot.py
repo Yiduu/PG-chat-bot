@@ -1191,6 +1191,32 @@ def get_leaderboard_rows(top_n=10):
     bucket = int(time.time() // _LEADERBOARD_TTL_SECONDS)
     return [dict(r) for r in _leaderboard_rows_cached(top_n, _leaderboard_gen, bucket)]
 
+_MY_RANK_CACHE = {}
+
+def get_my_alltime_rank(user_id):
+    """(rank, score) of one non-admin user by the same score/order as the leaderboard, or (None, 0).
+    Cached ~60s per user."""
+    key = str(user_id)
+    hit = _MY_RANK_CACHE.get(key)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    row = db_fetch_one(f"""
+        WITH score_authors AS (
+            SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
+        ),
+        {_SCORE_CTES_SQL}
+        SELECT r.rank, r.score FROM (
+            SELECT s.author_id, s.score,
+                   ROW_NUMBER() OVER (ORDER BY s.score DESC, s.author_id) AS rank
+            FROM author_scores s
+        ) r WHERE r.author_id = %s
+    """, (key,))
+    res = (int(row['rank']), int(row['score'] or 0)) if row else (None, 0)
+    if len(_MY_RANK_CACHE) > 5000:
+        _MY_RANK_CACHE.clear()
+    _MY_RANK_CACHE[key] = (time.time(), res)
+    return res
+
 # ---- channel text for a post its author deleted ----
 # Telegram has no text alignment, so "centered" is done the only reliable way: the notice block is
 # monospace (<code>, which is also tap-to-copy) and each line is left-padded to the block's width.
@@ -2127,7 +2153,7 @@ def get_user_ratings_batch(user_ids):
 
 def calculate_top_weekly_contributors(limit=3):
     """Calculate top `limit` (default 3) users by aura points earned in the last 7 days."""
-    limit = max(1, min(int(limit), 50))
+    limit = max(1, min(int(limit), 5000))
     query = """
         SELECT 
             u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge,
@@ -12616,6 +12642,15 @@ body.light .theme-quick{color:var(--gold-dark,#8a6d1f)}
 .lb-pts2 small{display:block;font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px}
 .lb-empty{margin:36px 24px 0;text-align:center;color:var(--text2);font-size:14px;line-height:1.55}
 .lb-empty b{display:block;font-size:17px;color:var(--text);margin-bottom:4px}
+/* ===== Your rank bar ===== */
+.lb-me{position:sticky;bottom:10px;z-index:5;margin:16px 16px 0;padding:12px 14px;border-radius:18px;display:flex;align-items:center;gap:12px;
+  background:var(--bg2);border:1px solid var(--gold);box-shadow:0 -6px 22px rgba(0,0,0,.35)}
+.lb-me-rank{min-width:46px;height:34px;padding:0 9px;border-radius:11px;background:var(--gold);color:#0c0b09;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800}
+.lb-me-rank.none{background:none;border:1.5px dashed var(--text3);color:var(--text3)}
+.lb-me-t{font-size:15px;font-weight:700;color:var(--text)}
+.lb-me-s{font-size:12.5px;line-height:1.35;color:var(--text2);margin-top:1px}
+.lb-me-pts{margin-left:auto;font-size:16px;font-weight:800;color:var(--gold);font-variant-numeric:tabular-nums;text-align:right}
+.lb-me-pts small{display:block;font-size:10.5px;font-weight:600;letter-spacing:.4px;color:var(--text3)}
 /* ===== Posting options: sensitive (18+) marking + gender visibility ===== */
 :root{--warn:#e58a6b;--warn-rgb:229,138,107}
 body.light{--warn:#b4532f;--warn-rgb:180,83,47}
@@ -12719,6 +12754,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
         <button type="button" role="tab" data-p="all" class="on" onclick="setLbPeriod('all')">All time</button>
       </div>
       <div id="lb-content"></div>
+      <div id="lb-me" class="lb-me" style="display:none"></div>
     </div>
     <div class="page" id="page-edit">
       <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
@@ -14198,13 +14234,29 @@ function lbPodCol(u,place){
   const pts=lbPeriod==='weekly'?`+${u.points} pts`:`${u.points} pts`;
   return `<div class="pod-col p${place}"><div class="pod-ava-wrap">${crown}<div class="pod-ava" onclick="showUserProfile('${u.id}')">${avaHtml(u.avatar||u.sex)}</div><span class="pod-badge">${place}</span></div><div class="pod-name" onclick="showUserProfile('${u.id}')">${esc(u.name)}</div><div class="pod-pts">${pts}</div><div class="pod-plinth">${place}</div></div>`;
 }
+function renderLbMe(me){
+  const el=document.getElementById('lb-me');if(!el)return;
+  if(!me){el.style.display='none';el.innerHTML='';return}
+  const wk=lbPeriod==='weekly';
+  let chip,sub;
+  if(me.rank){
+    chip=`<div class="lb-me-rank">#${me.rank}</div>`;
+    sub=me.in_top10?`You're in the top 10${wk?' this week':''}`:(me.behind!==null&&me.behind!==undefined?`${me.behind} pts behind #10`:'Keep going');
+  }else{
+    chip='<div class="lb-me-rank none">-</div>';
+    sub=wk?'Earn points this week to enter the ranking':'Earn points to enter the ranking';
+  }
+  el.innerHTML=`${chip}<div><div class="lb-me-t">You</div><div class="lb-me-s">${esc(sub)}</div></div><div class="lb-me-pts">${wk?'+':''}${me.points}<small>${wk?'THIS WEEK':'POINTS'}</small></div>`;
+  el.style.display='flex';
+}
 async function loadLB(){
   const box=document.getElementById('lb-content');box.innerHTML=skelLB();
   syncLbSeg();
   const req=++lbReq;
   try{
-    const d=await api('/api/mini-app/leaderboard?period='+(lbPeriod==='weekly'?'weekly':'all'));
+    const d=await api('/api/mini-app/leaderboard?period='+(lbPeriod==='weekly'?'weekly':'all')+(UID?'&user_id='+encodeURIComponent(UID):''));
     if(req!==lbReq)return;
+    renderLbMe(d.me);
     const users=d.data||[];
     if(!users.length){
       box.innerHTML=lbPeriod==='weekly'
@@ -16807,20 +16859,32 @@ def mini_app_send_chat_request():
     return jsonify({'success': True, 'status': 'pending', 'message': 'Chat request sent'})
 _WEEKLY_LB_CACHE = {}
 
+def _viewer_is_ranked(viewer_id):
+    """Admins are excluded from rankings, so they get no 'your rank' bar."""
+    row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(viewer_id),))
+    return bool(row) and not row.get('is_admin')
+
+def _build_me(rank, points, tenth_points):
+    behind = None
+    if rank is None or rank > 10:
+        if tenth_points is not None:
+            behind = max(0, int(tenth_points) - int(points))
+    return {'rank': rank, 'points': int(points), 'in_top10': bool(rank and rank <= 10), 'behind': behind}
+
 @flask_app.route('/api/mini-app/leaderboard', methods=['GET'])
 def mini_app_leaderboard():
     """API endpoint for leaderboard data"""
     try:
+        viewer_id = request.args.get('user_id')
         if request.args.get('period') == 'weekly':
-            # Top 10 by points earned in the last 7 days (cached ~60s)
+            # Top 10 by points earned in the last 7 days (full list cached ~60s so we can also rank the viewer)
             now = time.time()
             cached = _WEEKLY_LB_CACHE.get('rows')
-            if not cached or now - _WEEKLY_LB_CACHE.get('at', 0) > 60:
-                rows = [dict(r) for r in (calculate_top_weekly_contributors(10) or [])]
-                _WEEKLY_LB_CACHE['rows'] = rows
+            if cached is None or now - _WEEKLY_LB_CACHE.get('at', 0) > 60:
+                cached = [dict(r) for r in (calculate_top_weekly_contributors(5000) or [])]
+                _WEEKLY_LB_CACHE['rows'] = cached
                 _WEEKLY_LB_CACHE['at'] = now
-            else:
-                rows = cached
+            rows = cached[:10]
             weekly = [{
                 'id': str(r['user_id']),
                 'rank': i,
@@ -16831,7 +16895,16 @@ def mini_app_leaderboard():
                 'aura': '',
                 'weekly_badge': r['weekly_badge'] or ""
             } for i, r in enumerate(rows, start=1)]
-            return jsonify({'success': True, 'period': 'weekly', 'data': weekly})
+            me = None
+            if viewer_id and _viewer_is_ranked(viewer_id):
+                my_rank, my_pts = None, 0
+                for idx, r in enumerate(cached, start=1):
+                    if str(r['user_id']) == str(viewer_id):
+                        my_rank, my_pts = idx, int(r['weekly_points'])
+                        break
+                tenth = int(rows[9]['weekly_points']) if len(rows) >= 10 else None
+                me = _build_me(my_rank, my_pts, tenth)
+            return jsonify({'success': True, 'period': 'weekly', 'data': weekly, 'me': me})
 
         # Top 10 users with weighted aura (single CTE query, cached for ~60s)
         top_users = get_leaderboard_rows(10)
@@ -16853,9 +16926,16 @@ def mini_app_leaderboard():
 
 
         
+        me = None
+        if viewer_id and _viewer_is_ranked(viewer_id):
+            my_rank, my_pts = get_my_alltime_rank(viewer_id)
+            tenth = int(top_users[9]['total']) if len(top_users) >= 10 else None
+            me = _build_me(my_rank, my_pts, tenth)
+
         return jsonify({
             'success': True,
-            'data': formatted_users
+            'data': formatted_users,
+            'me': me
         })
         
     except Exception as e:
