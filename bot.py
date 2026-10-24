@@ -32,6 +32,7 @@ from types import SimpleNamespace, MappingProxyType
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 import json
+import calendar
 import re
 try:
     from zoneinfo import ZoneInfo
@@ -12040,6 +12041,10 @@ body.light #nav{background:rgba(245,243,240,0.92);}
   -webkit-tap-highlight-color:transparent;padding:0}
 .stat-btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
 .read-more{font-size:13px;font-weight:700;color:var(--gold);display:flex;align-items:center;gap:3px}
+.feed-new-pill{display:none;position:sticky;top:10px;z-index:30;margin:8px auto 0;height:44px;padding:0 18px;border-radius:999px;
+  background:var(--gold);color:#0c0b09;border:none;font-family:'Inter',sans-serif;font-size:14px;font-weight:700;cursor:pointer;
+  box-shadow:0 4px 16px rgba(0,0,0,.35);-webkit-tap-highlight-color:transparent}
+.feed-new-pill.show{display:block;animation:vrPop .2s ease-out}
 .day-div{display:flex;align-items:center;gap:10px;padding:16px 16px 0}
 .day-div span{font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3)}
 .day-div i{flex:1;height:1px;background:var(--border)}
@@ -12872,6 +12877,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
     <div class="page" id="page-feed">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Community</h1><div class="page-head-sub">Read, reflect, respond</div></div></div></div>
       <div class="search-wrap"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><input id="search-inp" type="text" placeholder="Search vents…"></div>
+      <button type="button" id="feed-new-pill" class="feed-new-pill" onclick="feedShowNew()" aria-live="polite"></button>
       <div id="feed-list"></div><div id="feed-more" style="padding:16px;text-align:center;display:none"><button class="btn-ghost" id="load-more-btn">Load more</button></div>
     </div>
     <div class="page" id="page-detail">
@@ -12994,7 +13000,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
 const API = location.origin;
 let UID = null, profileCache = null, crPartnerId = null, crPoll = null, currentPostAuthorId = null;
 let pendingMedia = null, pendingCommentMedia = null, pendingChatMedia = null;
-let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null, feedLastDay = '';
+let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null, feedLastDay = '', feedSinceMs = 0, feedNewCount = 0;
 let chatsCache = [];
 let crMsgsCache = [];
 let crChat = {};   // chat-level state from the server: blocked_by_me, can_chat, cleared, share_url, ...
@@ -14078,6 +14084,7 @@ async function loadFeed(append=false){
     if(searchQ)url=`/api/mini-app/search?q=${encodeURIComponent(searchQ)}&page=${feedPage}&user_id=${UID}`;
     const d=await api(url);
     const posts=d.data||[];feedHasMore=d.has_more;
+    if(!append&&!searchQ&&d.latest_ms){feedSinceMs=d.latest_ms;feedSetNew(0)}
     if(!append){list.innerHTML='';feedLastDay='';}
     else{const sk=document.getElementById('feed-load-skel');if(sk)sk.remove();}
     if(!posts.length&&!append){list.innerHTML='<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:14px">Nothing here yet</div>';return}
@@ -14100,6 +14107,39 @@ async function loadFeed(append=false){
     loadBtn.disabled=false;loadBtn.textContent='Load more';
   }
 }
+
+// ---- Live feed: poll for newly approved vents, show a pill instead of shifting the list under the reader ----
+const FEED_POLL_MS=20000;
+let feedPollTimer=0,feedPollBusy=false,feedFails=0;
+function feedSetNew(n){
+  feedNewCount=n;
+  const pill=document.getElementById('feed-new-pill');if(!pill)return;
+  if(n>0){pill.textContent='↑ '+n+(n===1?' new vent':' new vents')+' · tap to show';pill.classList.add('show')}
+  else pill.classList.remove('show');
+}
+function feedShowNew(){
+  feedSetNew(0);feedPage=1;
+  const sc=document.getElementById('pages');if(sc)sc.scrollTo({top:0,behavior:'smooth'});
+  loadFeed();
+}
+async function feedPoll(){
+  if(feedPollBusy||document.hidden||searchQ||!feedSinceMs)return;
+  const pg=document.getElementById('page-feed');
+  if(!pg||!pg.classList.contains('active'))return;
+  feedPollBusy=true;
+  try{
+    const d=await api('/api/mini-app/feed-pulse?after='+feedSinceMs);
+    feedFails=0;
+    if(d.new_count>0)feedSetNew(d.new_count);
+  }catch(e){feedFails=Math.min(feedFails+1,5)}
+  finally{feedPollBusy=false}
+}
+function feedPollSchedule(){
+  clearTimeout(feedPollTimer);
+  feedPollTimer=setTimeout(async()=>{await feedPoll();feedPollSchedule()},FEED_POLL_MS*(1+feedFails));
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)feedPoll()});
+feedPollSchedule();
 
 function ventNo(n){return n===null||n===undefined?'':String(n).padStart(3,'0')}
 function threadChip(p){
@@ -16348,6 +16388,39 @@ def _build_thread_payload(post_id, viewer_id, viewer_is_admin):
     return members if len(members) > 1 else None
 
 
+def _approved_ms(ts):
+    """Naive DB timestamp -> whole milliseconds, rounded UP, so a post is never counted as newer than itself."""
+    if not ts:
+        return 0
+    if isinstance(ts, str):
+        ts = datetime.strptime(ts[:26].strip(), '%Y-%m-%d %H:%M:%S.%f') if '.' in ts else datetime.strptime(ts[:19], '%Y-%m-%d %H:%M:%S')
+    return calendar.timegm(ts.timetuple()) * 1000 + (ts.microsecond + 999) // 1000
+
+
+@flask_app.route('/api/mini-app/feed-pulse', methods=['GET'])
+def mini_app_feed_pulse():
+    """Cheap poll for the live feed: how many vents were approved after `after` (ms from the last
+    feed load) and the newest approval time. One indexed COUNT, no joins."""
+    try:
+        after = _clamp_int(request.args.get('after'), 0, 4102444800000, 0)
+        row = db_fetch_one(
+            """SELECT MAX(approved_at) AS latest,
+                      COUNT(*) FILTER (WHERE approved_at > (to_timestamp((%s + 1) / 1000.0) AT TIME ZONE 'UTC')) AS new_count
+               FROM posts WHERE approved = TRUE AND deleted = FALSE AND approved_at IS NOT NULL""",
+            (after,)
+        )
+        resp = jsonify({
+            'success': True,
+            'latest_ms': _approved_ms(row['latest']) if row else 0,
+            'new_count': int(row['new_count']) if row and after else 0
+        })
+        resp.headers['Cache-Control'] = 'no-store'
+        return resp
+    except Exception as e:
+        logger.error(f"Error in mini-app feed pulse: {e}")
+        return jsonify({'success': False, 'error': 'pulse failed'}), 500
+
+
 @flask_app.route('/api/mini-app/get-posts', methods=['GET'])
 def mini_app_get_posts():
     """API endpoint for getting posts from mini app - With Pagination and Unread Counts"""
@@ -16462,6 +16535,7 @@ def mini_app_get_posts():
             'data': formatted_posts,
             'page': page,
             'total_posts': total,
+            'latest_ms': _approved_ms(posts[0].get('approved_at') or posts[0]['timestamp']) if (posts and page == 1) else None,
             'has_more': len(posts) == per_page,
             'next_page': page + 1 if len(posts) == per_page else None
         })
