@@ -12265,23 +12265,25 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
   outline:none;resize:none;max-height:100px;min-height:42px;
 }
 .comment-input-bar textarea:focus{border-color:rgba(var(--gold-rgb),0.4)}
-.comment-input-bar button{
-  width:40px;height:40px;border-radius:50%;
+.comment-input-bar #send-comment{
+  width:44px;height:44px;border-radius:50%;
   background:var(--gold);border:none;cursor:pointer;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
   box-shadow:0 2px 8px rgba(var(--gold-rgb),0.35);
 }
-.comment-input-bar button svg{width:17px;height:17px;stroke:#0c0b09;fill:none;stroke-width:2.2}
+.comment-input-bar #send-comment svg{width:18px;height:18px;stroke:#0c0b09;fill:none;stroke-width:2.2}
 .media-attach-btn{
-  width:40px;height:40px;border-radius:50%;flex-shrink:0;
+  width:44px;height:44px;border-radius:50%;flex-shrink:0;
   background:var(--bg2);border:1px solid var(--border);cursor:pointer;
   display:flex;align-items:center;justify-content:center;position:relative;
   -webkit-tap-highlight-color:transparent;
 }
 .media-attach-btn:active{transform:scale(0.92)}
-.media-attach-btn svg{width:17px;height:17px;stroke:var(--text2);fill:none;stroke-width:2}
-.media-attach-btn.has-media{border-color:var(--gold)}
+.media-attach-btn svg{width:19px;height:19px;stroke:var(--text2);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.media-attach-btn:disabled{opacity:.5;cursor:default}
+.media-attach-btn.has-media{border-color:var(--gold);background:rgba(var(--gold-rgb),0.14)}
 .media-attach-btn.has-media svg{stroke:var(--gold)}
+.media-attach-btn:focus-visible,.voice-record-btn:focus-visible,.mp-remove:focus-visible,.doc-link:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .media-preview{
   display:flex;align-items:center;gap:8px;
   background:var(--bg2);border:0.5px solid var(--border);border-radius:var(--radius-xs);
@@ -12289,8 +12291,18 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 }
 .media-preview img{width:36px;height:36px;border-radius:8px;object-fit:cover;flex-shrink:0}
 .media-preview .mp-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.media-preview .mp-remove{background:none;border:none;color:var(--text3);cursor:pointer;font-size:17px;padding:0 4px}
+.media-preview .mp-remove{background:none;border:none;color:var(--text2);cursor:pointer;width:44px;height:44px;margin:-8px -10px -8px 0;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent}
+.media-preview .mp-remove svg{width:18px;height:18px}
 .media-preview .mp-remove:hover{color:var(--gold)}
+.media-preview .mp-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.media-preview .mp-name{flex:none}
+.media-preview .mp-sub{font-size:12px;color:var(--text3);font-variant-numeric:tabular-nums}
+.media-preview .mp-bar{height:3px;border-radius:2px;background:var(--border);overflow:hidden;margin-top:4px}
+.media-preview .mp-bar i{display:block;height:100%;width:0;background:var(--gold);transition:width .15s linear}
+.media-preview .mp-ico{width:36px;height:36px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.media-preview .mp-ico svg{width:18px;height:18px;stroke:var(--gold);fill:none}
+.media-preview .mp-ico.spin svg{animation:voice-spin .8s linear infinite}
 #comment-media-preview.media-preview{margin:0 0 8px}
 .post-media, .comment-media{margin:10px 0;border-radius:var(--radius-sm);overflow:hidden}
 .post-media img, .comment-media img{width:100%;display:block;border-radius:var(--radius-sm)}
@@ -12298,9 +12310,11 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 .post-media audio, .comment-media audio{width:100%;display:block}
 .post-media .doc-link, .comment-media .doc-link{
   display:flex;align-items:center;gap:10px;background:var(--bg2);border:0.5px solid var(--border);
-  border-radius:var(--radius-sm);padding:12px;color:var(--text);text-decoration:none;font-size:14px;
+  border-radius:var(--radius-sm);padding:12px;min-height:48px;color:var(--text);text-decoration:none;font-size:14px;font-weight:500;
 }
 .post-media .doc-link svg{width:20px;height:20px;stroke:var(--gold);fill:none;stroke-width:2;flex-shrink:0}
+.post-media .doc-link .dl-go{margin-left:auto;width:16px;height:16px;stroke:var(--text3)}
+.msg-bubble .post-media{margin:6px 0 0}
 .post-media img.sticker-media, .comment-media img.sticker-media{width:100px;border-radius:0}
 /* ----- Compact voice player ----- */
 .voice-player{display:flex;align-items:center;gap:9px;background:var(--bg2);border:0.5px solid var(--border);border-radius:22px;padding:7px 12px;max-width:230px;margin:8px 0}
@@ -12335,34 +12349,34 @@ body.light .comment-input-bar{background:rgba(245,243,240,0.95);}
 }
 /* ----- Voice recording (Telegram-style) ----- */
 .voice-record-btn{
-  width:40px;height:40px;border-radius:50%;flex-shrink:0;cursor:pointer;
+  width:44px;height:44px;border-radius:50%;flex-shrink:0;cursor:pointer;
   background:none!important;border:none!important;box-shadow:none!important;
   display:flex;align-items:center;justify-content:center;
   touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
   -webkit-tap-highlight-color:transparent;
 }
-.voice-record-btn svg,.comment-input-bar .voice-record-btn svg{width:24px;height:24px;fill:none;stroke:var(--text3);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.voice-record-btn svg,.comment-input-bar .voice-record-btn svg{width:24px;height:24px;fill:none;stroke:var(--text2);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .vr-bar{position:absolute;left:0;right:0;top:0;bottom:0;z-index:5;display:flex;align-items:center;gap:10px;
   background:var(--bg);color:var(--text);border-radius:21px;animation:vrIn .18s ease-out;user-select:none;-webkit-user-select:none}
 .vr-dot{width:12px;height:12px;border-radius:50%;background:#f44336;flex-shrink:0;animation:vrBlink 1s ease-in-out infinite}
 .vr-time{font-size:17px;font-variant-numeric:tabular-nums;min-width:58px}
 .vr-slide{flex:1;display:flex;align-items:center;justify-content:center;gap:4px;color:var(--text3);font-size:15px;white-space:nowrap}
 .vr-slide svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;animation:vrNudge 1.2s ease-in-out infinite}
-.vr-textbtn{background:none;border:none;color:var(--tg-theme-link-color,#3390ec);font-size:16px;font-weight:500;padding:8px;cursor:pointer;margin-left:auto;font-family:inherit}
+.vr-textbtn{background:none;border:none;color:var(--gold2);font-size:16px;font-weight:500;padding:8px;cursor:pointer;margin-left:auto;font-family:inherit}
 .vr-iconbtn{width:36px;height:36px;border-radius:50%;border:none;background:none;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0}
 .vr-iconbtn svg{width:22px;height:22px;fill:none;stroke:var(--text3);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.vr-iconbtn.play{background:var(--tg-theme-button-color,#3390ec)}
-.vr-iconbtn.play svg{stroke:#fff;fill:#fff;width:16px;height:16px}
+.vr-iconbtn.play{background:var(--gold)}
+.vr-iconbtn.play svg{stroke:#0c0b09;fill:#0c0b09;width:16px;height:16px}
 .vr-track{flex:1;height:4px;border-radius:2px;background:var(--border);overflow:hidden}
-.vr-track i{display:block;height:100%;width:0;background:var(--tg-theme-button-color,#3390ec)}
+.vr-track i{display:block;height:100%;width:0;background:var(--gold)}
 .vr-bin{margin:0 auto;animation:vrBin .38s ease-in forwards}
 .vr-bin svg{width:26px;height:26px;fill:none;stroke:#f44336;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .vr-halo,.vr-orb,.vr-lock{position:fixed;border-radius:50%;pointer-events:none}
-.vr-halo{width:64px;height:64px;margin:-32px 0 0 -32px;background:var(--tg-theme-button-color,#3390ec);opacity:.25;z-index:1000;transform:scale(1);transition:transform .09s linear}
-.vr-orb{width:64px;height:64px;margin:-32px 0 0 -32px;background:var(--tg-theme-button-color,#3390ec);z-index:1002;
+.vr-halo{width:64px;height:64px;margin:-32px 0 0 -32px;background:var(--gold);opacity:.25;z-index:1000;transform:scale(1);transition:transform .09s linear}
+.vr-orb{width:64px;height:64px;margin:-32px 0 0 -32px;background:var(--gold);z-index:1002;
   display:flex;align-items:center;justify-content:center;box-shadow:0 2px 10px rgba(0,0,0,.3);
   transition:width .2s,height .2s,margin .2s,transform .12s,left .2s;animation:vrPop .16s ease-out}
-.vr-orb svg{width:28px;height:28px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.vr-orb svg{width:28px;height:28px;fill:none;stroke:#0c0b09;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .vr-orb.sm{width:44px;height:44px;margin:-22px 0 0 -22px;pointer-events:auto;cursor:pointer}
 .vr-orb.sm svg{width:20px;height:20px}
 .vr-lock{width:44px;height:96px;margin:-48px 0 0 -22px;border-radius:22px;background:var(--bg2);border:0.5px solid var(--border);
@@ -12536,7 +12550,7 @@ body.light .cr-head button svg{stroke:#1a1a1a}
 }
 .cr-input textarea:focus{border-color:rgba(var(--gold-rgb),0.4)}
 .cr-send{
-  width:42px;height:42px;border-radius:50%;
+  width:44px;height:44px;border-radius:50%;
   background:var(--gold);border:none;cursor:pointer;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
   box-shadow:0 2px 8px rgba(var(--gold-rgb),0.35);
@@ -12821,9 +12835,9 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       <div id="vent-media-preview" style="display:none"></div>
       <div id="vent-next-step" class="next-step" role="status"><span class="ns-num">2</span><div><div class="ns-t" id="vent-next-title">Attached, but not posted yet</div><div class="ns-s" id="vent-next-sub">Tap <b>Post Anonymously</b> below to share it.</div></div><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></div>
       <div style="padding:0 16px;margin-top:14px;display:flex;gap:10px;align-items:center">
-        <button type="button" class="media-attach-btn" id="vent-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
-        <input type="file" id="vent-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
-        <button type="button" class="voice-record-btn" id="vent-voice-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+        <button type="button" class="media-attach-btn" id="vent-attach-btn" title="Attach a photo or file" aria-label="Attach a photo or file"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+        <input type="file" id="vent-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.gif">
+        <button type="button" class="voice-record-btn" id="vent-voice-btn" title="Press and hold to record" aria-label="Record a voice message. Press and hold."><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
         <button class="btn-gold" id="submit-vent" style="flex:1">Post Anonymously</button>
       </div>
     </div>
@@ -12915,11 +12929,11 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
   <div id="reply-bar" class="reply-bar" style="display:none"></div>
   <div id="comment-media-preview" style="display:none"></div>
   <div style="display:flex;align-items:flex-end;gap:8px">
-    <button type="button" class="media-attach-btn" id="comment-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
-    <input type="file" id="comment-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
+    <button type="button" class="media-attach-btn" id="comment-attach-btn" title="Attach a photo or file" aria-label="Attach a photo or file"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+    <input type="file" id="comment-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.gif">
     <textarea id="comment-txt" placeholder="Add a response…" rows="1"></textarea>
-    <button type="button" class="voice-record-btn" id="comment-voice-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
-    <button id="send-comment"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+    <button type="button" class="voice-record-btn" id="comment-voice-btn" title="Press and hold to record" aria-label="Record a voice message. Press and hold."><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+    <button id="send-comment" type="button" aria-label="Send response"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
   </div>
 </div>
 
@@ -12931,11 +12945,11 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
     <div id="cr-reply-bar" class="reply-bar" style="display:none"></div>
     <div id="chat-media-preview" style="display:none"></div>
     <div style="display:flex;align-items:center;gap:8px">
-      <button type="button" class="media-attach-btn" id="chat-attach-btn" title="Attach media"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
-      <input type="file" id="chat-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.gif">
+      <button type="button" class="media-attach-btn" id="chat-attach-btn" title="Attach a photo or file" aria-label="Attach a photo or file"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+      <input type="file" id="chat-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.gif">
       <textarea id="cr-txt" placeholder="Message…" rows="1" style="flex:1;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:11px 16px;color:var(--text);font-family:'Inter',sans-serif;font-size:16px;outline:none;resize:none;min-height:42px;max-height:100px;"></textarea>
-      <button type="button" class="voice-record-btn" id="chat-voice-btn" title="Voice message"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
-      <button class="cr-send" onclick="crSend()"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+      <button type="button" class="voice-record-btn" id="chat-voice-btn" title="Press and hold to record" aria-label="Record a voice message. Press and hold."><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+      <button class="cr-send" type="button" aria-label="Send message" onclick="crSend()"><svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
     </div>
   </div>
 </div>
@@ -13152,17 +13166,78 @@ async function api(path,opts={}){
 }
 
 const MAX_MEDIA_BYTES=20*1024*1024;
-async function uploadMedia(file, intent){
-  if(!file)return null;
-  if(file.size>MAX_MEDIA_BYTES)throw new Error('File too large (max 20MB)');
-  const fd=new FormData();
-  fd.append('file',file);
-  fd.append('user_id',UID);
-  if(intent) fd.append('intent', intent);
-  const r=await fetch(API+'/api/mini-app/upload-media',{method:'POST',body:fd});
-  const d=await r.json();
-  if(!r.ok||!d.success)throw new Error(d.error||'Upload failed');
-  return {media_type:d.media_type,media_id:d.file_id,name:file.name,previewUrl:URL.createObjectURL(file)};
+function fmtBytes(n){return n<1024*1024?Math.max(1,Math.round(n/1024))+' KB':(n/1024/1024).toFixed(1)+' MB'}
+function fmtClock(sec){sec=Math.max(0,Math.round(sec));return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0')}
+// Uploads one file with progress. onProg(0..1), reg(xhr) lets the caller cancel.
+function uploadMedia(file, intent, onProg, reg){
+  return new Promise((resolve,reject)=>{
+    if(!file)return resolve(null);
+    if(!file.size)return reject(new Error('That file is empty'));
+    if(file.size>MAX_MEDIA_BYTES)return reject(new Error('That file is '+fmtBytes(file.size)+'. The limit is 20 MB.'));
+    const fd=new FormData();
+    fd.append('file',file);
+    fd.append('user_id',UID);
+    if(intent) fd.append('intent', intent);
+    const x=new XMLHttpRequest();
+    if(reg)reg(x);
+    x.open('POST',API+'/api/mini-app/upload-media');
+    x.timeout=120000;
+    x.upload.onprogress=ev=>{if(onProg&&ev.lengthComputable)onProg(ev.loaded/ev.total)};
+    x.onload=()=>{
+      let d={};try{d=JSON.parse(x.responseText)}catch(_){}
+      if(x.status>=200&&x.status<300&&d.success)resolve({media_type:d.media_type,media_id:d.file_id,name:file.name,size:file.size,previewUrl:URL.createObjectURL(file)});
+      else reject(new Error(d.error||'Upload failed. Please try again.'));
+    };
+    x.onerror=()=>reject(new Error('No connection. Check your internet and try again.'));
+    x.ontimeout=()=>reject(new Error('The upload took too long. Try a smaller file or a better connection.'));
+    x.onabort=()=>reject(new Error('aborted'));
+    x.send(fd);
+  });
+}
+
+// One attach flow for the vent page, responses and chats.
+const ATTACH={
+  vent:{btn:'vent-attach-btn',input:'vent-file-input',preview:'vent-media-preview',set:m=>{pendingMedia=m}},
+  comment:{btn:'comment-attach-btn',input:'comment-file-input',preview:'comment-media-preview',set:m=>{pendingCommentMedia=m}},
+  chat:{btn:'chat-attach-btn',input:'chat-file-input',preview:'chat-media-preview',set:m=>{pendingChatMedia=m}}
+};
+const attachBusy={vent:false,comment:false,chat:false};
+function uploadingGuard(target){
+  if(!attachBusy[target])return false;
+  toast('Your file is still uploading. One moment.');
+  return true;
+}
+async function attachFile(target,file,intent,durLabel){
+  const c=ATTACH[target];
+  const btn=document.getElementById(c.btn),input=document.getElementById(c.input),prev=document.getElementById(c.preview);
+  if(!file||attachBusy[target])return false;
+  attachBusy[target]=true;btn.disabled=true;
+  let xhr=null,cancelled=false;
+  const clear=()=>{c.set(null);input.value='';btn.classList.remove('has-media');renderMediaPreview(prev,null)};
+  renderUploadingPreview(prev,file,intent==='voice',()=>{cancelled=true;try{xhr&&xhr.abort()}catch(_){}clear()});
+  try{
+    const media=await uploadMedia(file,intent,p=>updateUploadProgress(prev,p),x=>{xhr=x});
+    if(cancelled)return false;
+    if(durLabel)media.duration=durLabel;
+    c.set(media);btn.classList.add('has-media');
+    renderMediaPreview(prev,media,clear);
+    if(target==='vent')ventAttachedGuide();
+    return true;
+  }catch(e){
+    if(!cancelled){clear();toast(e.message)}
+    return false;
+  }finally{attachBusy[target]=false;btn.disabled=false;input.value=''}
+}
+function renderUploadingPreview(container,file,isVoice,onCancel){
+  container.classList.add('media-preview');container.style.display='flex';
+  container.innerHTML=`<span class="mp-ico spin"><svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg></span><span class="mp-text"><span class="mp-name">${esc(isVoice?'Voice message':file.name)}</span><span class="mp-sub">Uploading… 0%</span><span class="mp-bar"><i></i></span></span><button class="mp-remove" type="button" aria-label="Cancel upload">${ICONS.close}</button>`;
+  container.querySelector('.mp-remove').onclick=onCancel;
+}
+function updateUploadProgress(container,p){
+  const pct=Math.round(Math.min(1,Math.max(0,p))*100);
+  const sub=container.querySelector('.mp-sub'),bar=container.querySelector('.mp-bar i');
+  if(sub)sub.textContent=pct>=100?'Finishing…':'Uploading… '+pct+'%';
+  if(bar)bar.style.width=pct+'%';
 }
 
 function ventAttachedGuide(){
@@ -13188,10 +13263,11 @@ function renderMediaPreview(container,media,onRemove){
   container.style.display='flex';
   const isImageLike = media.media_type==='photo'||media.media_type==='sticker'||media.media_type==='gif';
   const isVoice = media.media_type==='voice'||media.media_type==='audio';
-  const thumb = isImageLike ? `<img src="${media.previewUrl}">`
-    : `<span style="width:36px;height:36px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex-shrink:0">${isVoice?ICONS.mic:ICONS.paperclip}</span>`;
-  const label = isVoice ? `Voice message${media.duration?` · ${media.duration}`:''}` : media.name;
-  container.innerHTML=`${thumb}<span class="mp-name">${esc(label)}</span><button class="mp-remove" type="button">${ICONS.close}</button>`;
+  const thumb = isImageLike ? `<img src="${media.previewUrl}" alt="">`
+    : `<span class="mp-ico">${isVoice?ICONS.mic:ICONS.paperclip}</span>`;
+  const label = isVoice ? 'Voice message' : media.name;
+  const sub = isVoice ? (media.duration||'Ready to send') : (media.size?fmtBytes(media.size):'Ready to send');
+  container.innerHTML=`${thumb}<span class="mp-text"><span class="mp-name">${esc(label)}</span><span class="mp-sub">${esc(sub)}</span></span><button class="mp-remove" type="button" aria-label="Remove attachment">${ICONS.close}</button>`;
   container.querySelector('.mp-remove').onclick=onRemove;
 }
 
@@ -13203,7 +13279,7 @@ function renderMedia(mediaType,mediaId){
   if(mediaType==='sticker')return `<div class="post-media"><img class="sticker-media" src="${src}"></div>`;
   if(mediaType==='video')return `<div class="post-media"><video src="${src}" controls playsinline></video></div>`;
   if(mediaType==='voice'||mediaType==='audio')return renderCompactAudioPlayer(src);
-  return `<div class="post-media"><a class="doc-link" href="${src}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Download attachment</a></div>`;
+  return `<div class="post-media"><a class="doc-link" href="${src}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Open attachment<svg class="dl-go" viewBox="0 0 24 24"><path d="M7 17L17 7M8 7h9v9"/></svg></a></div>`;
 }
 
 function openLightbox(src){
@@ -13316,6 +13392,8 @@ function setupVoiceButton(btnId, target) {
   btn.addEventListener('pointerdown', e => {
     if (vr || btn._vrWait) return;
     e.preventDefault();
+    if (!vrSupported()) { toast('Voice messages are not supported here. Update Telegram and try again.'); return; }
+    if (attachBusy[target]) { toast('Your file is still uploading. One moment.'); return; }
     try { btn.setPointerCapture(e.pointerId); } catch (_) {}
     btn._vrDown = true;
     const x = e.clientX, y = e.clientY;
@@ -13325,11 +13403,22 @@ function setupVoiceButton(btnId, target) {
       btn._vrWait = false;
       if (btn._vrDown && !vr) vrStart(btn, target, x, y);          // already allowed and finger still down
       else vrTip(btn, 'Microphone ready. Hold to record.');          // the permission dialog ate the press
-    }).catch(() => { btn._vrWait = false; toast('Microphone access denied'); });
+    }).catch(err => { btn._vrWait = false; toast(vrMicError(err)); });
   });
   btn.addEventListener('pointermove', e => { if (vr && vr.btn === btn && vr.state === 'rec') vrMove(e.clientX, e.clientY); });
   btn.addEventListener('pointerup', () => { btn._vrDown = false; if (vr && vr.btn === btn && vr.state === 'rec') vrFinish('send'); });
   btn.addEventListener('pointercancel', () => { btn._vrDown = false; if (vr && vr.btn === btn && vr.state === 'rec') vrFinish('cancel'); });
+}
+
+function vrSupported() {
+  return !!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+function vrMicError(err) {
+  const n = err && err.name;
+  if (n === 'NotAllowedError' || n === 'SecurityError') return 'Microphone is blocked. Allow it for Telegram in your phone settings, then try again.';
+  if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'No microphone found on this device.';
+  if (n === 'NotReadableError') return 'The microphone is being used by another app.';
+  return 'Could not start the microphone. Please try again.';
 }
 
 function vrStart(btn, target, x, y) {
@@ -13373,7 +13462,9 @@ function vrStart(btn, target, x, y) {
   const type = getPreferredVoiceMimeType();
   const opts = { audioBitsPerSecond: 64000 }; // clear speech; the browser default on phones is far lower
   if (type) opts.mimeType = type;
-  try { v.rec = new MediaRecorder(stream, opts); } catch (e) { v.rec = new MediaRecorder(stream); }
+  try { v.rec = new MediaRecorder(stream, opts); }
+  catch (e) { try { v.rec = new MediaRecorder(stream); } catch (e2) { v.rec = null; } }
+  if (!v.rec) { vrEnd(v, 'abort', false); toast('Recording is not available on this device.'); return; }
   mediaRecorder = v.rec;
   v.rec.ondataavailable = e => { if (e.data.size > 0) v.chunks.push(e.data); };
   v.rec.onstop = () => vrStopped(v);
@@ -13382,7 +13473,8 @@ function vrStart(btn, target, x, y) {
     v.analyser = v.ctx.createAnalyser(); v.analyser.fftSize = 256;
     v.ctx.createMediaStreamSource(stream).connect(v.analyser);
   } catch (e) { v.analyser = null; }
-  v.rec.start();
+  try { v.rec.start(); }
+  catch (e) { try { v.ctx && v.ctx.close(); } catch (_) {} vrEnd(v, 'abort', false); toast('Could not start recording. Please try again.'); return; }
   v.t0 = Date.now();
 
   const buf = new Uint8Array(128);
@@ -13608,7 +13700,7 @@ async function vrSend(v, blob, mime) {
     vrRun(e);
     return;
   }
-  await handleVoiceFile(file, target); // vents: stays attached, user still taps "Post Anonymously"
+  await handleVoiceFile(file, target, dur); // vents: stays attached, user still taps "Post Anonymously"
 }
 
 // Telegram behaviour: mic shows when the input is empty, send arrow shows once there is text/media
@@ -13629,43 +13721,8 @@ function vrSyncComposer() {
 }
 setInterval(vrSyncComposer, 200);
 
-async function handleVoiceFile(file, target) {
-  try {
-    const media = await uploadMedia(file, 'voice');
-    if (target === 'vent') {
-      pendingMedia = media;
-      const preview = document.getElementById('vent-media-preview');
-      renderMediaPreview(preview, pendingMedia, () => {
-        pendingMedia = null;
-        document.getElementById('vent-file-input').value = '';
-        document.getElementById('vent-attach-btn').classList.remove('has-media');
-        renderMediaPreview(preview, null);
-      });
-      document.getElementById('vent-attach-btn').classList.add('has-media');
-      ventAttachedGuide();
-    } else if (target === 'comment') {
-      pendingCommentMedia = media;
-      const preview = document.getElementById('comment-media-preview');
-      renderMediaPreview(preview, pendingCommentMedia, () => {
-        pendingCommentMedia = null;
-        document.getElementById('comment-file-input').value = '';
-        document.getElementById('comment-attach-btn').classList.remove('has-media');
-        renderMediaPreview(preview, null);
-      });
-      document.getElementById('comment-attach-btn').classList.add('has-media');
-    } else if (target === 'chat') {
-      pendingChatMedia = media;
-      const preview = document.getElementById('chat-media-preview');
-      renderMediaPreview(preview, pendingChatMedia, () => {
-        pendingChatMedia = null;
-        document.getElementById('chat-file-input').value = '';
-        document.getElementById('chat-attach-btn').classList.remove('has-media');
-        renderMediaPreview(preview, null);
-      });
-      document.getElementById('chat-attach-btn').classList.add('has-media');
-    }
-    return true;
-  } catch (e) { toast(e.message); return false; }
+async function handleVoiceFile(file, target, durMs) {
+  return attachFile(target, file, 'voice', durMs ? fmtClock(durMs / 1000) : '');
 }
 
 // ========== REACTIONS FOR POSTS (direct buttons) ==========
@@ -13902,65 +13959,13 @@ document.addEventListener('DOMContentLoaded',()=>{
   // Initially hide comment bar
   document.getElementById('commentBar').style.display='none';
 
-  // Vent page media attach
-  const ventAttachBtn=document.getElementById('vent-attach-btn');
-  const ventFileInput=document.getElementById('vent-file-input');
-  const ventMediaPreview=document.getElementById('vent-media-preview');
-  ventAttachBtn.addEventListener('click',()=>ventFileInput.click());
-  ventFileInput.addEventListener('change',async()=>{
-    const file=ventFileInput.files[0];if(!file)return;
-    ventAttachBtn.disabled=true;
-    try{
-      pendingMedia=await uploadMedia(file);
-      ventAttachBtn.classList.add('has-media');
-      renderMediaPreview(ventMediaPreview,pendingMedia,()=>{
-        pendingMedia=null;ventFileInput.value='';ventAttachBtn.classList.remove('has-media');
-        renderMediaPreview(ventMediaPreview,null);
-      });
-      ventAttachedGuide();
-    }catch(e){toast(e.message);ventFileInput.value=''}
-    finally{ventAttachBtn.disabled=false}
+  // Attach buttons: vent page, responses, chats (one shared flow)
+  Object.keys(ATTACH).forEach(t=>{
+    const btn=document.getElementById(ATTACH[t].btn),input=document.getElementById(ATTACH[t].input);
+    if(!btn||!input)return;
+    btn.addEventListener('click',()=>input.click());
+    input.addEventListener('change',()=>{const f=input.files&&input.files[0];if(f)attachFile(t,f)});
   });
-
-  // Comment bar media attach
-  const commentAttachBtn=document.getElementById('comment-attach-btn');
-  const commentFileInput=document.getElementById('comment-file-input');
-  const commentMediaPreview=document.getElementById('comment-media-preview');
-  commentAttachBtn.addEventListener('click',()=>commentFileInput.click());
-  commentFileInput.addEventListener('change',async()=>{
-    const file=commentFileInput.files[0];if(!file)return;
-    commentAttachBtn.disabled=true;
-    try{
-      pendingCommentMedia=await uploadMedia(file);
-      commentAttachBtn.classList.add('has-media');
-      renderMediaPreview(commentMediaPreview,pendingCommentMedia,()=>{
-        pendingCommentMedia=null;commentFileInput.value='';commentAttachBtn.classList.remove('has-media');
-        renderMediaPreview(commentMediaPreview,null);
-      });
-    }catch(e){toast(e.message);commentFileInput.value=''}
-    finally{commentAttachBtn.disabled=false}
-  });
-
-  // Chat page media attach
-  const chatAttachBtn = document.getElementById('chat-attach-btn');
-  const chatFileInput = document.getElementById('chat-file-input');
-  const chatMediaPreview = document.getElementById('chat-media-preview');
-  if (chatAttachBtn && chatFileInput) {
-    chatAttachBtn.addEventListener('click', () => chatFileInput.click());
-    chatFileInput.addEventListener('change', async () => {
-      const file = chatFileInput.files[0]; if (!file) return;
-      chatAttachBtn.disabled = true;
-      try {
-        pendingChatMedia = await uploadMedia(file);
-        chatAttachBtn.classList.add('has-media');
-        renderMediaPreview(chatMediaPreview, pendingChatMedia, () => {
-          pendingChatMedia = null; chatFileInput.value = ''; chatAttachBtn.classList.remove('has-media');
-          renderMediaPreview(chatMediaPreview, null);
-        });
-      } catch (e) { toast(e.message); chatFileInput.value = ''; }
-      finally { chatAttachBtn.disabled = false; }
-    });
-  }
 });
 
 // Per-vent "show my sex" question: only offered to users who actually have a sex saved.
@@ -13998,6 +14003,7 @@ function ventLabel(p){
 async function submitVent(){
   const txt=document.getElementById('vent-txt').value.trim();
   const cats=[...selCats];
+  if(uploadingGuard('vent'))return;
   if(!txt&&!pendingMedia)return toast('Write something first');
   if(!cats.length)return toast('Pick at least one category');
   const btn=document.getElementById('submit-vent');
@@ -14276,6 +14282,7 @@ setInterval(() => { // a pending reply never leaks into another post
 
 async function postComment(){
   const txt=document.getElementById('comment-txt').value.trim();
+  if(uploadingGuard('comment'))return;
   if((!txt&&!pendingCommentMedia)||!currentPostId)return;
   const btn=document.getElementById('send-comment');btn.disabled=true;
   try{
@@ -15074,6 +15081,7 @@ async function crRunText(e) {
 }
 async function crSend(){
   if(crEditing) return crSaveEdit();   // the check button saves the edit instead of sending a new message
+  if(uploadingGuard('chat'))return;
   const ta=document.getElementById('cr-txt');
   const txt=ta.value.trim();
   if((!txt&&!pendingChatMedia)||!crPartnerId)return;
