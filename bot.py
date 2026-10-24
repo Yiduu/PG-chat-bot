@@ -554,6 +554,18 @@ def init_db():
                     )
                 ''')
                 c.execute("CREATE INDEX IF NOT EXISTS idx_user_warnings_user ON user_warnings (user_id, created_at DESC)")
+                # Audit log of direct messages admins send from the moderation panel.
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS admin_messages (
+                        message_id SERIAL PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        admin_id TEXT,
+                        body TEXT NOT NULL,
+                        delivered BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                c.execute("CREATE INDEX IF NOT EXISTS idx_admin_messages_user ON admin_messages (user_id, created_at DESC)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users (is_banned) WHERE is_banned = TRUE")
 
                 # Check for 'thread_context_post_id' column in users
@@ -11142,6 +11154,7 @@ MAX_WARNINGS_BEFORE_BAN = 3        # auto-ban at this many warnings (0 = never a
 UNBAN_RESETS_WARNINGS = True       # unbanned users start with a clean slate
 MOD_REASON_MAX_LEN = 300
 MOD_PENDING_TIMEOUT_SECONDS = 300  # how long the bot waits for a typed reason
+MOD_MESSAGE_MAX_LEN = 3500         # Telegram caps a message at 4096 chars; leave room for the header
 _MOD_MENU_BUTTONS = {"Share", "Chat Requests", "Profile", "Posts", "Top", "Settings",
                      "Open App", "❌ Cancel", "/cancel"}
 
@@ -11304,6 +11317,7 @@ def mod_menu_content():
         "<b>Commands</b>\n"
         "/ban &lt;user_id&gt; [reason]\n"
         "/warn &lt;user_id&gt; &lt;reason&gt;\n"
+        "/msg &lt;user_id&gt; &lt;message&gt;\n"
         "/unban &lt;user_id&gt;\n"
         "/warnings &lt;user_id&gt;\n"
         "/user &lt;user_id&gt;\n"
@@ -11315,6 +11329,45 @@ def mod_menu_content():
         [InlineKeyboardButton("« Admin Panel", callback_data="admin_panel")]
     ])
     return text, kb
+
+
+async def mod_message_user(context, target_id, admin_id, body):
+    """Send a direct message from the admins to one user. Returns (ok, html_message)."""
+    target_id = str(target_id)
+    body = (body or "").strip()
+    if not body:
+        return False, "The message can't be empty."
+    if len(body) > MOD_MESSAGE_MAX_LEN:
+        return False, f"That message is too long ({len(body)} characters, the limit is {MOD_MESSAGE_MAX_LEN}). Shorten it and try again."
+    if target_id == str(admin_id):
+        return False, "You can't message yourself."
+    target = await mod_get_target(target_id)
+    if not target:
+        return False, "User not found."
+    if target['is_admin']:
+        return False, "Admins can't be messaged from here."
+
+    delivered = True
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=f"📩 <b>Message from admin</b>\n\n{html.escape(body)}",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        delivered = False
+        logger.warning(f"Could not deliver admin message to {target_id}: {e}")
+
+    await db_execute_async(
+        "INSERT INTO admin_messages (user_id, admin_id, body, delivered) VALUES (%s, %s, %s, %s)",
+        (target_id, str(admin_id), body, delivered)
+    )
+    name = html.escape(get_display_name(target))
+    if not delivered:
+        return False, (f"⚠️ Couldn't deliver the message to <b>{name}</b> (<code>{target_id}</code>). "
+                       "They may have blocked the bot.")
+    logger.info(f"Admin {admin_id} messaged user {target_id}")
+    return True, f"✅ Message sent to <b>{name}</b> (<code>{target_id}</code>)."
 
 
 async def mod_banned_content(page=1):
@@ -11384,6 +11437,7 @@ async def mod_user_panel(target_id):
             row.append(InlineKeyboardButton("⚠️ Warn", callback_data=f"mod_warn_{uid}"))
         row.append(second)
         kb.append(row)
+        kb.append([InlineKeyboardButton("✉️ Send message", callback_data=f"mod_msg_{uid}")])
         kb.append([InlineKeyboardButton("📜 Warning history", callback_data=f"mod_hist_{uid}")])
     kb.append(back)
     return "\n".join(lines), InlineKeyboardMarkup(kb)
@@ -11487,6 +11541,17 @@ async def moderation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 reply_markup=InlineKeyboardMarkup(rows), parse_mode=ParseMode.HTML
             )
 
+        elif data.startswith('mod_msg_'):
+            target = data[len('mod_msg_'):]
+            context.user_data['mod_pending'] = {'action': 'msg', 'target': target, 'ts': time.time()}
+            await query.message.reply_text(
+                "Type the <b>message to send</b> to this user. They will see it as "
+                "<i>Message from admin</i>, and your name stays hidden.\n\n"
+                f"User: <code>{target}</code>",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"mod_user_{target}")]]),
+                parse_mode=ParseMode.HTML
+            )
+
         elif data.startswith('mod_skip_'):
             target = data[len('mod_skip_'):]
             context.user_data.pop('mod_pending', None)
@@ -11531,7 +11596,9 @@ async def mod_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     context.user_data.pop('mod_pending', None)
-    if pending['action'] == 'warn':
+    if pending['action'] == 'msg':
+        ok, msg = await mod_message_user(context, pending['target'], admin_id, text)
+    elif pending['action'] == 'warn':
         ok, msg = await mod_warn_user(context, pending['target'], admin_id, text)
     else:
         ok, msg = await mod_ban_user(context, pending['target'], admin_id, text)
@@ -11588,6 +11655,17 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /warn <user_id> <reason>")
         return
     ok, msg = await mod_warn_user(context, target, str(update.effective_user.id), reason)
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+async def msg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _mod_command_guard(update):
+        return
+    target, body = _mod_parse_args(context)
+    if not target or not body:
+        await update.message.reply_text("Usage: /msg <user_id> <message>")
+        return
+    ok, msg = await mod_message_user(context, target, str(update.effective_user.id), body)
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 
@@ -11733,6 +11811,7 @@ def main():
     app.add_handler(CommandHandler("unban", unban_command))
     app.add_handler(CommandHandler("warn", warn_command))
     app.add_handler(CommandHandler("warnings", warnings_command))
+    app.add_handler(CommandHandler("msg", msg_command))
     app.add_handler(CommandHandler("user", user_command))
     app.add_handler(CommandHandler("banned", banned_command))
     app.add_handler(CommandHandler("mod", mod_command))
