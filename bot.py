@@ -1193,8 +1193,54 @@ REACTION_WEIGHTS = {
     '\U0001F64F': 2,           # 🙏
     '\U0001F525': 2,           # 🔥
     '\U0001F622': 1,           # 😢
+    'laugh': 1,                # 😂 button on comments (same weight as a like)
+    '\U0001F602': 1,           # 😂
 }
 DEFAULT_REACTION_WEIGHT = 1    # any type not listed above (same default as before)
+
+# Comment reaction groups used by the bot's inline buttons (👍 / 👎 / 😂).
+# Anything that is neither a dislike nor a laugh still counts as a like, as before.
+DISLIKE_REACTION_TYPES = ('dislike', '\U0001F44E', '\U0001F621')   # dislike, 👎, 😡
+LAUGH_REACTION_TYPES = ('laugh', '\U0001F602')                     # laugh, 😂
+
+
+def reaction_group(rtype):
+    """Map a stored reactions.type to 'like', 'dislike' or 'laugh'."""
+    if rtype in DISLIKE_REACTION_TYPES:
+        return 'dislike'
+    if rtype in LAUGH_REACTION_TYPES:
+        return 'laugh'
+    return 'like'
+
+
+def build_comment_keyboard(comment_id, post_id, likes, dislikes, laughs, reply_callback,
+                           is_reply=False, is_author=False, comment_type='text'):
+    """Inline keyboard for a comment/reply:
+         row 1: 👍 n | 👎 n | 😂 n
+         row 2: Reply | Report            (side by side, under the emojis)
+         row 3: Edit | Delete             (author only; media comments only get Delete)
+    """
+    kind = 'reply' if is_reply else 'comment'
+    rows = [
+        [
+            InlineKeyboardButton(f"\U0001F44D {likes}", callback_data=f"like{kind}_{comment_id}"),
+            InlineKeyboardButton(f"\U0001F44E {dislikes}", callback_data=f"dislike{kind}_{comment_id}"),
+            InlineKeyboardButton(f"\U0001F602 {laughs}", callback_data=f"laugh{kind}_{comment_id}"),
+        ],
+        [
+            InlineKeyboardButton("Reply", callback_data=reply_callback),
+            InlineKeyboardButton("Report", callback_data=f"report_comment_{comment_id}"),
+        ],
+    ]
+    if is_author:
+        if comment_type == 'text':
+            rows.append([
+                InlineKeyboardButton("Edit", callback_data=f"edit_comment_{comment_id}"),
+                InlineKeyboardButton("Delete", callback_data=f"delete_comment_{comment_id}"),
+            ])
+        else:
+            rows.append([InlineKeyboardButton("Delete", callback_data=f"delete_comment_{comment_id}")])
+    return InlineKeyboardMarkup(rows)
 
 WEEKLY_BADGES = ["\U0001F947", "\U0001F948", "\U0001F949"]  # 🥇 🥈 🥉
 
@@ -2290,7 +2336,7 @@ def calculate_top_weekly_contributors(limit=3):
         LEFT JOIN (
             SELECT 
                 c.author_id,
-                SUM(CASE WHEN r.type = 'like' THEN 1 ELSE 0 END) - 
+                SUM(CASE WHEN r.type IN ('like', 'laugh') THEN 1 ELSE 0 END) -
                 SUM(CASE WHEN r.type = 'dislike' THEN 2 ELSE 0 END) AS reaction_points
             FROM reactions r
             JOIN comments c ON r.comment_id = c.comment_id
@@ -6064,6 +6110,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
     if pre_fetched_data:
         likes = pre_fetched_data.get('likes', 0)
         dislikes = pre_fetched_data.get('dislikes', 0)
+        laughs = pre_fetched_data.get('laughs', 0)
         user_reaction_type = pre_fetched_data.get('user_reaction')
     else:
         # Fallback to individual DB queries if no pre-fetched data
@@ -6075,44 +6122,22 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             ))
         user_reaction_type = user_reaction['type'] if user_reaction else None
         
-        likes_row = (await db_fetch_one_async(
-            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type NOT IN ('dislike', '👎', '😡')",
+        counts_rows = (await db_fetch_all_async(
+            "SELECT type, COUNT(*) as cnt FROM reactions WHERE comment_id = %s GROUP BY type",
             (comment_id,)
-        ))
-        likes = likes_row['cnt'] if likes_row else 0
-        
-        dislikes_row = (await db_fetch_one_async(
-            "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type IN ('dislike', '👎', '😡')",
-            (comment_id,)
-        ))
-        dislikes = dislikes_row['cnt'] if dislikes_row else 0
+        )) or []
+        group_totals = {'like': 0, 'dislike': 0, 'laugh': 0}
+        for row in counts_rows:
+            group_totals[reaction_group(row['type'])] += row['cnt']
+        likes, dislikes, laughs = group_totals['like'], group_totals['dislike'], group_totals['laugh']
 
-    like_emoji = "👍"
-    dislike_emoji = "👎"
-
-    # Build keyboard
-    kb_buttons = [
-        [
-            InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likecomment_{comment_id}"),
-            InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikecomment_{comment_id}"),
-            InlineKeyboardButton("Reply", callback_data=f"reply_{comment['post_id']}_{comment_id}")
-        ],
-        [InlineKeyboardButton("Report", callback_data=f"report_comment_{comment_id}")]
-    ]
-    
-    # Add edit/delete buttons only for comment author and only for text comments
-    if comment.get('author_id') == user_id:
-        if comment_type == 'text':
-            kb_buttons.append([
-                InlineKeyboardButton("Edit", callback_data=f"edit_comment_{comment_id}"),
-                InlineKeyboardButton("Delete", callback_data=f"delete_comment_{comment_id}")
-            ])
-        else:
-            kb_buttons.append([
-                InlineKeyboardButton("Delete", callback_data=f"delete_comment_{comment_id}")
-            ])
-    
-    kb = InlineKeyboardMarkup(kb_buttons)
+    # Build keyboard: 👍 👎 😂 on top, Reply + Report side by side underneath
+    kb = build_comment_keyboard(
+        comment_id, comment['post_id'], likes, dislikes, laughs,
+        reply_callback=f"reply_{comment['post_id']}_{comment_id}",
+        is_author=(comment.get('author_id') == user_id),
+        comment_type=comment_type,
+    )
 
     escaped_content = escape_markdown_v2(content) if content else ""
     message_text = f"{escaped_content}\n\n{author_text}" if escaped_content else author_text
@@ -6295,20 +6320,25 @@ def _fetch_comments_page_data(post_id, per_page, offset, user_id):
     if comment_ids:
         counts = db_fetch_all("""
             SELECT comment_id,
-                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END as rgroup,
+                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike'
+                        WHEN type IN ('laugh', '😂') THEN 'laugh'
+                        ELSE 'like' END as rgroup,
                    COUNT(*) as cnt
-            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END
+            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike'
+                        WHEN type IN ('laugh', '😂') THEN 'laugh'
+                        ELSE 'like' END
         """, (tuple(comment_ids),))
         for row in counts:
             cid = row['comment_id']
-            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
             if row['rgroup'] == 'like': reaction_data[cid]['likes'] = row['cnt']
+            elif row['rgroup'] == 'laugh': reaction_data[cid]['laughs'] = row['cnt']
             else: reaction_data[cid]['dislikes'] = row['cnt']
 
         u_reacts = db_fetch_all("SELECT comment_id, type FROM reactions WHERE comment_id IN %s AND user_id = %s", (tuple(comment_ids), user_id))
         for row in u_reacts:
             cid = row['comment_id']
-            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
             reaction_data[cid]['user_reaction'] = row['type']
 
         parent_ids = [c['parent_comment_id'] for c in comments if c.get('parent_comment_id', 0) != 0]
@@ -6422,7 +6452,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         reply_to_id = msg_ids.get(parent_id) or parent_msg_ids.get(parent_id)
         
         # Pre-fetched data for button builder
-        pref = reaction_data.get(comment_id, {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+        pref = reaction_data.get(comment_id, {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
         
         new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id, pre_fetched_data=pref)
         if new_msg_id:
@@ -6532,20 +6562,25 @@ def _fetch_more_replies_data(comment_id, post_id, replies_per_page, offset, user
     if reply_ids:
         counts = db_fetch_all("""
             SELECT comment_id,
-                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END as rgroup,
+                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike'
+                        WHEN type IN ('laugh', '😂') THEN 'laugh'
+                        ELSE 'like' END as rgroup,
                    COUNT(*) as cnt
-            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike' ELSE 'like' END
+            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike'
+                        WHEN type IN ('laugh', '😂') THEN 'laugh'
+                        ELSE 'like' END
         """, (tuple(reply_ids),))
         for row in counts:
             cid = row['comment_id']
-            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
             if row['rgroup'] == 'like': reaction_data[cid]['likes'] = row['cnt']
+            elif row['rgroup'] == 'laugh': reaction_data[cid]['laughs'] = row['cnt']
             else: reaction_data[cid]['dislikes'] = row['cnt']
 
         u_reacts = db_fetch_all("SELECT comment_id, type FROM reactions WHERE comment_id IN %s AND user_id = %s", (tuple(reply_ids), user_id))
         for row in u_reacts:
             cid = row['comment_id']
-            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+            reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
             reaction_data[cid]['user_reaction'] = row['type']
 
         p_ids = [r['parent_comment_id'] for r in replies]
@@ -6608,7 +6643,7 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             pid = reply.get('parent_comment_id')
             target_msg_id = msg_ids.get(pid) or parent_msg_ids.get(pid) or base_reply_to_id
             
-            pref = reaction_data.get(reply['comment_id'], {'likes': 0, 'dislikes': 0, 'user_reaction': None})
+            pref = reaction_data.get(reply['comment_id'], {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
             reply_rating = ratings_map.get(reply['author_id'], 0)
             show_aura = not reply.get('hide_aura') or str(user_id) == str(reply['author_id']) or is_viewer_admin
             reply_msg_id = await send_reply_message(context, chat_id, reply, post_author_id, post_id, target_msg_id, pre_fetched_data=pref, rating_override=reply_rating, show_aura=show_aura)
@@ -7978,8 +8013,8 @@ async def send_reaction_notification(context: ContextTypes.DEFAULT_TYPE, comment
         
         # Content formatting
         post_preview = post['content'][:50] + '...' if post and len(post['content']) > 50 else (post['content'] if post else "")
-        reaction_label = "liked" if reaction_type == 'like' else "disliked"
-        reaction_icon = "👍" if reaction_type == 'like' else "👎"
+        reaction_label = {'like': "liked", 'laugh': "laughed at"}.get(reaction_type, "disliked")
+        reaction_icon = {'like': "👍", 'laugh': "😂"}.get(reaction_type, "👎")
         
         notification_text = (
             f"{reaction_icon} *New Interaction\\!*\n\n"
@@ -8440,11 +8475,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
         # Like/Dislike reaction handling
-        elif query.data.startswith(("likecomment_", "dislikecomment_", "likereply_", "dislikereply_")):
+        elif query.data.startswith(("likecomment_", "dislikecomment_", "likereply_", "dislikereply_", "laughcomment_", "laughreply_")):
             try:
                 parts = query.data.split('_')
                 comment_id = int(parts[1])
-                reaction_type = 'like' if parts[0] in ('likecomment', 'likereply') else 'dislike'
+                if parts[0] in ('likecomment', 'likereply'):
+                    reaction_type = 'like'
+                elif parts[0] in ('laughcomment', 'laughreply'):
+                    reaction_type = 'laugh'
+                else:
+                    reaction_type = 'dislike'
 
                 # Check if user already has a reaction on this comment
                 existing_reaction = (await db_fetch_one_async(
@@ -8453,9 +8493,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ))
 
                 if existing_reaction:
-                    is_existing_like = existing_reaction['type'] not in ('dislike', '👎', '😡')
-                    is_new_like = reaction_type == 'like'
-                    if is_existing_like == is_new_like:
+                    if reaction_group(existing_reaction['type']) == reaction_type:
                         # User is clicking the same reaction group - remove it (toggle off)
                         (await db_execute_async(
                             "DELETE FROM reactions WHERE comment_id = %s AND user_id = %s",
@@ -8480,17 +8518,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 format_aura.cache_clear()
 
                 # Get updated counts
-                likes_row = (await db_fetch_one_async(
-                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type NOT IN ('dislike', '👎', '😡')",
+                counts_rows = (await db_fetch_all_async(
+                    "SELECT type, COUNT(*) as cnt FROM reactions WHERE comment_id = %s GROUP BY type",
                     (comment_id,)
-                ))
-                likes = likes_row['cnt'] if likes_row else 0
-                
-                dislikes_row = (await db_fetch_one_async(
-                    "SELECT COUNT(*) as cnt FROM reactions WHERE comment_id = %s AND type IN ('dislike', '👎', '😡')",
-                    (comment_id,)
-                ))
-                dislikes = dislikes_row['cnt'] if dislikes_row else 0
+                )) or []
+                group_totals = {'like': 0, 'dislike': 0, 'laugh': 0}
+                for row in counts_rows:
+                    group_totals[reaction_group(row['type'])] += row['cnt']
+                likes, dislikes, laughs = group_totals['like'], group_totals['dislike'], group_totals['laugh']
 
                 comment = (await db_fetch_one_async(
                     "SELECT post_id, parent_comment_id, author_id, type, content FROM comments WHERE comment_id = %s",
@@ -8509,55 +8544,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (comment_id, user_id)
                 ))
 
-                like_emoji = "👍"
-                dislike_emoji = "👎"
-
+                is_author = comment['author_id'] == user_id
                 if parent_comment_id == 0:
-                    # Build keyboard with edit/delete buttons for author
-                    kb_buttons = [
-                        [
-                            InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likecomment_{comment_id}"),
-                            InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikecomment_{comment_id}"),
-                            InlineKeyboardButton("Reply", callback_data=f"reply_{post_id}_{comment_id}")
-                        ]
-                    ]
-                    
-                    # Add edit/delete buttons only for comment author and only for text comments
-                    if comment['author_id'] == user_id:
-                        if comment['type'] == 'text':
-                            kb_buttons.append([
-                                InlineKeyboardButton("Edit", callback_data=f"edit_comment_{comment_id}"),
-                                InlineKeyboardButton("Delete", callback_data=f"delete_comment_{comment_id}")
-                            ])
-                        else:
-                            kb_buttons.append([
-                                InlineKeyboardButton("Delete", callback_data=f"delete_comment_{comment_id}")
-                            ])
-                    
-                    new_kb = InlineKeyboardMarkup(kb_buttons)
+                    new_kb = build_comment_keyboard(
+                        comment_id, post_id, likes, dislikes, laughs,
+                        reply_callback=f"reply_{post_id}_{comment_id}",
+                        is_reply=False, is_author=is_author, comment_type=comment['type'],
+                    )
                 else:
-                    # Build keyboard for replies with edit/delete buttons for author
-                    kb_buttons = [
-                        [
-                            InlineKeyboardButton(f"{like_emoji} {likes}", callback_data=f"likereply_{comment_id}"),
-                            InlineKeyboardButton(f"{dislike_emoji} {dislikes}", callback_data=f"dislikereply_{comment_id}"),
-                            InlineKeyboardButton("Reply", callback_data=f"replytoreply_{post_id}_{parent_comment_id}_{comment_id}")
-                        ]
-                    ]
-                    
-                    # Add edit/delete buttons only for reply author and only for text comments
-                    if comment['author_id'] == user_id:
-                        if comment['type'] == 'text':
-                            kb_buttons.append([
-                                InlineKeyboardButton("Edit", callback_data=f"edit_comment_{comment_id}"),
-                                InlineKeyboardButton("Delete", callback_data=f"delete_comment_{comment_id}")
-                            ])
-                        else:
-                            kb_buttons.append([
-                                InlineKeyboardButton("Delete", callback_data=f"delete_comment_{comment_id}")
-                            ])
-                    
-                    new_kb = InlineKeyboardMarkup(kb_buttons)
+                    new_kb = build_comment_keyboard(
+                        comment_id, post_id, likes, dislikes, laughs,
+                        reply_callback=f"replytoreply_{post_id}_{parent_comment_id}_{comment_id}",
+                        is_reply=True, is_author=is_author, comment_type=comment['type'],
+                    )
 
                 try:
                     await context.bot.edit_message_reply_markup(
