@@ -589,6 +589,18 @@ def init_db():
                     c.execute("ALTER TABLE comments ADD COLUMN telegram_message_id BIGINT DEFAULT NULL")
                     c.execute("CREATE INDEX IF NOT EXISTS idx_comments_telegram_message_id ON comments(telegram_message_id)")
 
+                # Telegram message ids are per chat, but comments.telegram_message_id is one
+                # shared column, so threading used the wrong (or a missing) message for most
+                # viewers. This table records, per chat, where each comment was sent.
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS comment_msg_map (
+                        chat_id BIGINT NOT NULL,
+                        comment_id BIGINT NOT NULL,
+                        message_id BIGINT NOT NULL,
+                        PRIMARY KEY (chat_id, comment_id)
+                    )
+                ''')
+
                 # Check for 'deleted' column in posts
                 if ('posts', 'deleted') not in existing_columns:
                     logger.info("Adding missing column: deleted to posts table")
@@ -6039,10 +6051,63 @@ def escape_markdown_v2(text):
     """Escape all special characters for MarkdownV2"""
     if not text:
         return ""
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    # The backslash MUST be escaped first, otherwise a user's own "\_" or "\*" turns
+    # into "\\_" (an escaped backslash followed by a live "_") and Telegram rejects
+    # the whole message, which pushed the comment into the plain-text fallback.
+    escape_chars = '\\' + r'_*[]()~`>#+-=|{}.!'
     for char in escape_chars:
         text = text.replace(char, '\\' + char)
     return text
+
+
+def _author_text_to_plain(author_text):
+    """Turn the MarkdownV2 author line built for comments, e.g.
+        👤 [_Anonymous_](https://t.me/bot?start=profileid_1_2) _Aura_ ⚡ 1 pts
+    into readable plain text ("👤 Anonymous Aura ⚡ 1 pts") for the no-markdown fallback.
+    Never raises: on any problem the original text is returned."""
+    if not author_text:
+        return ""
+    try:
+        text = re.sub(r'\[_(.*?)_\]\(https?://[^)\s]*\)', r'\1', author_text)
+        text = re.sub(r'(?<![\w\\])_Aura_', 'Aura', text)
+        text = re.sub(r'\\(.)', r'\1', text)
+        return text
+    except Exception:
+        return author_text
+
+
+def _fit_markdown_comment(content, author_text, limit):
+    """Build '<escaped content>\\n\\n<author_text>' that is guaranteed to be <= limit
+    characters AND valid MarkdownV2. The content is shortened BEFORE escaping, so a
+    cut can never split an escape sequence or the author link (the old code cut the
+    finished caption at 1020 chars and appended an unescaped '...', which Telegram
+    rejected and which dropped the comment into the plain-text fallback)."""
+    def build(c):
+        esc = escape_markdown_v2(c) if c else ""
+        return f"{esc}\n\n{author_text}" if esc else author_text
+
+    text = build(content)
+    if len(text) <= limit:
+        return text
+    cut = content or ""
+    while cut:
+        candidate = cut.rstrip() + "…"
+        text = build(candidate)
+        if len(text) <= limit:
+            return text
+        cut = cut[:max(0, len(cut) - max(1, len(text) - limit))]
+    return author_text
+
+
+def _fit_plain_comment(content, plain_author, limit):
+    """Plain-text twin of _fit_markdown_comment."""
+    body = f"{content}\n\n{plain_author}" if content else plain_author
+    if len(body) <= limit:
+        return body
+    room = limit - len(plain_author) - 3
+    if room <= 0:
+        return plain_author[:limit]
+    return f"{content[:room].rstrip()}…\n\n{plain_author}"
 
 def truncate_for_telegram(text, max_len):
     """Truncate raw text to fit a Telegram length limit, keeping as much of the
@@ -6103,10 +6168,10 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
     comment_type = comment.get('type') or 'text'
     file_id = comment.get('file_id')
     content = comment.get('content') or ""
-    
+
     # Get user reaction for buttons
     user_id = getattr(context, '_user_id', None)
-    
+
     if pre_fetched_data:
         likes = pre_fetched_data.get('likes', 0)
         dislikes = pre_fetched_data.get('dislikes', 0)
@@ -6121,7 +6186,7 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 (comment_id, user_id)
             ))
         user_reaction_type = user_reaction['type'] if user_reaction else None
-        
+
         counts_rows = (await db_fetch_all_async(
             "SELECT type, COUNT(*) as cnt FROM reactions WHERE comment_id = %s GROUP BY type",
             (comment_id,)
@@ -6139,25 +6204,33 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
         comment_type=comment_type,
     )
 
-    escaped_content = escape_markdown_v2(content) if content else ""
-    message_text = f"{escaped_content}\n\n{author_text}" if escaped_content else author_text
-    plain_text = f"{content}\n\n" if content else ""
+    # Every variant is built up front and is already length-safe (text <= 4096, caption
+    # <= 1024, with headroom), so a long comment can no longer break MarkdownV2 parsing.
+    # The plain variants use a plain author line (no [_name_](url) markup), so the
+    # fallback never shows raw markdown to the reader.
+    plain_author = _author_text_to_plain(author_text)
+    message_text = _fit_markdown_comment(content, author_text, 4000)
+    caption_md = _fit_markdown_comment(content, author_text, 1000)
+    plain_message = _fit_plain_comment(content, plain_author, 4000)
+    plain_caption = _fit_plain_comment(content, plain_author, 1000)
     valid_reply_id = reply_to_message_id if isinstance(reply_to_message_id, int) and reply_to_message_id > 0 else None
 
     async def _send_media(target_reply_id, use_markdown=True):
         p_mode = ParseMode.MARKDOWN_V2 if use_markdown else None
-        caption = message_text if use_markdown else f"{plain_text}{author_text}"
-        if caption and len(caption) > 1024:
-            caption = caption[:1020] + '...'
-        
+        caption = caption_md if use_markdown else plain_caption
+        text_to_send = message_text if use_markdown else plain_message
+        # allow_sending_without_reply=True: if the message we want to thread under no
+        # longer exists in this chat, Telegram sends the comment anyway (unthreaded)
+        # instead of rejecting it, so formatting is never lost because of a bad parent.
+
         if comment_type == 'text' or not file_id:
-            text_to_send = message_text if use_markdown else f"{plain_text}{author_text}"
             return await context.bot.send_message(
                 chat_id=chat_id,
                 text=text_to_send,
                 reply_markup=kb,
                 parse_mode=p_mode,
                 reply_to_message_id=target_reply_id,
+                allow_sending_without_reply=True,
                 disable_web_page_preview=True
             )
         elif comment_type == 'photo':
@@ -6167,7 +6240,8 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 caption=caption,
                 reply_markup=kb,
                 parse_mode=p_mode,
-                reply_to_message_id=target_reply_id
+                reply_to_message_id=target_reply_id,
+                allow_sending_without_reply=True
             )
         elif comment_type == 'voice':
             return await context.bot.send_voice(
@@ -6176,7 +6250,8 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 caption=caption,
                 reply_markup=kb,
                 parse_mode=p_mode,
-                reply_to_message_id=target_reply_id
+                reply_to_message_id=target_reply_id,
+                allow_sending_without_reply=True
             )
         elif comment_type == 'audio':
             return await context.bot.send_audio(
@@ -6185,7 +6260,8 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 caption=caption,
                 reply_markup=kb,
                 parse_mode=p_mode,
-                reply_to_message_id=target_reply_id
+                reply_to_message_id=target_reply_id,
+                allow_sending_without_reply=True
             )
         elif comment_type == 'video':
             return await context.bot.send_video(
@@ -6194,7 +6270,8 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 caption=caption,
                 reply_markup=kb,
                 parse_mode=p_mode,
-                reply_to_message_id=target_reply_id
+                reply_to_message_id=target_reply_id,
+                allow_sending_without_reply=True
             )
         elif comment_type == 'document':
             return await context.bot.send_document(
@@ -6203,7 +6280,8 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 caption=caption,
                 reply_markup=kb,
                 parse_mode=p_mode,
-                reply_to_message_id=target_reply_id
+                reply_to_message_id=target_reply_id,
+                allow_sending_without_reply=True
             )
         elif comment_type == 'gif':
             return await context.bot.send_animation(
@@ -6212,64 +6290,82 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
                 caption=caption,
                 reply_markup=kb,
                 parse_mode=p_mode,
-                reply_to_message_id=target_reply_id
+                reply_to_message_id=target_reply_id,
+                allow_sending_without_reply=True
             )
         elif comment_type == 'sticker':
             st_msg = await context.bot.send_sticker(
                 chat_id=chat_id,
                 sticker=file_id,
-                reply_to_message_id=target_reply_id
+                reply_to_message_id=target_reply_id,
+                allow_sending_without_reply=True
             )
             # The text message carries the buttons and is what replies thread under, so it (not
             # the bare sticker) is the message whose id gets stored and returned.
             text_msg = await context.bot.send_message(
                 chat_id=chat_id,
-                text=message_text if use_markdown else author_text,
+                text=text_to_send,
                 reply_markup=kb,
                 parse_mode=p_mode,
                 reply_to_message_id=st_msg.message_id,
+                allow_sending_without_reply=True,
                 disable_web_page_preview=True
             )
             return text_msg
         else:
             return await context.bot.send_message(
                 chat_id=chat_id,
-                text=message_text if use_markdown else f"{plain_text}{author_text}",
+                text=text_to_send,
                 reply_markup=kb,
                 parse_mode=p_mode,
                 reply_to_message_id=target_reply_id,
+                allow_sending_without_reply=True,
                 disable_web_page_preview=True
             )
 
     msg = None
-    try:
-        # Step 1: Send with markdown and threading
-        msg = await _send_media(valid_reply_id, use_markdown=True)
-    except Exception as e1:
-        logger.warning(f"Initial send failed for comment {comment_id} ({comment_type}): {e1}")
-        
-        # Step 2: Retry standalone if reply threading caused the error
-        if valid_reply_id and "reply" in str(e1).lower():
+    # Attempt order: formatted + threaded, formatted unthreaded (only if Telegram
+    # complained about the reply target), plain + threaded, plain unthreaded.
+    attempts = [(valid_reply_id, True), (None, True), (valid_reply_id, False), (None, False)]
+    if valid_reply_id is None:
+        attempts = [(None, True), (None, False)]
+    reply_problem = False
+    for target_id, use_md in attempts:
+        if msg:
+            break
+        if valid_reply_id is not None:
+            if target_id is None and use_md and not reply_problem:
+                continue  # the unthreaded formatted retry only helps when the reply target was the problem
+            if target_id is not None and reply_problem:
+                continue  # the reply target is known-bad, don't try it again
+        for flood_try in range(2):
             try:
-                msg = await _send_media(None, use_markdown=True)
-            except Exception as e2:
-                logger.warning(f"Standalone send with markdown failed for comment {comment_id}: {e2}")
-        
-        # Step 3: If still failed (e.g. MarkdownV2 entity parse error), retry without markdown
-        if not msg:
-            try:
-                msg = await _send_media(valid_reply_id, use_markdown=False)
-            except Exception as e3:
-                logger.warning(f"Send without markdown failed for comment {comment_id}: {e3}")
-                try:
-                    msg = await _send_media(None, use_markdown=False)
-                except Exception as e4:
-                    logger.error(f"All media send attempts failed for comment {comment_id}: {e4}")
+                msg = await _send_media(target_id, use_md)
+                break
+            except Exception as err:
+                wait = getattr(err, 'retry_after', None)
+                if wait is not None and flood_try == 0:
+                    # Telegram flood control (10 comments sent in a burst): wait, then retry
+                    # the SAME attempt so the comment keeps its formatting and threading.
+                    try:
+                        wait_s = wait.total_seconds() if hasattr(wait, 'total_seconds') else float(wait)
+                    except Exception:
+                        wait_s = 1.0
+                    logger.warning(f"Flood limit sending comment {comment_id}, waiting {wait_s}s")
+                    await asyncio.sleep(min(wait_s + 0.5, 20))
+                    continue
+                if 'repl' in str(err).lower():
+                    reply_problem = True
+                logger.warning(
+                    f"Send attempt failed for comment {comment_id} ({comment_type}, "
+                    f"markdown={use_md}, threaded={target_id is not None}): {err}"
+                )
+                break
 
     # Fallback to plain text only if the media file itself failed completely (e.g. invalid file_id)
     if not msg:
         try:
-            fallback_text = f"[Media: {comment_type}] {content}\n\n{author_text}".strip()
+            fallback_text = f"[Media: {comment_type}] {content}\n\n{plain_author}".strip()[:4000]
             msg = await context.bot.send_message(
                 chat_id=chat_id,
                 text=fallback_text,
@@ -6280,13 +6376,48 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
             logger.error(f"Absolute final fallback failed for comment {comment_id}: {e_final}")
 
     if msg:
-        await db_execute_async(
-            "UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s",
-            (msg.message_id, comment_id)
-        )
+        # Kept for backward compatibility; NOT used for threading any more because this
+        # single column is shared by every user while message ids are per chat.
+        try:
+            await db_execute_async(
+                "UPDATE comments SET telegram_message_id = %s WHERE comment_id = %s",
+                (msg.message_id, comment_id)
+            )
+        except Exception as e_db:
+            logger.warning(f"Could not store telegram_message_id for comment {comment_id}: {e_db}")
+        # Per-chat record of where this comment lives, used to thread replies correctly.
+        try:
+            await db_execute_async(
+                """
+                INSERT INTO comment_msg_map (chat_id, comment_id, message_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (chat_id, comment_id) DO UPDATE SET message_id = EXCLUDED.message_id
+                """,
+                (int(chat_id), comment_id, msg.message_id)
+            )
+        except Exception as e_map:
+            logger.warning(f"Could not store per-chat message id for comment {comment_id}: {e_map}")
         return msg.message_id
 
     return None
+
+def _get_chat_message_ids(chat_id, comment_ids):
+    """Synchronous. {comment_id: message_id} for comments already sent into THIS chat.
+    Message ids differ per chat, so only this chat's own record is safe to thread under
+    (the old shared comments.telegram_message_id often pointed at another user's chat).
+    Never raises: on any problem it returns {} and the comment is simply sent unthreaded."""
+    ids = [i for i in comment_ids if i]
+    if not ids or chat_id is None:
+        return {}
+    try:
+        rows = db_fetch_all(
+            "SELECT comment_id, message_id FROM comment_msg_map WHERE chat_id = %s AND comment_id IN %s",
+            (int(chat_id), tuple(ids))
+        ) or []
+        return {row['comment_id']: row['message_id'] for row in rows}
+    except Exception as e:
+        logger.warning(f"Could not load per-chat message ids: {e}")
+        return {}
 
 def _fetch_comments_page_data(post_id, per_page, offset, user_id):
     """Synchronous - all blocking psycopg2 calls for one comments-page render,
@@ -6343,8 +6474,7 @@ def _fetch_comments_page_data(post_id, per_page, offset, user_id):
 
         parent_ids = [c['parent_comment_id'] for c in comments if c.get('parent_comment_id', 0) != 0]
         if parent_ids:
-            p_rows = db_fetch_all("SELECT comment_id, telegram_message_id FROM comments WHERE comment_id IN %s", (tuple(parent_ids),))
-            for row in p_rows: parent_msg_ids[row['comment_id']] = row['telegram_message_id']
+            parent_msg_ids = _get_chat_message_ids(user_id, parent_ids)
 
         ratings_map = get_user_ratings_batch([c['author_id'] for c in comments])
 
@@ -6585,8 +6715,7 @@ def _fetch_more_replies_data(comment_id, post_id, replies_per_page, offset, user
 
         p_ids = [r['parent_comment_id'] for r in replies]
         if p_ids:
-            p_rows = db_fetch_all("SELECT comment_id, telegram_message_id FROM comments WHERE comment_id IN %s", (tuple(p_ids),))
-            for row in p_rows: parent_msg_ids[row['comment_id']] = row['telegram_message_id']
+            parent_msg_ids = _get_chat_message_ids(user_id, p_ids)
 
         ratings_map = get_user_ratings_batch([r['author_id'] for r in replies])
 
@@ -6604,13 +6733,14 @@ async def show_more_replies(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     chat_id = update.effective_chat.id
     
     # Get the comment to find its post and telegram_message_id
-    comment = (await db_fetch_one_async("SELECT post_id, telegram_message_id FROM comments WHERE comment_id = %s", (comment_id,)))
+    comment = (await db_fetch_one_async("SELECT post_id FROM comments WHERE comment_id = %s", (comment_id,)))
     if not comment:
         await query.answer("Comment not found", show_alert=True)
         return
-    
+
     post_id = comment['post_id']
-    base_reply_to_id = comment.get('telegram_message_id')
+    # Thread under this chat's own copy of the comment, not the shared global id.
+    base_reply_to_id = (await asyncio.to_thread(_get_chat_message_ids, chat_id, [comment_id])).get(comment_id)
     replies_per_page = 5
     offset = 3 + (page - 1) * replies_per_page
     user_id = str(update.effective_user.id)
