@@ -13217,6 +13217,8 @@ const API = location.origin;
 let UID = null, profileCache = null, crPartnerId = null, crPoll = null, currentPostAuthorId = null;
 let pendingMedia = null, pendingCommentMedia = null, pendingChatMedia = null;
 let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null, feedLastDay = '';
+// Scroll offset of the feed at the moment a vent was opened from it (null = vent was not opened from the feed).
+let feedScrollY = null;
 let chatsCache = [];
 let crMsgsCache = [];
 let crChat = {};   // chat-level state from the server: blocked_by_me, can_chat, cleared, share_url, ...
@@ -14019,6 +14021,16 @@ const ink=document.getElementById('nav-ink');
 function go(name,btn){
   if(name==='profile')name='settings';
   if(!btn&&(name==='settings'||name==='edit'))btn=document.querySelector('.nav-item[data-page="settings"]');
+  const pagesEl=document.getElementById('pages');
+  const prevPage=document.querySelector('.page.active');
+  const prevName=prevPage?prevPage.id.replace('page-',''):'';
+  // Remember where the feed was scrolled to when a vent is opened from it.
+  // Read this BEFORE the feed is hidden: all pages share one scroll container,
+  // so hiding the feed throws its scroll position away.
+  // (Opening a vent from inside another vent, e.g. a thread row, keeps the saved value.)
+  if(name==='detail'&&prevName!=='detail')feedScrollY=(prevName==='feed')?pagesEl.scrollTop:null;
+  // Coming back from a vent to a feed that is already on screen: keep the list as it was.
+  const resumeFeed=name==='feed'&&prevName==='detail'&&feedScrollY!==null&&!!document.querySelector('#feed-list .post-card');
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
@@ -14030,13 +14042,20 @@ function go(name,btn){
         ink.style.left = (index * 20) + '%';
       }
     }
-  if(name==='feed'&&feedPage===1)loadFeed();
+  if(name==='feed'&&feedPage===1&&!resumeFeed)loadFeed();
   if(name==='vent')refreshVentSexRow();
   if(name==='leaderboard')loadLB();
   if(name==='settings')loadMe();
   if(name==='chats')loadChats();
   if(name==='admin-monitor')loadAdminChats();
-  document.getElementById('pages').scrollTop=0;
+  if(resumeFeed){
+    // #pages has scroll-behavior:smooth, so switch it off for this jump or the
+    // list would visibly glide down from the top instead of simply being there.
+    const y=feedScrollY;
+    const jump=()=>{pagesEl.style.scrollBehavior='auto';pagesEl.scrollTop=y;pagesEl.style.scrollBehavior=''};
+    jump();
+    requestAnimationFrame(jump); // second pass in case media/layout settled after the first
+  }else pagesEl.scrollTop=0;
   // Show/hide fixed comment bar
   const bar=document.getElementById('commentBar');
   if(name==='detail') bar.style.display='flex';
@@ -14355,7 +14374,7 @@ function renderPost(p){
       }
     }
   }
-  return `<div class="post-card${p.thread?' is-thread':''}">
+  return `<div class="post-card${p.thread?' is-thread':''}" data-pid="${p.id}">
     <div class="post-meta"><div class="ava" style="width:34px;height:34px">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name"${p.author?.is_admin ? '' : ` onclick="event.stopPropagation(); showUserProfile('${p.author?.id}')"`}>${esc(p.author?.name||'Anonymous')} <span style="font-size:13px">${esc(p.author?.aura||'')}</span></div></div>${p.explicit?`<span class="sens-chip" style="margin-left:auto"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>18+</span>`:`<div class="post-time">${esc(p.day_label?'Approved '+(p.time_ago||''):(p.time_ago||''))}</div>`}</div>
     ${threadChip(p)}
     ${ventLabel(p)}
@@ -14366,7 +14385,7 @@ function renderPost(p){
     <div onclick="event.stopPropagation();">
       ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
     </div>
-    <div class="post-footer" onclick="openPost(${p.id})"><div class="post-footer-left"><span class="stat-btn"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>${p.comments||0}</span>${unread}</div><span class="read-more">Read →</span></div>
+    <div class="post-footer" onclick="openPost(${p.id})"><div class="post-footer-left"><span class="stat-btn"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="cc">${p.comments||0}</span></span>${unread}</div><span class="read-more">Read →</span></div>
   </div>`;
 }
 
@@ -14575,6 +14594,9 @@ async function postComment(){
     const payload={user_id:UID,content:txt,parent_comment_id:replyToId};
     if(pendingCommentMedia){payload.media_type=pendingCommentMedia.media_type;payload.media_id=pendingCommentMedia.media_id}
     await api(`/api/mini-app/post/${currentPostId}/comment`,{method:'POST',body:JSON.stringify(payload)});
+    // Keep the (preserved) feed card's comment count in step, so it is right when the user goes back.
+    const ccEl=document.querySelector(`#feed-list .post-card[data-pid="${currentPostId}"] .cc`);
+    if(ccEl)ccEl.textContent=(parseInt(ccEl.textContent,10)||0)+1;
     document.getElementById('comment-txt').value='';cancelReply();toast('Posted');
     pendingCommentMedia=null;document.getElementById('comment-file-input').value='';
     document.getElementById('comment-attach-btn').classList.remove('has-media');
