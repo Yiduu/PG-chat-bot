@@ -900,6 +900,47 @@ async def db_fetch_all_async(query, params=()):
     return await db_execute_async(query, params, fetch=True)
 
 
+# -------------------- Parallel DB fan-out (comment loading speed) --------------------
+# A comments screen needs ~8 independent-ish queries. Run one after another they cost 8 network
+# round trips to the database; run in parallel they cost about 2 (the second stage needs the comment
+# ids from the first). The shared executor is deliberately SEPARATE from asyncio's default
+# executor: the caller usually already occupies a default-executor thread while it waits here, so
+# sharing one pool could starve itself. Every query still takes a slot from _db_slots via
+# db_execute, so the 20-connection pool limit is respected.
+_DB_FANOUT = ThreadPoolExecutor(max_workers=12, thread_name_prefix="db-fanout")
+
+
+def db_parallel(*calls):
+    """Run zero-arg callables concurrently and return their results in the same order.
+    The first exception (if any) is re-raised after all calls finished, so behaviour matches
+    running them one by one."""
+    futures = [_DB_FANOUT.submit(fn) for fn in calls]
+    results, first_err = [], None
+    for fut in futures:
+        try:
+            results.append(fut.result())
+        except Exception as e:
+            results.append(None)
+            if first_err is None:
+                first_err = e
+    if first_err is not None:
+        raise first_err
+    return results
+
+
+def db_background(fn, *args):
+    """Fire-and-forget a DB write that must not delay the response (never raises)."""
+    def _run():
+        try:
+            fn(*args)
+        except Exception as e:
+            logging.warning(f"Background DB write failed: {e}")
+    try:
+        _DB_FANOUT.submit(_run)
+    except Exception as e:
+        logging.warning(f"Could not queue background DB write: {e}")
+
+
 # ==================== SHARED PERF / CONSISTENCY HELPERS ====================
 
 def _clamp_int(raw, lo, hi, default):
@@ -6162,8 +6203,10 @@ def sanitize_pasted_edit(raw_text: str):
     cleaned = cleaned.strip(" :\n")
     return (cleaned if cleaned else raw_text.strip()), (cleaned.strip() != raw_text.strip())
 
-async def send_comment_message(context, chat_id, comment, author_text, reply_to_message_id=None, pre_fetched_data=None):
-    """Helper function to send comments with proper media handling and pre-fetched data support"""
+async def send_comment_message(context, chat_id, comment, author_text, reply_to_message_id=None, pre_fetched_data=None, persist=True):
+    """Helper function to send comments with proper media handling and pre-fetched data support.
+    persist=False skips the two per-comment DB writes (message-id bookkeeping) so a caller that
+    sends many comments in a row can batch them AFTER sending (see persist_comment_msg_ids)."""
     comment_id = comment['comment_id']
     comment_type = comment.get('type') or 'text'
     file_id = comment.get('file_id')
@@ -6375,6 +6418,9 @@ async def send_comment_message(context, chat_id, comment, author_text, reply_to_
         except Exception as e_final:
             logger.error(f"Absolute final fallback failed for comment {comment_id}: {e_final}")
 
+    if msg and not persist:
+        return msg.message_id
+
     if msg:
         # Kept for backward compatibility; NOT used for threading any more because this
         # single column is shared by every user while message ids are per chat.
@@ -6419,77 +6465,136 @@ def _get_chat_message_ids(chat_id, comment_ids):
         logger.warning(f"Could not load per-chat message ids: {e}")
         return {}
 
+def _mark_post_viewed(user_id, post_id, newest_ts):
+    """Clear 'unread' up to newest_ts. GREATEST: never move the marker backwards when the user
+    pages through older comments. Meant to run in the background (db_background)."""
+    db_execute("""
+        INSERT INTO post_views (user_id, post_id, last_viewed)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (user_id, post_id)
+        DO UPDATE SET last_viewed = GREATEST(post_views.last_viewed, EXCLUDED.last_viewed)
+    """, (str(user_id), post_id, newest_ts))
+
+
+def persist_comment_msg_ids(chat_id, pairs):
+    """Synchronous. Record where each comment landed in THIS chat, for a whole page at once:
+    one transaction, one round trip per table, instead of 2 round trips per comment.
+    `pairs` = [(comment_id, message_id), ...]. Replaces the per-comment bookkeeping in
+    send_comment_message (persist=True). Never raises."""
+    if not pairs or chat_id is None:
+        return
+    conn = None
+    try:
+        _acquire_db_slot()
+    except Exception as e:
+        logger.warning(f"Could not store comment message ids: {e}")
+        return
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor() as cur:
+            # Backward-compat column (shared across chats, not used for threading any more).
+            execute_values(cur, """
+                UPDATE comments AS c SET telegram_message_id = v.mid
+                FROM (VALUES %s) AS v(cid, mid)
+                WHERE c.comment_id = v.cid
+            """, [(int(cid), int(mid)) for cid, mid in pairs])
+            # Per-chat record used to thread replies correctly.
+            execute_values(cur, """
+                INSERT INTO comment_msg_map (chat_id, comment_id, message_id)
+                VALUES %s
+                ON CONFLICT (chat_id, comment_id) DO UPDATE SET message_id = EXCLUDED.message_id
+            """, [(int(chat_id), int(cid), int(mid)) for cid, mid in pairs])
+        conn.commit()
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logger.warning(f"Could not store comment message ids for chat {chat_id}: {e}")
+    finally:
+        if conn:
+            db_pool.putconn(conn)
+        _db_slots.release()
+
+
 def _fetch_comments_page_data(post_id, per_page, offset, user_id):
     """Synchronous - all blocking psycopg2 calls for one comments-page render,
     meant to be run off the event loop via asyncio.to_thread(). Returns plain
-    dicts/lists only, no DB objects, so it's safe to hand back to async code."""
-    post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-    if not post:
-        return {'post': None, 'comments': [], 'total_comments': 0,
-                'reaction_data': {}, 'parent_msg_ids': {}, 'ratings_map': {}}
+    dicts/lists only, no DB objects, so it's safe to hand back to async code.
 
-    comments = db_fetch_all("""
+    SPEED: the queries used to run one after another (~8 database round trips). They now run in
+    two parallel stages - (post, comments, total, viewer) then (reaction counts, the viewer's own
+    reactions, reply-parent message ids, author ratings) - and the 'mark as read' write is
+    fire-and-forget, so the page costs about 2 round trips instead of 8."""
+    comments_sql = """
         SELECT c.*, u.sex AS user_sex, u.avatar_emoji, u.anonymous_name, u.is_admin, COALESCE(u.hide_aura, FALSE) AS hide_aura
         FROM comments c
         LEFT JOIN users u ON c.author_id = u.user_id
         WHERE c.post_id = %s
         ORDER BY c.timestamp ASC
         LIMIT %s OFFSET %s
-    """, (post_id, per_page, offset))
+    """
+    # ---- stage 1: everything that only needs post_id / user_id ----
+    post, comments, total_comments, viewer_row = db_parallel(
+        lambda: db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,)),
+        lambda: db_fetch_all(comments_sql, (post_id, per_page, offset)),
+        lambda: count_all_comments(post_id),
+        lambda: (db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(user_id),)) if user_id else None),
+    )
+    if not post:
+        return {'post': None, 'comments': [], 'total_comments': 0,
+                'reaction_data': {}, 'parent_msg_ids': {}, 'ratings_map': {}}
+
+    comments = comments or []
     for c in comments:
         c['sex'] = c.pop('user_sex', '👤') or '👤'
-
-    total_comments = count_all_comments(post_id)
 
     reaction_data = {}
     parent_msg_ids = {}
     ratings_map = {}
-    viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(user_id),)) if user_id else None
     is_viewer_admin = bool(viewer_row and viewer_row.get('is_admin'))
 
     comment_ids = [c['comment_id'] for c in comments]
     if comment_ids:
-        counts = db_fetch_all("""
-            SELECT comment_id,
-                   CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike'
-                        WHEN type IN ('laugh', '😂') THEN 'laugh'
-                        ELSE 'like' END as rgroup,
-                   COUNT(*) as cnt
-            FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike'
-                        WHEN type IN ('laugh', '😂') THEN 'laugh'
-                        ELSE 'like' END
-        """, (tuple(comment_ids),))
-        for row in counts:
+        parent_ids = [c['parent_comment_id'] for c in comments if c.get('parent_comment_id', 0) != 0]
+        ids_tuple = tuple(comment_ids)
+
+        # ---- stage 2: everything that needs the comment ids ----
+        counts, u_reacts, parent_msg_ids, ratings_map = db_parallel(
+            lambda: db_fetch_all("""
+                SELECT comment_id,
+                       CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike'
+                            WHEN type IN ('laugh', '😂') THEN 'laugh'
+                            ELSE 'like' END as rgroup,
+                       COUNT(*) as cnt
+                FROM reactions WHERE comment_id IN %s GROUP BY comment_id, CASE WHEN type IN ('dislike', '👎', '😡') THEN 'dislike'
+                            WHEN type IN ('laugh', '😂') THEN 'laugh'
+                            ELSE 'like' END
+            """, (ids_tuple,)),
+            lambda: db_fetch_all("SELECT comment_id, type FROM reactions WHERE comment_id IN %s AND user_id = %s", (ids_tuple, user_id)),
+            lambda: (_get_chat_message_ids(user_id, parent_ids) if parent_ids else {}),
+            lambda: get_user_ratings_batch([c['author_id'] for c in comments]),
+        )
+        for row in counts or []:
             cid = row['comment_id']
             reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
             if row['rgroup'] == 'like': reaction_data[cid]['likes'] = row['cnt']
             elif row['rgroup'] == 'laugh': reaction_data[cid]['laughs'] = row['cnt']
             else: reaction_data[cid]['dislikes'] = row['cnt']
 
-        u_reacts = db_fetch_all("SELECT comment_id, type FROM reactions WHERE comment_id IN %s AND user_id = %s", (tuple(comment_ids), user_id))
-        for row in u_reacts:
+        for row in u_reacts or []:
             cid = row['comment_id']
             reaction_data.setdefault(cid, {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
             reaction_data[cid]['user_reaction'] = row['type']
 
-        parent_ids = [c['parent_comment_id'] for c in comments if c.get('parent_comment_id', 0) != 0]
-        if parent_ids:
-            parent_msg_ids = _get_chat_message_ids(user_id, parent_ids)
+        parent_msg_ids = parent_msg_ids or {}
+        ratings_map = ratings_map or {}
 
-        ratings_map = get_user_ratings_batch([c['author_id'] for c in comments])
-
-        # Clear "unread" only up to the newest comment on this page (GREATEST: never move the
-        # marker backwards when the user pages through older comments).
+        # Clear "unread" only up to the newest comment on this page - in the background, the
+        # page does not need to wait for it.
         if user_id and comments and comments[-1].get('timestamp'):
-            try:
-                db_execute("""
-                    INSERT INTO post_views (user_id, post_id, last_viewed)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (user_id, post_id)
-                    DO UPDATE SET last_viewed = GREATEST(post_views.last_viewed, EXCLUDED.last_viewed)
-                """, (str(user_id), post_id, comments[-1]['timestamp']))
-            except Exception as pv_err:
-                logger.warning(f"Could not update post_views for {user_id}/{post_id}: {pv_err}")
+            db_background(_mark_post_viewed, user_id, post_id, comments[-1]['timestamp'])
 
     return {
         'post': post, 'comments': comments, 'total_comments': total_comments,
@@ -6584,10 +6689,17 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         # Pre-fetched data for button builder
         pref = reaction_data.get(comment_id, {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
         
-        new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id, pre_fetched_data=pref)
+        # persist=False: the loop only sends. Telegram needs ONE ordered message after another
+        # (arrival order = display order, so this can't be parallelised), which makes every
+        # millisecond between two sends visible. The message-id bookkeeping is written once,
+        # in a batch, after the last comment is out (see persist_comment_msg_ids below).
+        new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id, pre_fetched_data=pref, persist=False)
         if new_msg_id:
             msg_ids[comment_id] = new_msg_id
-    
+
+    if msg_ids:
+        db_background(persist_comment_msg_ids, chat_id, list(msg_ids.items()))
+
     # Pagination Add comment button
     is_last_page = page >= total_pages
 
@@ -14395,6 +14507,9 @@ async function openPost(id, reveal){
   document.getElementById('detail-comments').innerHTML=skelComments(3);
   try{
     const revealParam = reveal ? '&reveal=1' : '';
+    // Start the comments request NOW, in parallel with the post request, instead of waiting for the
+    // post to arrive first (that was two requests in a row; now it is one wait).
+    prefetchComments(id, revealParam);
     const d=await api(`/api/mini-app/post/${id}?viewer_id=${UID}${revealParam}`);
     const p=d.data;
     if(p.deleted){
@@ -14451,9 +14566,18 @@ async function openPost(id, reveal){
 
 // Comments come newest-100-first-window (oldest-first inside the window); "Load older" walks back.
 let cmtAll=[], cmtHasMore=false, cmtLoadingOlder=false, cmtReveal='';
+let cmtPre=null; // {postId, reveal, p}: a comments request that is already in flight
+function prefetchComments(postId,revealParam){
+  const p=api(`/api/mini-app/post/${postId}/comments?viewer_id=${UID}${revealParam}&limit=100`);
+  p.catch(()=>{}); // errors surface where the result is awaited, not as an unhandled rejection here
+  cmtPre={postId,reveal:revealParam,p};
+}
 async function fetchAndRenderComments(postId,authorId,revealParam){
   if(revealParam!==undefined) cmtReveal=revealParam;
-  const cd=await api(`/api/mini-app/post/${postId}/comments?viewer_id=${UID}${cmtReveal}&limit=100`);
+  const pre=cmtPre; cmtPre=null;
+  const cd=(pre&&pre.postId===postId&&pre.reveal===cmtReveal)
+    ? await pre.p
+    : await api(`/api/mini-app/post/${postId}/comments?viewer_id=${UID}${cmtReveal}&limit=100`);
   cmtAll=cd.data||[]; cmtHasMore=!!cd.has_more;
   renderComments(cmtAll,authorId);
 }
@@ -16838,18 +16962,6 @@ def mini_app_get_post_comments(post_id):
         reveal_requested = request.args.get('reveal') == '1'
         limit = _clamp_int(request.args.get('limit'), 1, 500, 100)
         before_id = _parse_positive_int(request.args.get('before_id'))
-        viewer_row = db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(viewer_id),)) if viewer_id else None
-        is_viewer_admin = bool(viewer_row and viewer_row.get('is_admin'))
-
-        # One lookup serves both the explicit-content gate and the vent-author badge below.
-        post_gate = db_fetch_one("SELECT author_id, explicit FROM posts WHERE post_id = %s", (post_id,))
-        if post_gate and post_gate.get('explicit'):
-            is_privileged_viewer = bool(viewer_id) and (
-                str(viewer_id) == str(post_gate['author_id']) or is_viewer_admin
-            )
-            if not is_privileged_viewer and not reveal_requested:
-                return jsonify({'success': True, 'data': [], 'content_hidden': True})
-
         before_clause = ""
         params = [post_id]
         if before_id:
@@ -16857,7 +16969,7 @@ def mini_app_get_post_comments(post_id):
             params.append(before_id)
         params.append(limit + 1)  # one extra row tells us whether older comments exist
 
-        comments = db_fetch_all(f'''
+        comments_sql = f'''
             SELECT * FROM (
                 SELECT 
                     c.comment_id,
@@ -16879,56 +16991,61 @@ def mini_app_get_post_comments(post_id):
                 LIMIT %s
             ) win
             ORDER BY win.time_ago ASC, win.comment_id ASC
-        ''', tuple(params))
+        '''
+
+        # SPEED: the three independent lookups run in parallel (1 database round trip, not 3).
+        # post_gate serves both the explicit-content gate and the vent-author badge below.
+        viewer_row, post_gate, comments = db_parallel(
+            lambda: (db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (str(viewer_id),)) if viewer_id else None),
+            lambda: db_fetch_one("SELECT author_id, explicit FROM posts WHERE post_id = %s", (post_id,)),
+            lambda: db_fetch_all(comments_sql, tuple(params)),
+        )
+        is_viewer_admin = bool(viewer_row and viewer_row.get('is_admin'))
+        if post_gate and post_gate.get('explicit'):
+            is_privileged_viewer = bool(viewer_id) and (
+                str(viewer_id) == str(post_gate['author_id']) or is_viewer_admin
+            )
+            if not is_privileged_viewer and not reveal_requested:
+                return jsonify({'success': True, 'data': [], 'content_hidden': True})
+        comments = comments or []
         has_more = len(comments) > limit
         if has_more:
             comments = comments[1:]  # drop the extra, oldest row
 
-        # Batch load reactions for comments
+        # SPEED (stage 2): reaction counts, the viewer's own reactions, author ratings and the
+        # quoted-message previews are independent of each other, so they run in parallel.
+        # Quoted-message previews (Telegram-style reply) are looked up by id so the quote still
+        # works when the original sits on an older page that is not loaded yet. Same post only.
         comment_ids = [c['comment_id'] for c in comments]
         comment_reactions_map = {}
         comment_user_reactions_map = {}
-        
-        if comment_ids:
-            counts_res = db_fetch_all("""
+        post_author_id = post_gate['author_id'] if post_gate else None
+        parent_ids = list({c['parent_comment_id'] for c in comments if c['parent_comment_id']})
+        counts_res, user_res, ratings_map, prow = db_parallel(
+            lambda: (db_fetch_all("""
                 SELECT comment_id, type, COUNT(*) as cnt
                 FROM reactions
                 WHERE comment_id IN %s AND comment_id IS NOT NULL
                 GROUP BY comment_id, type
-            """, (tuple(comment_ids),))
-            
-            for row in (counts_res or []):
-                cid = row['comment_id']
-                rtype = row['type']
-                rcnt = row['cnt']
-                if cid not in comment_reactions_map:
-                    comment_reactions_map[cid] = {}
-                comment_reactions_map[cid][rtype] = rcnt
-                
-            if viewer_id:
-                user_res = db_fetch_all("""
-                    SELECT comment_id, type
-                    FROM reactions
-                    WHERE comment_id IN %s AND user_id = %s AND comment_id IS NOT NULL
-                """, (tuple(comment_ids), str(viewer_id)))
-                
-                for row in (user_res or []):
-                    cid = row['comment_id']
-                    rtype = row['type']
-                    comment_user_reactions_map[cid] = rtype
-        post_author_id = post_gate['author_id'] if post_gate else None
-        ratings_map = get_user_ratings_batch([c['author_id'] for c in comments])
-        # Quoted-message previews (Telegram-style reply). Looked up by id so the quote still works
-        # when the original sits on an older page that is not loaded yet. Same post only.
-        parent_ids = list({c['parent_comment_id'] for c in comments if c['parent_comment_id']})
-        parent_map = {}
-        if parent_ids:
-            prow = db_fetch_all('''
+            """, (tuple(comment_ids),)) if comment_ids else []),
+            lambda: (db_fetch_all("""
+                SELECT comment_id, type
+                FROM reactions
+                WHERE comment_id IN %s AND user_id = %s AND comment_id IS NOT NULL
+            """, (tuple(comment_ids), str(viewer_id))) if (comment_ids and viewer_id) else []),
+            lambda: get_user_ratings_batch([c['author_id'] for c in comments]),
+            lambda: (db_fetch_all('''
                 SELECT c.comment_id, c.content, c.type AS media_type, c.author_id, u.anonymous_name AS author_name
                 FROM comments c LEFT JOIN users u ON c.author_id = u.user_id
                 WHERE c.comment_id IN %s AND c.post_id = %s
-            ''', (tuple(parent_ids), post_id))
-            parent_map = {r['comment_id']: r for r in (prow or [])}
+            ''', (tuple(parent_ids), post_id)) if parent_ids else []),
+        )
+        for row in (counts_res or []):
+            comment_reactions_map.setdefault(row['comment_id'], {})[row['type']] = row['cnt']
+        for row in (user_res or []):
+            comment_user_reactions_map[row['comment_id']] = row['type']
+        ratings_map = ratings_map or {}
+        parent_map = {r['comment_id']: r for r in (prow or [])}
         formatted_comments = []
         now = datetime.now()
         for c in comments:
@@ -16989,15 +17106,7 @@ def mini_app_get_post_comments(post_id):
         # for what was shown). GREATEST keeps a later view from being moved backwards when the
         # client is paging through older comments.
         if viewer_id and comments:
-            try:
-                db_execute("""
-                    INSERT INTO post_views (user_id, post_id, last_viewed)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (user_id, post_id)
-                    DO UPDATE SET last_viewed = GREATEST(post_views.last_viewed, EXCLUDED.last_viewed)
-                """, (str(viewer_id), post_id, comments[-1]['time_ago']))
-            except Exception as pv_err:  # e.g. unknown viewer id (FK) - never fail the read
-                logger.warning(f"Could not update post_views for {viewer_id}/{post_id}: {pv_err}")
+            db_background(_mark_post_viewed, viewer_id, post_id, comments[-1]['time_ago'])
 
         return jsonify({'success': True, 'data': formatted_comments, 'has_more': has_more})
     except Exception as e:
