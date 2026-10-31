@@ -776,6 +776,23 @@ async def _send_typing(context, chat_id):
     except Exception:
         pass
 
+_bg_tasks = set()
+
+def fire_and_forget(coro):
+    """Run a coroutine in the background without waiting for it (errors are swallowed - only
+    for cosmetic calls like answering a button tap). Keeps a reference so it isn't garbage collected."""
+    async def _safe():
+        try:
+            await coro
+        except Exception:
+            pass
+    try:
+        task = asyncio.create_task(_safe())
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
+    except Exception:
+        pass
+
 async def typing_animation(context, chat_id, duration=1):
     """Show typing indicator (does not wait; `duration` kept for compatibility)."""
     try:
@@ -2342,9 +2359,18 @@ def calculate_user_rating(user_id):
     )
     return int(row['score']) if row and row['score'] is not None else 0
 
+# Aura scores shown next to comments: cached per author for a short time. The score query joins
+# every post/comment/reaction of each author, so recomputing it on every comments-page open and
+# every Older/Newer tap was the slowest part of loading comments. Aura on a comment list being up
+# to _RATING_TTL_SECONDS old is fine (the leaderboard itself is cached for 60s).
+_RATING_TTL_SECONDS = 90
+_rating_cache = {}            # str(user_id) -> (score, expires_at_monotonic)
+_rating_cache_lock = threading.Lock()
+
 def get_user_ratings_batch(user_ids):
     """Same scoring as calculate_user_rating(), for many users in ONE query (it used to be
-    5 GROUP-BY queries). Returns {user_id: score} keyed by the ids passed in."""
+    5 GROUP-BY queries). Returns {user_id: score} keyed by the ids passed in. Scores computed in
+    the last _RATING_TTL_SECONDS come from memory; only the rest hit the database."""
     originals = {}
     for uid in user_ids:
         if uid is not None:
@@ -2352,15 +2378,38 @@ def get_user_ratings_batch(user_ids):
     if not originals:
         return {}
     ratings = {orig: 0 for orig in originals.values()}
+    now = time.monotonic()
+    missing = []
+    with _rating_cache_lock:
+        for key, orig in originals.items():
+            hit = _rating_cache.get(key)
+            if hit and hit[1] > now:
+                ratings[orig] = hit[0]
+            else:
+                missing.append(key)
+    if not missing:
+        return ratings
+
+    t0 = time.monotonic()
     rows = db_fetch_all(
         f"WITH score_authors AS (SELECT UNNEST(%s::text[]) AS author_id), {_SCORE_CTES_SQL} "
         "SELECT author_id, score FROM author_scores",
-        (list(originals.keys()),)
+        (missing,)
     )
+    logger.info(f"ratings query for {len(missing)} authors took {(time.monotonic() - t0) * 1000:.0f}ms")
+    fresh = {}
     for row in rows or []:
-        orig = originals.get(str(row['author_id']))
+        key = str(row['author_id'])
+        fresh[key] = int(row['score'] or 0)
+        orig = originals.get(key)
         if orig is not None:
-            ratings[orig] = int(row['score'] or 0)
+            ratings[orig] = fresh[key]
+    with _rating_cache_lock:
+        if len(_rating_cache) > 20000:
+            _rating_cache.clear()
+        expires = time.monotonic() + _RATING_TTL_SECONDS
+        for key in missing:
+            _rating_cache[key] = (fresh.get(key, 0), expires)
     return ratings
 
 def calculate_top_weekly_contributors(limit=3):
@@ -6622,7 +6671,9 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     # for the duration of the DB round trips (and calculate_user_rating() was
     # being called once per comment, i.e. up to 5 extra blocking queries per
     # comment shown). See _fetch_comments_page_data / get_user_ratings_batch.
+    _t_start = time.monotonic()
     page_data = await asyncio.to_thread(_fetch_comments_page_data, post_id, per_page, offset, user_id)
+    _fetch_ms = (time.monotonic() - _t_start) * 1000
 
     post = page_data['post']
     if not post:
@@ -6699,6 +6750,8 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     if msg_ids:
         db_background(persist_comment_msg_ids, chat_id, list(msg_ids.items()))
+    logger.info(f"comments post={post_id} page={page}: data {_fetch_ms:.0f}ms, "
+                f"sent {len(msg_ids)} in {(time.monotonic() - _t_start) * 1000 - _fetch_ms:.0f}ms")
 
     # Pagination Add comment button
     is_last_page = page >= total_pages
@@ -8692,7 +8745,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("Error loading post", show_alert=True)
 
         elif query.data.startswith('viewcomments_'):
-            await query.answer("Loading comments...", show_alert=False)
+            # Answer the tap in the background: waiting for Telegram's reply here only delayed the
+            # first comment by a full round trip.
+            fire_and_forget(query.answer("Loading comments...", show_alert=False))
             try:
                 parts = query.data.split('_')
                 if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
