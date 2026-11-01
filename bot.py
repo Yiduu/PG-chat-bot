@@ -13208,6 +13208,9 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
 .sens-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:13px;font-size:12px;font-weight:800;letter-spacing:.4px;
   color:var(--warn);background:rgba(var(--warn-rgb),0.12);border:1px solid rgba(var(--warn-rgb),0.45)}
 .sens-chip svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.post-deleted{opacity:.92}
+.post-deleted .del-note{display:flex;align-items:center;gap:8px;margin:2px 0 12px;padding:14px 14px;border-radius:12px;background:var(--bg2);border:1px dashed var(--border, rgba(255,255,255,.14));color:var(--text3);font-size:14px;font-style:italic;cursor:pointer}
+.post-deleted .del-ico{width:18px;height:18px;flex-shrink:0;display:inline-flex}
 .sens-veil{margin-bottom:12px;padding:18px 16px;border-radius:12px;background:var(--bg2);border:1px solid rgba(var(--warn-rgb),0.3);text-align:center}
 .sens-veil-bars{display:flex;flex-direction:column;gap:8px;filter:blur(3px);opacity:.5;margin-bottom:14px}
 .sens-veil-bars i{display:block;height:9px;border-radius:5px;background:var(--text3)}
@@ -14512,7 +14515,7 @@ function threadPanel(p){
   if(!t||!t.earlier||!t.earlier.length)return '';
   const rows=t.earlier.map((e,i)=>{
     const last=i===t.earlier.length-1;
-    const prev=e.content_hidden?'<i>Sensitive content</i>':esc(e.preview||'');
+    const prev=e.deleted?'<i>Deleted by the author</i>':e.content_hidden?'<i>Sensitive content</i>':esc(e.preview||'');
     return `<div class="thread-row${last?' last':''}" onclick="openPost(${e.id})"><div class="thread-meta"><b>Vent - ${ventNo(e.vent_number)}</b> · approved ${esc(e.time_ago||'')}${last?' · start of thread':''}</div><div class="thread-prev">${prev}</div></div>`;
   }).join('');
   return `<div class="thread-box"><div class="thread-label">Earlier in this thread</div>${rows}<button class="thread-btn" onclick="openPost(${p.id})">View full thread →</button></div>`;
@@ -14522,14 +14525,27 @@ function threadTimeline(list){
   if(!list||list.length<2)return '';
   const rows=list.map((e,i)=>{
     const first=i===0,last=i===list.length-1;
-    const prev=e.content_hidden?'<i>Sensitive content</i>':esc(e.preview||'');
+    const prev=e.deleted?'<i>Deleted by the author</i>':e.content_hidden?'<i>Sensitive content</i>':esc(e.preview||'');
     const tags=(first?' · start of thread':'')+(last?' · newest':'')+(e.current?' · you are here':'');
     return `<div class="thread-row${last?' last':''}${e.current?' cur':''}"${e.current?'':` onclick="openPost(${e.id})"`}><div class="thread-meta"><b>Vent - ${ventNo(e.vent_number)}</b> · approved ${esc(e.time_ago||'')}${tags}</div><div class="thread-prev">${prev}</div></div>`;
   }).join('');
   return `<div class="thread-box" style="margin:0;border-radius:0;border-left:none;border-right:none;border-top:none"><div class="thread-label">Thread · ${list.length} vents, oldest to newest</div>${rows}</div>`;
 }
 
+// Feed card for a vent its author deleted: no text, media or reactions - just a notice. The card
+// still opens the conversation (comments stay), and keeps its thread chip/panel if it has one.
+function renderDeletedPost(p){
+  return `<div class="post-card post-deleted${p.thread?' is-thread':''}" data-pid="${p.id}">
+    <div class="post-meta"><div class="ava" style="width:34px;height:34px;opacity:.6">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name" style="color:var(--text3)">Vent author</div></div><div class="post-time">${esc(p.day_label?'Approved '+(p.time_ago||''):(p.time_ago||''))}</div></div>
+    ${threadChip(p)}
+    ${ventLabel(p)}
+    <div class="del-note" onclick="openPost(${p.id})"><span class="del-ico">${ICONS.alert}</span><span>This vent has been deleted by the author.</span></div>
+    ${threadPanel(p)}
+    <div class="post-footer" onclick="openPost(${p.id})"><div class="post-footer-left"><span class="stat-btn"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="cc">${p.comments||0}</span></span></div><span class="read-more">Read →</span></div>
+  </div>`;
+}
 function renderPost(p){
+  if(p.deleted)return renderDeletedPost(p);
   const cats=(p.categories||[]).map(c=>`<span class="pill pill-sm">${esc(c)}</span>`).join('');
   const unread=p.unread_comments>0?`<span class="pill pill-sm" style="background:rgba(var(--gold-rgb),0.2);border-color:var(--gold)">${p.unread_comments} new</span>`:'';
   let reactionsHtml='';
@@ -16600,15 +16616,18 @@ _FEED_SQL = f"""
         SELECT p.post_id, p.content, p.timestamp, p.approved_at, p.thread_from_post_id,
                p.comment_count, p.media_type,
                p.media_id, p.explicit, p.author_id, p.vent_number, p.revealed_sex,
+               COALESCE(p.deleted, FALSE) AS deleted,
                COUNT(*) OVER () AS total_count
         FROM posts p
-        WHERE p.approved = TRUE AND p.deleted = FALSE
+        -- Vents their author deleted stay in the feed (as a "deleted" placeholder card) so the
+        -- conversation and its position in the timeline are not silently removed.
+        WHERE p.approved = TRUE
           -- A vent with an approved continuation is folded into the continuation's thread card,
           -- so only the newest vent of each thread is a feed entry.
           AND NOT EXISTS (
               SELECT 1 FROM posts nx
               WHERE nx.thread_from_post_id = p.post_id
-                AND nx.approved = TRUE AND nx.deleted = FALSE
+                AND nx.approved = TRUE
           )
         ORDER BY p.approved_at DESC NULLS LAST, p.post_id DESC
         LIMIT %s OFFSET %s
@@ -16620,7 +16639,7 @@ _FEED_SQL = f"""
     SELECT
         pp.post_id, pp.content, pp.timestamp, pp.approved_at, pp.thread_from_post_id,
         pp.comment_count, pp.media_type,
-        pp.media_id, pp.explicit, pp.total_count, pp.vent_number, pp.revealed_sex,
+        pp.media_id, pp.explicit, pp.total_count, pp.vent_number, pp.revealed_sex, pp.deleted,
         u.user_id AS author_id,
         u.sex AS author_sex,
         u.avatar_emoji AS author_avatar,
@@ -16673,9 +16692,9 @@ _THREAD_ANCESTORS_SQL = """
         WHERE a.thread_from_post_id IS NOT NULL AND ch.depth < 25
     )
     SELECT ch.tip_id, ch.depth, a.post_id, a.vent_number, a.content, a.explicit, a.author_id,
-           a.approved_at, a.timestamp
+           a.approved_at, a.timestamp, COALESCE(a.deleted, FALSE) AS deleted
     FROM chain ch JOIN posts a ON a.post_id = ch.anc_id
-    WHERE a.approved = TRUE AND a.deleted = FALSE
+    WHERE a.approved = TRUE
     ORDER BY ch.tip_id, ch.depth ASC
 """
 
@@ -16697,9 +16716,10 @@ _THREAD_MEMBERS_SQL = """
         WHERE down.d < 50
     )
     SELECT DISTINCT p.post_id, p.vent_number, p.content, p.explicit, p.author_id,
+           COALESCE(p.deleted, FALSE) AS deleted,
            COALESCE(p.approved_at, p.timestamp) AS shown_at
     FROM down JOIN posts p ON p.post_id = down.post_id
-    WHERE p.approved = TRUE AND p.deleted = FALSE
+    WHERE p.approved = TRUE
     ORDER BY shown_at ASC, p.post_id ASC
 """
 
@@ -16735,7 +16755,10 @@ def _feed_day_label(ts):
 
 
 def _thread_preview(row, can_see_explicit, limit=140):
-    """Short preview of a thread member; explicit vents stay veiled for other viewers."""
+    """Short preview of a thread member; explicit vents stay veiled for other viewers.
+    A deleted vent never exposes its text (the row still holds it in the database)."""
+    if row.get('deleted'):
+        return "This vent has been deleted by the author.", False
     if row.get('explicit') and not can_see_explicit:
         return "", True
     text = (row.get('content') or '').strip()
@@ -16759,6 +16782,7 @@ def _build_thread_payload(post_id, viewer_id, viewer_is_admin):
             'vent_number': r.get('vent_number'),
             'preview': preview,
             'content_hidden': hidden,
+            'deleted': bool(r.get('deleted')),
             'time_ago': _feed_time_ago(r['shown_at']),
             'current': r['post_id'] == post_id,
         })
@@ -16804,12 +16828,19 @@ def mini_app_get_posts():
             
             category_list = post['categories'].split(',') if post['categories'] else ['Other']
             
-            is_explicit = bool(post.get('explicit'))
+            is_deleted = bool(post.get('deleted'))
+            is_explicit = bool(post.get('explicit')) and not is_deleted
             hide_content = is_explicit and not is_owner and not is_admin_viewer
-            if hide_content:
+            if is_deleted:
+                # Placeholder only: the real text/media still sit in the database, so they are
+                # never copied into the response (not even into full_content).
+                content_preview = "This vent has been deleted by the author."
+                post['content'] = content_preview
+                post['media_type'], post['media_id'] = 'text', None
+            elif hide_content:
                 content_preview = "This post contains explicit content that may not be suitable for all viewers."
 
-            reaction_counts = post.get('reaction_counts') or {}
+            reaction_counts = {} if is_deleted else (post.get('reaction_counts') or {})
             if isinstance(reaction_counts, str):  # jsonb normally arrives already parsed
                 reaction_counts = json.loads(reaction_counts)
             
@@ -16825,6 +16856,7 @@ def mini_app_get_posts():
                         'vent_number': r.get('vent_number'),
                         'preview': preview,
                         'content_hidden': hidden,
+                        'deleted': bool(r.get('deleted')),
                         'time_ago': _feed_time_ago(r.get('approved_at') or r['timestamp']),
                     })
                 thread = {'count': len(earlier) + 1, 'earlier': earlier}
@@ -16842,6 +16874,7 @@ def mini_app_get_posts():
                 'comments': post['comment_count'] or 0,
                 'unread_comments': post['unread_comments'],
                 'explicit': is_explicit,
+                'deleted': is_deleted,
                 'content_hidden': hide_content,
                 'author': {
                     'name': 'Anonymous',
@@ -16856,19 +16889,19 @@ def mini_app_get_posts():
                 'media_id': None if hide_content else post['media_id'],
                 'reactions': {
                     'counts': reaction_counts,
-                    'user_reaction': post.get('user_reaction')
+                    'user_reaction': None if is_deleted else post.get('user_reaction')
                 }
             })
 
-        # total_posts now counts exactly what the feed shows (approved AND not deleted).
+        # total_posts counts exactly what the feed shows (approved vents, deleted ones included as placeholders).
         if posts:
             total = int(posts[0]['total_count'])
         elif offset > 0:
             # Page past the end: the window count has no rows to ride on, so ask directly.
             total_row = db_fetch_one(
-                "SELECT COUNT(*) AS count FROM posts p WHERE p.approved = TRUE AND p.deleted = FALSE "
+                "SELECT COUNT(*) AS count FROM posts p WHERE p.approved = TRUE "
                 "AND NOT EXISTS (SELECT 1 FROM posts nx WHERE nx.thread_from_post_id = p.post_id "
-                "AND nx.approved = TRUE AND nx.deleted = FALSE)"
+                "AND nx.approved = TRUE)"
             )
             total = int(total_row['count']) if total_row else 0
         else:
