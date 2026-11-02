@@ -639,7 +639,22 @@ def init_db():
                         ON CONFLICT (user_id) DO UPDATE SET is_admin = TRUE
                     ''', (ADMIN_ID, "Admin"))
 
+                # ---------------- Precomputed aura scores ----------------
+                # Own savepoint: if this step fails, the rest of init_db still commits and the
+                # bot falls back to the formula (see get_user_ratings_batch).
+                scores_ok = False
+                c.execute("SAVEPOINT sp_user_scores")
+                try:
+                    ensure_user_scores(c)
+                    c.execute("RELEASE SAVEPOINT sp_user_scores")
+                    scores_ok = True
+                except Exception as e:
+                    c.execute("ROLLBACK TO SAVEPOINT sp_user_scores")
+                    logger.error(f"user_scores setup failed, scores will use the slow formula: {e}")
+
             conn.commit()
+            # Only after the commit: readers switch to the table once it is really there.
+            _USER_SCORES_STATE['ready'] = scores_ok
         logging.info("PostgreSQL database initialized successfully")
     except Exception as e:
         logging.error(f"Database initialization failed: {e}")
@@ -1383,6 +1398,249 @@ _SCORE_CTES_SQL = f"""
 """
 
 
+_USER_SCORES_STATE = {'ready': False}   # set by init_db once user_scores exists and is filled
+
+
+# ---- precomputed aura scores: the user_scores table ----
+# The score query above joins every post, comment and reaction of an author, and the feed, comments
+# and profile screens all need it. Instead of recomputing it on every read, user_scores holds one
+# row per user and Postgres triggers keep it current as posts, comments, reactions, followers and
+# blocks change (each trigger adds or removes exactly that row's contribution). Reads become a
+# primary-key lookup, whatever the size of the database.
+#
+# _SCORE_CTES_SQL stays the source of truth: it fills the table the first time and a periodic
+# reconcile (see user_scores_reconcile) repairs any drift, e.g. from a manual SQL edit.
+_USER_SCORE_TRIGGERS = (
+    ('us_trg_posts', 'posts', 'AFTER INSERT OR DELETE OR UPDATE OF approved, author_id', 'us_posts_trg'),
+    ('us_trg_comments', 'comments', 'AFTER INSERT OR DELETE OR UPDATE OF author_id', 'us_comments_trg'),
+    ('us_trg_reactions', 'reactions', 'AFTER INSERT OR DELETE OR UPDATE OF type, comment_id, post_id', 'us_reactions_trg'),
+    ('us_trg_followers', 'followers', 'AFTER INSERT OR DELETE', 'us_followers_trg'),
+    ('us_trg_blocks', 'blocks', 'AFTER INSERT OR DELETE', 'us_blocks_trg'),
+    ('us_trg_users', 'users', 'AFTER INSERT', 'us_users_trg'),
+)
+
+
+def _user_scores_function_sql():
+    """CREATE OR REPLACE statements for the trigger functions. Re-run on every start so the
+    reaction weights always match REACTION_WEIGHTS in this file."""
+    weight = _reaction_weight_case_sql('t')
+    return [
+        f"""
+        CREATE OR REPLACE FUNCTION us_reaction_weight(t TEXT) RETURNS INTEGER AS $$
+            SELECT {weight}
+        $$ LANGUAGE SQL IMMUTABLE
+        """,
+        """
+        CREATE OR REPLACE FUNCTION us_bump(uid TEXT, delta INTEGER) RETURNS VOID AS $$
+        BEGIN
+            IF uid IS NULL OR delta = 0 THEN RETURN; END IF;
+            INSERT INTO user_scores (user_id, score) VALUES (uid, delta)
+            ON CONFLICT (user_id) DO UPDATE SET score = user_scores.score + EXCLUDED.score;
+        END $$ LANGUAGE plpgsql
+        """,
+        """
+        CREATE OR REPLACE FUNCTION us_posts_trg() RETURNS TRIGGER AS $$
+        DECLARE moved INTEGER;
+        BEGIN
+            IF TG_OP = 'INSERT' THEN
+                IF NEW.approved IS TRUE THEN PERFORM us_bump(NEW.author_id, 10); END IF;
+                RETURN NEW;
+            ELSIF TG_OP = 'DELETE' THEN
+                IF OLD.approved IS TRUE THEN PERFORM us_bump(OLD.author_id, -10); END IF;
+                RETURN OLD;
+            END IF;
+            -- UPDATE of approved and/or author_id
+            IF OLD.approved IS NOT DISTINCT FROM NEW.approved
+               AND OLD.author_id IS NOT DISTINCT FROM NEW.author_id THEN
+                RETURN NEW;
+            END IF;
+            IF OLD.approved IS TRUE THEN PERFORM us_bump(OLD.author_id, -10); END IF;
+            IF NEW.approved IS TRUE THEN PERFORM us_bump(NEW.author_id, 10); END IF;
+            IF OLD.author_id IS DISTINCT FROM NEW.author_id THEN
+                -- reactions on the post itself follow the post to its new author
+                SELECT COALESCE(SUM(us_reaction_weight(r.type)), 0) INTO moved
+                FROM reactions r WHERE r.post_id = NEW.post_id;
+                PERFORM us_bump(OLD.author_id, -moved);
+                PERFORM us_bump(NEW.author_id, moved);
+            END IF;
+            RETURN NEW;
+        END $$ LANGUAGE plpgsql
+        """,
+        """
+        CREATE OR REPLACE FUNCTION us_comments_trg() RETURNS TRIGGER AS $$
+        DECLARE moved INTEGER;
+        BEGIN
+            IF TG_OP = 'INSERT' THEN
+                PERFORM us_bump(NEW.author_id, 2);
+                RETURN NEW;
+            ELSIF TG_OP = 'DELETE' THEN
+                PERFORM us_bump(OLD.author_id, -2);
+                RETURN OLD;
+            END IF;
+            IF OLD.author_id IS DISTINCT FROM NEW.author_id THEN
+                SELECT COALESCE(SUM(us_reaction_weight(r.type)), 0) INTO moved
+                FROM reactions r WHERE r.comment_id = NEW.comment_id;
+                PERFORM us_bump(OLD.author_id, -2 - moved);
+                PERFORM us_bump(NEW.author_id, 2 + moved);
+            END IF;
+            RETURN NEW;
+        END $$ LANGUAGE plpgsql
+        """,
+        """
+        CREATE OR REPLACE FUNCTION us_reactions_trg() RETURNS TRIGGER AS $$
+        DECLARE w INTEGER;
+        BEGIN
+            -- Mirrors the score query: a reaction counts for the author of its comment AND for
+            -- the author of its post, whichever of comment_id / post_id are set.
+            IF TG_OP IN ('DELETE', 'UPDATE') THEN
+                w := us_reaction_weight(OLD.type);
+                IF OLD.comment_id IS NOT NULL THEN
+                    PERFORM us_bump((SELECT c.author_id FROM comments c WHERE c.comment_id = OLD.comment_id), -w);
+                END IF;
+                IF OLD.post_id IS NOT NULL THEN
+                    PERFORM us_bump((SELECT p.author_id FROM posts p WHERE p.post_id = OLD.post_id), -w);
+                END IF;
+            END IF;
+            IF TG_OP IN ('INSERT', 'UPDATE') THEN
+                w := us_reaction_weight(NEW.type);
+                IF NEW.comment_id IS NOT NULL THEN
+                    PERFORM us_bump((SELECT c.author_id FROM comments c WHERE c.comment_id = NEW.comment_id), w);
+                END IF;
+                IF NEW.post_id IS NOT NULL THEN
+                    PERFORM us_bump((SELECT p.author_id FROM posts p WHERE p.post_id = NEW.post_id), w);
+                END IF;
+            END IF;
+            RETURN NULL;
+        END $$ LANGUAGE plpgsql
+        """,
+        """
+        CREATE OR REPLACE FUNCTION us_followers_trg() RETURNS TRIGGER AS $$
+        BEGIN
+            IF TG_OP = 'INSERT' THEN PERFORM us_bump(NEW.followed_id, 2);
+            ELSE PERFORM us_bump(OLD.followed_id, -2);
+            END IF;
+            RETURN NULL;
+        END $$ LANGUAGE plpgsql
+        """,
+        """
+        CREATE OR REPLACE FUNCTION us_blocks_trg() RETURNS TRIGGER AS $$
+        BEGIN
+            IF TG_OP = 'INSERT' THEN PERFORM us_bump(NEW.blocked_id, -10);
+            ELSE PERFORM us_bump(OLD.blocked_id, 10);
+            END IF;
+            RETURN NULL;
+        END $$ LANGUAGE plpgsql
+        """,
+        """
+        CREATE OR REPLACE FUNCTION us_users_trg() RETURNS TRIGGER AS $$
+        BEGIN
+            INSERT INTO user_scores (user_id, score) VALUES (NEW.user_id, 0)
+            ON CONFLICT (user_id) DO NOTHING;
+            RETURN NULL;
+        END $$ LANGUAGE plpgsql
+        """,
+    ]
+
+
+# Fills (or refreshes) every user's row from the formula. Run once when the table is created.
+_USER_SCORES_BACKFILL_SQL = f"""
+    INSERT INTO user_scores (user_id, score)
+    WITH score_authors AS (SELECT user_id AS author_id FROM users),
+    {_SCORE_CTES_SQL}
+    SELECT author_id, score FROM author_scores
+    ON CONFLICT (user_id) DO UPDATE SET score = EXCLUDED.score
+"""
+
+# Compares the table with the formula and fixes only rows that are off. The UPDATE is guarded by
+# the value that was compared, so a score that changed in the meantime is never overwritten.
+_USER_SCORES_RECONCILE_SQL = f"""
+    WITH score_authors AS (SELECT user_id AS author_id FROM users),
+    {_SCORE_CTES_SQL},
+    fix AS (
+        SELECT s.author_id, s.score, us.score AS old_score
+        FROM author_scores s
+        LEFT JOIN user_scores us ON us.user_id = s.author_id
+        WHERE us.user_id IS NULL OR us.score <> s.score
+    ),
+    upd AS (
+        UPDATE user_scores u SET score = f.score
+        FROM fix f
+        WHERE u.user_id = f.author_id AND f.old_score IS NOT NULL AND u.score = f.old_score
+        RETURNING u.user_id
+    ),
+    ins AS (
+        INSERT INTO user_scores (user_id, score)
+        SELECT author_id, score FROM fix WHERE old_score IS NULL
+        ON CONFLICT (user_id) DO NOTHING
+        RETURNING user_id
+    )
+    SELECT (SELECT COUNT(*) FROM fix) AS mismatched,
+           (SELECT COUNT(*) FROM upd) AS updated,
+           (SELECT COUNT(*) FROM ins) AS inserted
+"""
+
+
+def ensure_user_scores(c):
+    """Create user_scores, its trigger functions and triggers, and fill it the first time.
+    `c` is the cursor of init_db's transaction. The triggers are created BEFORE the backfill so
+    their table locks (held until commit) keep writers out while the table is filled - nothing
+    can change a score between the snapshot and the first trigger firing."""
+    c.execute("SELECT to_regclass('user_scores') IS NOT NULL")
+    row = c.fetchone()
+    existed = bool(row[0] if not isinstance(row, dict) else list(row.values())[0])
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_scores (
+            user_id TEXT PRIMARY KEY,
+            score INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    # The leaderboard reads the top rows straight off this index.
+    c.execute("CREATE INDEX IF NOT EXISTS idx_user_scores_rank ON user_scores (score DESC, user_id)")
+
+    for stmt in _user_scores_function_sql():
+        c.execute(stmt)
+
+    c.execute("SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND tgname LIKE 'us\\_trg\\_%'")
+    have = {(r['tgname'] if isinstance(r, dict) else r[0]) for r in c.fetchall()}
+    for name, table, events, fn in _USER_SCORE_TRIGGERS:
+        if name not in have:
+            c.execute(f"CREATE TRIGGER {name} {events} ON {table} FOR EACH ROW EXECUTE FUNCTION {fn}()")
+
+    if not existed:
+        logger.info("Backfilling user_scores from the score formula")
+        c.execute(_USER_SCORES_BACKFILL_SQL)
+        c.execute("SELECT COUNT(*) FROM user_scores")
+        n = c.fetchone()
+        logger.info(f"user_scores filled for {n[0] if not isinstance(n, dict) else list(n.values())[0]} users")
+
+
+def user_scores_reconcile():
+    """Repair any drift between user_scores and the formula. Returns the number of rows that were
+    off (0 on a healthy database)."""
+    row = db_fetch_one(_USER_SCORES_RECONCILE_SQL)
+    off = int(row['mismatched']) if row else 0
+    if off:
+        logger.warning(f"user_scores reconcile: {off} rows were off "
+                       f"({int(row['updated'])} updated, {int(row['inserted'])} inserted)")
+        _leaderboard_cache_bust()
+        calculate_user_rating.cache_clear()
+    return off
+
+
+_USER_SCORES_RECONCILE_EVERY = max(600, int(os.getenv('SCORE_RECONCILE_SECONDS', '10800')))
+
+
+def _user_scores_reconcile_loop():
+    time.sleep(300)   # let startup settle first
+    while True:
+        try:
+            user_scores_reconcile()
+        except Exception as e:
+            logger.warning(f"user_scores reconcile failed: {e}")
+        time.sleep(_USER_SCORES_RECONCILE_EVERY)
+
+
 # ---- leaderboard cache (60s, busted whenever anything that moves a score changes) ----
 _LEADERBOARD_TTL_SECONDS = 60
 _leaderboard_gen = 0
@@ -1399,17 +1657,28 @@ def _leaderboard_cache_bust():
 
 @lru_cache(maxsize=16)
 def _leaderboard_rows_cached(top_n, gen, bucket):
-    rows = db_fetch_all(f"""
-        WITH score_authors AS (
-            SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
-        ),
-        {_SCORE_CTES_SQL}
-        SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge, COALESCE(u.hide_aura, FALSE) AS hide_aura, s.score AS total
-        FROM author_scores s
-        JOIN users u ON u.user_id = s.author_id
-        ORDER BY s.score DESC, u.user_id
-        LIMIT %s
-    """, (top_n,))
+    if _USER_SCORES_STATE['ready']:
+        # Top rows straight off idx_user_scores_rank; no aggregation at all.
+        rows = db_fetch_all("""
+            SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge, COALESCE(u.hide_aura, FALSE) AS hide_aura, s.score AS total
+            FROM user_scores s
+            JOIN users u ON u.user_id = s.user_id
+            WHERE u.is_admin = FALSE
+            ORDER BY s.score DESC, s.user_id
+            LIMIT %s
+        """, (top_n,))
+    else:
+        rows = db_fetch_all(f"""
+            WITH score_authors AS (
+                SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
+            ),
+            {_SCORE_CTES_SQL}
+            SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge, COALESCE(u.hide_aura, FALSE) AS hide_aura, s.score AS total
+            FROM author_scores s
+            JOIN users u ON u.user_id = s.author_id
+            ORDER BY s.score DESC, u.user_id
+            LIMIT %s
+        """, (top_n,))
     return tuple(dict(r) for r in (rows or []))
 
 
@@ -1429,17 +1698,34 @@ def get_my_alltime_rank(user_id):
     hit = _MY_RANK_CACHE.get(key)
     if hit and time.time() - hit[0] < 60:
         return hit[1]
-    row = db_fetch_one(f"""
-        WITH score_authors AS (
-            SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
-        ),
-        {_SCORE_CTES_SQL}
-        SELECT r.rank, r.score FROM (
-            SELECT s.author_id, s.score,
-                   ROW_NUMBER() OVER (ORDER BY s.score DESC, s.author_id) AS rank
-            FROM author_scores s
-        ) r WHERE r.author_id = %s
-    """, (key,))
+    if _USER_SCORES_STATE['ready']:
+        # Rank = 1 + how many non-admins sort ahead of this user (higher score, or same score
+        # and a smaller id): the same order as the leaderboard, without numbering every user.
+        row = db_fetch_one("""
+            WITH me AS (
+                SELECT s.score FROM user_scores s
+                JOIN users u ON u.user_id = s.user_id
+                WHERE s.user_id = %s AND u.is_admin = FALSE
+            )
+            SELECT me.score AS score,
+                   1 + (SELECT COUNT(*) FROM user_scores s2
+                        JOIN users u2 ON u2.user_id = s2.user_id
+                        WHERE u2.is_admin = FALSE
+                          AND (s2.score > me.score OR (s2.score = me.score AND s2.user_id < %s))) AS rank
+            FROM me
+        """, (key, key))
+    else:
+        row = db_fetch_one(f"""
+            WITH score_authors AS (
+                SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
+            ),
+            {_SCORE_CTES_SQL}
+            SELECT r.rank, r.score FROM (
+                SELECT s.author_id, s.score,
+                       ROW_NUMBER() OVER (ORDER BY s.score DESC, s.author_id) AS rank
+                FROM author_scores s
+            ) r WHERE r.author_id = %s
+        """, (key,))
     res = (int(row['rank']), int(row['score'] or 0)) if row else (None, 0)
     if len(_MY_RANK_CACHE) > 5000:
         _MY_RANK_CACHE.clear()
@@ -2352,25 +2638,21 @@ def calculate_user_rating(user_id):
     # _SCORE_CTES_SQL so every screen agrees):
     #   Approved posts +10 | Comments +2 | Reactions per REACTION_WEIGHTS (on comments and
     #   posts) | Followers +2 | Blocks received -10
-    row = db_fetch_one(
-        f"WITH score_authors AS (SELECT %s::text AS author_id), {_SCORE_CTES_SQL} "
-        "SELECT score FROM author_scores",
-        (str(user_id),)
-    )
+    if _USER_SCORES_STATE['ready']:
+        row = db_fetch_one("SELECT score FROM user_scores WHERE user_id = %s", (str(user_id),))
+    else:
+        row = db_fetch_one(
+            f"WITH score_authors AS (SELECT %s::text AS author_id), {_SCORE_CTES_SQL} "
+            "SELECT score FROM author_scores",
+            (str(user_id),)
+        )
     return int(row['score']) if row and row['score'] is not None else 0
 
-# Aura scores shown next to comments: cached per author for a short time. The score query joins
-# every post/comment/reaction of each author, so recomputing it on every comments-page open and
-# every Older/Newer tap was the slowest part of loading comments. Aura on a comment list being up
-# to _RATING_TTL_SECONDS old is fine (the leaderboard itself is cached for 60s).
-_RATING_TTL_SECONDS = 90
-_rating_cache = {}            # str(user_id) -> (score, expires_at_monotonic)
-_rating_cache_lock = threading.Lock()
-
 def get_user_ratings_batch(user_ids):
-    """Same scoring as calculate_user_rating(), for many users in ONE query (it used to be
-    5 GROUP-BY queries). Returns {user_id: score} keyed by the ids passed in. Scores computed in
-    the last _RATING_TTL_SECONDS come from memory; only the rest hit the database."""
+    """Aura scores for many users in ONE query. Returns {user_id: score} keyed by the ids passed
+    in (0 for a user with no row). Reads the precomputed user_scores table: a primary-key lookup
+    per author, always current, so the 90-second in-memory cache that used to hide the cost of
+    the old multi-join query is gone. Falls back to the formula only if the table is unavailable."""
     originals = {}
     for uid in user_ids:
         if uid is not None:
@@ -2378,38 +2660,25 @@ def get_user_ratings_batch(user_ids):
     if not originals:
         return {}
     ratings = {orig: 0 for orig in originals.values()}
-    now = time.monotonic()
-    missing = []
-    with _rating_cache_lock:
-        for key, orig in originals.items():
-            hit = _rating_cache.get(key)
-            if hit and hit[1] > now:
-                ratings[orig] = hit[0]
-            else:
-                missing.append(key)
-    if not missing:
-        return ratings
+    keys = list(originals)
 
     t0 = time.monotonic()
-    rows = db_fetch_all(
-        f"WITH score_authors AS (SELECT UNNEST(%s::text[]) AS author_id), {_SCORE_CTES_SQL} "
-        "SELECT author_id, score FROM author_scores",
-        (missing,)
-    )
-    logger.info(f"ratings query for {len(missing)} authors took {(time.monotonic() - t0) * 1000:.0f}ms")
-    fresh = {}
+    if _USER_SCORES_STATE['ready']:
+        rows = db_fetch_all(
+            "SELECT user_id AS author_id, score FROM user_scores WHERE user_id = ANY(%s::text[])",
+            (keys,)
+        )
+    else:
+        rows = db_fetch_all(
+            f"WITH score_authors AS (SELECT UNNEST(%s::text[]) AS author_id), {_SCORE_CTES_SQL} "
+            "SELECT author_id, score FROM author_scores",
+            (keys,)
+        )
+    logger.info(f"ratings query for {len(keys)} authors took {(time.monotonic() - t0) * 1000:.0f}ms")
     for row in rows or []:
-        key = str(row['author_id'])
-        fresh[key] = int(row['score'] or 0)
-        orig = originals.get(key)
+        orig = originals.get(str(row['author_id']))
         if orig is not None:
-            ratings[orig] = fresh[key]
-    with _rating_cache_lock:
-        if len(_rating_cache) > 20000:
-            _rating_cache.clear()
-        expires = time.monotonic() + _RATING_TTL_SECONDS
-        for key in missing:
-            _rating_cache[key] = (fresh.get(key, 0), expires)
+            ratings[orig] = int(row['score'] or 0)
     return ratings
 
 def calculate_top_weekly_contributors(limit=3):
@@ -2695,16 +2964,30 @@ def format_time_ago(timestamp):
 def get_user_rank(user_id):
     """1-based leaderboard rank of a (non-admin) user, or None. One query: the shared score
     CTE plus RANK() over it - no more loading every user into Python to find one position."""
-    row = db_fetch_one(f"""
-        WITH score_authors AS (
-            SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
-        ),
-        {_SCORE_CTES_SQL},
-        ranked AS (
-            SELECT author_id, RANK() OVER (ORDER BY score DESC) AS rnk FROM author_scores
-        )
-        SELECT rnk FROM ranked WHERE author_id = %s
-    """, (str(user_id),))
+    if _USER_SCORES_STATE['ready']:
+        # RANK() semantics (ties share a rank): 1 + non-admins with a strictly higher score.
+        row = db_fetch_one("""
+            WITH me AS (
+                SELECT s.score FROM user_scores s
+                JOIN users u ON u.user_id = s.user_id
+                WHERE s.user_id = %s AND u.is_admin = FALSE
+            )
+            SELECT 1 + (SELECT COUNT(*) FROM user_scores s2
+                        JOIN users u2 ON u2.user_id = s2.user_id
+                        WHERE u2.is_admin = FALSE AND s2.score > me.score) AS rnk
+            FROM me
+        """, (str(user_id),))
+    else:
+        row = db_fetch_one(f"""
+            WITH score_authors AS (
+                SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
+            ),
+            {_SCORE_CTES_SQL},
+            ranked AS (
+                SELECT author_id, RANK() OVER (ORDER BY score DESC) AS rnk FROM author_scores
+            )
+            SELECT rnk FROM ranked WHERE author_id = %s
+        """, (str(user_id),))
     return int(row['rnk']) if row else None
 
 def build_channel_post_keyboard(post_id: int, comment_count: int, explicit: bool = False):
@@ -6651,6 +6934,42 @@ def _fetch_comments_page_data(post_id, per_page, offset, user_id):
         'is_viewer_admin': is_viewer_admin,
     }
 
+# ---- comments page delivery: first few comments now, the rest queued per chat ----
+# A comments page is up to 10 messages that Telegram must receive one after another. Sending them
+# all inside the handler made the page feel slow; now the first COMMENTS_SEND_NOW go out
+# immediately and the remainder (plus the Older/Newer footer) is sent by a background task.
+# Per chat, ONE sender runs at a time (a lock), and every page request takes a ticket: if a newer
+# request arrives (double tap, quick Older/Newer, another post) the older one stops after the
+# message it is on and never sends its footer, so two pages can't interleave. Other chats are
+# never held up.
+COMMENTS_SEND_NOW = 4
+_comment_ticket = {}    # chat_id -> number of the newest page request
+_comment_locks = {}     # chat_id -> asyncio.Lock held while that chat is being sent to
+
+
+def _comment_lock(chat_id):
+    lock = _comment_locks.get(chat_id)
+    if lock is None:
+        if len(_comment_locks) > 5000:       # forget idle chats; a fresh lock is always safe then
+            for cid in [c for c, l in _comment_locks.items() if not l.locked()]:
+                _comment_locks.pop(cid, None)
+        lock = _comment_locks[chat_id] = asyncio.Lock()
+    return lock
+
+
+def _start_comment_tail(coro):
+    """Run the queued remainder of a page in the background (reference kept until it ends)."""
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+
+    def _done(t):
+        _bg_tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            logger.error(f"Queued comments task crashed: {t.exception()}")
+    task.add_done_callback(_done)
+    return task
+
+
 async def show_comments_page(update, context, post_id, page=1, reply_pages=None):
     if update.effective_chat is None:
         logger.error("Cannot determine chat from update: %s", update)
@@ -6659,6 +6978,12 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     # Show typing animation
     await typing_animation(context, chat_id, 0.5)
+
+    # Ticket for this request; a later request for the same chat makes this one stand down
+    # (see _comment_ticket above).
+    ticket = _comment_ticket[chat_id] = _comment_ticket.get(chat_id, 0) + 1
+    def _superseded():
+        return _comment_ticket.get(chat_id) != ticket
 
     user_id = str(update.effective_user.id)
     per_page = 10
@@ -6707,18 +7032,19 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     context._user_id = user_id
     msg_ids = {}
 
-    for comment in comments:
+    def _comment_view(comment):
+        """(author_text, reply_to_id, pre-fetched reaction data) for one comment of this page."""
         comment_id = comment['comment_id']
         parent_id = comment.get('parent_comment_id', 0)
-        
+
         # User cached or joined data
         rating = ratings_map.get(comment['author_id'], 0)
         is_author = str(comment['author_id']) == str(post_author_id)
-        
+
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{comment['author_id']}_{post_id}"
         show_aura = not comment.get('hide_aura') or str(user_id) == str(comment['author_id']) or is_viewer_admin
         aura_text = f"_Aura_ ⚡ {escape_markdown(str(rating), version=2)} pts" if (not comment.get('is_admin') and show_aura) else ""
-        
+
         if is_author:
             # Vent author: show sex emoji + clickable "Vent author" (no custom avatar, no aura)
             sex_emoji = comment.get('sex') or '👤'
@@ -6734,43 +7060,83 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             author_label = f"[_{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}_]({profile_link})"
             author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
-        # Threading logic - FIX: check current batch msg_ids first
+        # Threading logic - check this page's already-sent messages first
         reply_to_id = msg_ids.get(parent_id) or parent_msg_ids.get(parent_id)
-        
-        # Pre-fetched data for button builder
         pref = reaction_data.get(comment_id, {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
-        
+        return author_text, reply_to_id, pref
+
+    async def _send_comments(batch):
         # persist=False: the loop only sends. Telegram needs ONE ordered message after another
         # (arrival order = display order, so this can't be parallelised), which makes every
-        # millisecond between two sends visible. The message-id bookkeeping is written once,
-        # in a batch, after the last comment is out (see persist_comment_msg_ids below).
-        new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id, pre_fetched_data=pref, persist=False)
-        if new_msg_id:
-            msg_ids[comment_id] = new_msg_id
+        # millisecond between two sends visible. The message-id bookkeeping is written in a batch
+        # (persist_comment_msg_ids) once the messages are out.
+        # Returns False if a newer request took over (the caller then stops).
+        for comment in batch:
+            if _superseded():
+                return False
+            author_text, reply_to_id, pref = _comment_view(comment)
+            new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id,
+                                                    pre_fetched_data=pref, persist=False)
+            if new_msg_id:
+                msg_ids[comment['comment_id']] = new_msg_id
+        return True
 
+    async def _send_footer():
+        # Pagination / Add comment button
+        is_last_page = page >= total_pages
+
+        if total_pages > 1:
+            nav_buttons = []
+            if page > 1: nav_buttons.append(InlineKeyboardButton("Older", callback_data=f"viewcomments_{post_id}_{page-1}"))
+            if page < total_pages: nav_buttons.append(InlineKeyboardButton("Newer", callback_data=f"viewcomments_{post_id}_{page+1}"))
+            rows = [nav_buttons]
+            if is_last_page:
+                rows.append([InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")])
+            await context.bot.send_message(chat_id, f"Page {page}/{total_pages}", reply_markup=InlineKeyboardMarkup(rows))
+        elif is_last_page:
+            # Single page — standalone add comment button
+            await context.bot.send_message(
+                chat_id,
+                "Add your thoughts to the conversation",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")]])
+            )
+
+    # SPEED: the first COMMENTS_SEND_NOW comments go out right here so the page appears at once;
+    # the rest are sent by a background task that then adds the page footer. The handler returns
+    # as soon as the first batch is out.
+    head, tail = comments[:COMMENTS_SEND_NOW], comments[COMMENTS_SEND_NOW:]
+    async with _comment_lock(chat_id):
+        if _superseded():
+            return
+        await _send_comments(head)
+    _head_ms = (time.monotonic() - _t_start) * 1000 - _fetch_ms
     if msg_ids:
-        db_background(persist_comment_msg_ids, chat_id, list(msg_ids.items()))
+        db_background(persist_comment_msg_ids, chat_id, list(msg_ids.items()))   # replies can thread already
     logger.info(f"comments post={post_id} page={page}: data {_fetch_ms:.0f}ms, "
-                f"sent {len(msg_ids)} in {(time.monotonic() - _t_start) * 1000 - _fetch_ms:.0f}ms")
+                f"first {len(msg_ids)} sent in {_head_ms:.0f}ms, {len(tail)} queued")
 
-    # Pagination Add comment button
-    is_last_page = page >= total_pages
+    if not tail:
+        async with _comment_lock(chat_id):
+            if not _superseded():
+                await _send_footer()
+        return
 
-    if total_pages > 1:
-        nav_buttons = []
-        if page > 1: nav_buttons.append(InlineKeyboardButton("Older", callback_data=f"viewcomments_{post_id}_{page-1}"))
-        if page < total_pages: nav_buttons.append(InlineKeyboardButton("Newer", callback_data=f"viewcomments_{post_id}_{page+1}"))
-        rows = [nav_buttons]
-        if is_last_page:
-            rows.append([InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")])
-        await context.bot.send_message(chat_id, f"Page {page}/{total_pages}", reply_markup=InlineKeyboardMarkup(rows))
-    elif is_last_page:
-        # Single page — standalone add comment button
-        await context.bot.send_message(
-            chat_id,
-            "Add your thoughts to the conversation",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")]])
-        )
+    async def _finish_comments_tail():
+        sent_before = set(msg_ids)
+        try:
+            async with _comment_lock(chat_id):
+                if await _send_comments(tail):
+                    await _send_footer()
+        except Exception as e:
+            logger.error(f"Queued comments for chat {chat_id} post {post_id} failed: {e}")
+        finally:
+            late = [(cid, mid) for cid, mid in msg_ids.items() if cid not in sent_before]
+            if late:
+                db_background(persist_comment_msg_ids, chat_id, late)
+
+    _start_comment_tail(_finish_comments_tail())
+
+
 async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None, rating_override=None, show_aura=None):
     """Send a single reply message with proper formatting using pre-fetched user data if available"""
     # Use joined data if available, else fetch
@@ -12136,6 +12502,10 @@ def main():
     
     
     
+    # Keep the precomputed aura scores honest: a periodic check that repairs any drift.
+    if _USER_SCORES_STATE['ready']:
+        threading.Thread(target=_user_scores_reconcile_loop, name="user-scores-reconcile", daemon=True).start()
+
     # Start Flask server in a separate thread for Render
     port = int(os.environ.get('PORT', 5000))
     threading.Thread(
@@ -16631,11 +17001,7 @@ _FEED_SQL = f"""
           )
         ORDER BY p.approved_at DESC NULLS LAST, p.post_id DESC
         LIMIT %s OFFSET %s
-    ),
-    score_authors AS (
-        SELECT DISTINCT author_id FROM page_posts
-    ),
-    {_SCORE_CTES_SQL}
+    )
     SELECT
         pp.post_id, pp.content, pp.timestamp, pp.approved_at, pp.thread_from_post_id,
         pp.comment_count, pp.media_type,
@@ -16674,10 +17040,21 @@ _FEED_SQL = f"""
         SELECT r.type FROM reactions r
         WHERE r.post_id = pp.post_id AND r.user_id = %s LIMIT 1
     ) ur ON TRUE
-    LEFT JOIN author_scores asr ON asr.author_id = pp.author_id
+    LEFT JOIN user_scores asr ON asr.user_id = pp.author_id
     LEFT JOIN users v ON v.user_id = %s
     ORDER BY pp.approved_at DESC NULLS LAST, pp.post_id DESC
 """
+
+# Same page query, scoring authors with the formula instead of the user_scores table. Only used
+# if user_scores could not be set up at startup.
+_FEED_SQL_FORMULA = _FEED_SQL.replace(
+    "    )\n    SELECT\n        pp.post_id",
+    "    ),\n    score_authors AS (\n        SELECT DISTINCT author_id FROM page_posts\n    ),\n"
+    + _SCORE_CTES_SQL + "\n    SELECT\n        pp.post_id", 1
+).replace(
+    "LEFT JOIN user_scores asr ON asr.user_id = pp.author_id",
+    "LEFT JOIN author_scores asr ON asr.author_id = pp.author_id"
+)
 
 # Earlier vents of each thread tip on the current page, newest first (depth 1 = direct parent).
 # Walks thread_from_post_id upward; depth-capped so a bad cycle can never loop forever.
@@ -16799,7 +17176,8 @@ def mini_app_get_posts():
         per_page = _clamp_int(request.args.get('per_page'), 1, 50, 10)
         offset = (page - 1) * per_page
 
-        posts = db_fetch_all(_FEED_SQL, (per_page, offset, uid, uid, uid))
+        posts = db_fetch_all(_FEED_SQL if _USER_SCORES_STATE['ready'] else _FEED_SQL_FORMULA,
+                              (per_page, offset, uid, uid, uid))
 
         formatted_posts = []
         is_admin_viewer = bool(posts and posts[0].get('viewer_is_admin'))
