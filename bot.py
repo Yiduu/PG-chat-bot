@@ -606,6 +606,16 @@ def init_db():
                     logger.info("Adding missing column: deleted to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN deleted BOOLEAN DEFAULT FALSE")
 
+                # Deleted vents: when/why a vent was deleted. deleted_reason is 'author' or 'admin' (NULL on older rows = the author);
+                # deleted_at starts the 24-hour restore window (NULL on older rows = not restorable).
+                for col_name, col_type in [
+                    ('deleted_at', 'TIMESTAMP DEFAULT NULL'),
+                    ('deleted_reason', 'TEXT DEFAULT NULL'),
+                ]:
+                    if ('posts', col_name) not in existing_columns:
+                        logger.info(f"Adding missing column: {col_name} to posts table")
+                        c.execute(f"ALTER TABLE posts ADD COLUMN {col_name} {col_type}")
+
                 # Check for 'explicit' column in posts
                 if ('posts', 'explicit') not in existing_columns:
                     logger.info("Adding missing column: explicit to posts table")
@@ -639,22 +649,7 @@ def init_db():
                         ON CONFLICT (user_id) DO UPDATE SET is_admin = TRUE
                     ''', (ADMIN_ID, "Admin"))
 
-                # ---------------- Precomputed aura scores ----------------
-                # Own savepoint: if this step fails, the rest of init_db still commits and the
-                # bot falls back to the formula (see get_user_ratings_batch).
-                scores_ok = False
-                c.execute("SAVEPOINT sp_user_scores")
-                try:
-                    ensure_user_scores(c)
-                    c.execute("RELEASE SAVEPOINT sp_user_scores")
-                    scores_ok = True
-                except Exception as e:
-                    c.execute("ROLLBACK TO SAVEPOINT sp_user_scores")
-                    logger.error(f"user_scores setup failed, scores will use the slow formula: {e}")
-
             conn.commit()
-            # Only after the commit: readers switch to the table once it is really there.
-            _USER_SCORES_STATE['ready'] = scores_ok
         logging.info("PostgreSQL database initialized successfully")
     except Exception as e:
         logging.error(f"Database initialization failed: {e}")
@@ -1398,249 +1393,6 @@ _SCORE_CTES_SQL = f"""
 """
 
 
-_USER_SCORES_STATE = {'ready': False}   # set by init_db once user_scores exists and is filled
-
-
-# ---- precomputed aura scores: the user_scores table ----
-# The score query above joins every post, comment and reaction of an author, and the feed, comments
-# and profile screens all need it. Instead of recomputing it on every read, user_scores holds one
-# row per user and Postgres triggers keep it current as posts, comments, reactions, followers and
-# blocks change (each trigger adds or removes exactly that row's contribution). Reads become a
-# primary-key lookup, whatever the size of the database.
-#
-# _SCORE_CTES_SQL stays the source of truth: it fills the table the first time and a periodic
-# reconcile (see user_scores_reconcile) repairs any drift, e.g. from a manual SQL edit.
-_USER_SCORE_TRIGGERS = (
-    ('us_trg_posts', 'posts', 'AFTER INSERT OR DELETE OR UPDATE OF approved, author_id', 'us_posts_trg'),
-    ('us_trg_comments', 'comments', 'AFTER INSERT OR DELETE OR UPDATE OF author_id', 'us_comments_trg'),
-    ('us_trg_reactions', 'reactions', 'AFTER INSERT OR DELETE OR UPDATE OF type, comment_id, post_id', 'us_reactions_trg'),
-    ('us_trg_followers', 'followers', 'AFTER INSERT OR DELETE', 'us_followers_trg'),
-    ('us_trg_blocks', 'blocks', 'AFTER INSERT OR DELETE', 'us_blocks_trg'),
-    ('us_trg_users', 'users', 'AFTER INSERT', 'us_users_trg'),
-)
-
-
-def _user_scores_function_sql():
-    """CREATE OR REPLACE statements for the trigger functions. Re-run on every start so the
-    reaction weights always match REACTION_WEIGHTS in this file."""
-    weight = _reaction_weight_case_sql('t')
-    return [
-        f"""
-        CREATE OR REPLACE FUNCTION us_reaction_weight(t TEXT) RETURNS INTEGER AS $$
-            SELECT {weight}
-        $$ LANGUAGE SQL IMMUTABLE
-        """,
-        """
-        CREATE OR REPLACE FUNCTION us_bump(uid TEXT, delta INTEGER) RETURNS VOID AS $$
-        BEGIN
-            IF uid IS NULL OR delta = 0 THEN RETURN; END IF;
-            INSERT INTO user_scores (user_id, score) VALUES (uid, delta)
-            ON CONFLICT (user_id) DO UPDATE SET score = user_scores.score + EXCLUDED.score;
-        END $$ LANGUAGE plpgsql
-        """,
-        """
-        CREATE OR REPLACE FUNCTION us_posts_trg() RETURNS TRIGGER AS $$
-        DECLARE moved INTEGER;
-        BEGIN
-            IF TG_OP = 'INSERT' THEN
-                IF NEW.approved IS TRUE THEN PERFORM us_bump(NEW.author_id, 10); END IF;
-                RETURN NEW;
-            ELSIF TG_OP = 'DELETE' THEN
-                IF OLD.approved IS TRUE THEN PERFORM us_bump(OLD.author_id, -10); END IF;
-                RETURN OLD;
-            END IF;
-            -- UPDATE of approved and/or author_id
-            IF OLD.approved IS NOT DISTINCT FROM NEW.approved
-               AND OLD.author_id IS NOT DISTINCT FROM NEW.author_id THEN
-                RETURN NEW;
-            END IF;
-            IF OLD.approved IS TRUE THEN PERFORM us_bump(OLD.author_id, -10); END IF;
-            IF NEW.approved IS TRUE THEN PERFORM us_bump(NEW.author_id, 10); END IF;
-            IF OLD.author_id IS DISTINCT FROM NEW.author_id THEN
-                -- reactions on the post itself follow the post to its new author
-                SELECT COALESCE(SUM(us_reaction_weight(r.type)), 0) INTO moved
-                FROM reactions r WHERE r.post_id = NEW.post_id;
-                PERFORM us_bump(OLD.author_id, -moved);
-                PERFORM us_bump(NEW.author_id, moved);
-            END IF;
-            RETURN NEW;
-        END $$ LANGUAGE plpgsql
-        """,
-        """
-        CREATE OR REPLACE FUNCTION us_comments_trg() RETURNS TRIGGER AS $$
-        DECLARE moved INTEGER;
-        BEGIN
-            IF TG_OP = 'INSERT' THEN
-                PERFORM us_bump(NEW.author_id, 2);
-                RETURN NEW;
-            ELSIF TG_OP = 'DELETE' THEN
-                PERFORM us_bump(OLD.author_id, -2);
-                RETURN OLD;
-            END IF;
-            IF OLD.author_id IS DISTINCT FROM NEW.author_id THEN
-                SELECT COALESCE(SUM(us_reaction_weight(r.type)), 0) INTO moved
-                FROM reactions r WHERE r.comment_id = NEW.comment_id;
-                PERFORM us_bump(OLD.author_id, -2 - moved);
-                PERFORM us_bump(NEW.author_id, 2 + moved);
-            END IF;
-            RETURN NEW;
-        END $$ LANGUAGE plpgsql
-        """,
-        """
-        CREATE OR REPLACE FUNCTION us_reactions_trg() RETURNS TRIGGER AS $$
-        DECLARE w INTEGER;
-        BEGIN
-            -- Mirrors the score query: a reaction counts for the author of its comment AND for
-            -- the author of its post, whichever of comment_id / post_id are set.
-            IF TG_OP IN ('DELETE', 'UPDATE') THEN
-                w := us_reaction_weight(OLD.type);
-                IF OLD.comment_id IS NOT NULL THEN
-                    PERFORM us_bump((SELECT c.author_id FROM comments c WHERE c.comment_id = OLD.comment_id), -w);
-                END IF;
-                IF OLD.post_id IS NOT NULL THEN
-                    PERFORM us_bump((SELECT p.author_id FROM posts p WHERE p.post_id = OLD.post_id), -w);
-                END IF;
-            END IF;
-            IF TG_OP IN ('INSERT', 'UPDATE') THEN
-                w := us_reaction_weight(NEW.type);
-                IF NEW.comment_id IS NOT NULL THEN
-                    PERFORM us_bump((SELECT c.author_id FROM comments c WHERE c.comment_id = NEW.comment_id), w);
-                END IF;
-                IF NEW.post_id IS NOT NULL THEN
-                    PERFORM us_bump((SELECT p.author_id FROM posts p WHERE p.post_id = NEW.post_id), w);
-                END IF;
-            END IF;
-            RETURN NULL;
-        END $$ LANGUAGE plpgsql
-        """,
-        """
-        CREATE OR REPLACE FUNCTION us_followers_trg() RETURNS TRIGGER AS $$
-        BEGIN
-            IF TG_OP = 'INSERT' THEN PERFORM us_bump(NEW.followed_id, 2);
-            ELSE PERFORM us_bump(OLD.followed_id, -2);
-            END IF;
-            RETURN NULL;
-        END $$ LANGUAGE plpgsql
-        """,
-        """
-        CREATE OR REPLACE FUNCTION us_blocks_trg() RETURNS TRIGGER AS $$
-        BEGIN
-            IF TG_OP = 'INSERT' THEN PERFORM us_bump(NEW.blocked_id, -10);
-            ELSE PERFORM us_bump(OLD.blocked_id, 10);
-            END IF;
-            RETURN NULL;
-        END $$ LANGUAGE plpgsql
-        """,
-        """
-        CREATE OR REPLACE FUNCTION us_users_trg() RETURNS TRIGGER AS $$
-        BEGIN
-            INSERT INTO user_scores (user_id, score) VALUES (NEW.user_id, 0)
-            ON CONFLICT (user_id) DO NOTHING;
-            RETURN NULL;
-        END $$ LANGUAGE plpgsql
-        """,
-    ]
-
-
-# Fills (or refreshes) every user's row from the formula. Run once when the table is created.
-_USER_SCORES_BACKFILL_SQL = f"""
-    INSERT INTO user_scores (user_id, score)
-    WITH score_authors AS (SELECT user_id AS author_id FROM users),
-    {_SCORE_CTES_SQL}
-    SELECT author_id, score FROM author_scores
-    ON CONFLICT (user_id) DO UPDATE SET score = EXCLUDED.score
-"""
-
-# Compares the table with the formula and fixes only rows that are off. The UPDATE is guarded by
-# the value that was compared, so a score that changed in the meantime is never overwritten.
-_USER_SCORES_RECONCILE_SQL = f"""
-    WITH score_authors AS (SELECT user_id AS author_id FROM users),
-    {_SCORE_CTES_SQL},
-    fix AS (
-        SELECT s.author_id, s.score, us.score AS old_score
-        FROM author_scores s
-        LEFT JOIN user_scores us ON us.user_id = s.author_id
-        WHERE us.user_id IS NULL OR us.score <> s.score
-    ),
-    upd AS (
-        UPDATE user_scores u SET score = f.score
-        FROM fix f
-        WHERE u.user_id = f.author_id AND f.old_score IS NOT NULL AND u.score = f.old_score
-        RETURNING u.user_id
-    ),
-    ins AS (
-        INSERT INTO user_scores (user_id, score)
-        SELECT author_id, score FROM fix WHERE old_score IS NULL
-        ON CONFLICT (user_id) DO NOTHING
-        RETURNING user_id
-    )
-    SELECT (SELECT COUNT(*) FROM fix) AS mismatched,
-           (SELECT COUNT(*) FROM upd) AS updated,
-           (SELECT COUNT(*) FROM ins) AS inserted
-"""
-
-
-def ensure_user_scores(c):
-    """Create user_scores, its trigger functions and triggers, and fill it the first time.
-    `c` is the cursor of init_db's transaction. The triggers are created BEFORE the backfill so
-    their table locks (held until commit) keep writers out while the table is filled - nothing
-    can change a score between the snapshot and the first trigger firing."""
-    c.execute("SELECT to_regclass('user_scores') IS NOT NULL")
-    row = c.fetchone()
-    existed = bool(row[0] if not isinstance(row, dict) else list(row.values())[0])
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS user_scores (
-            user_id TEXT PRIMARY KEY,
-            score INTEGER NOT NULL DEFAULT 0
-        )
-    """)
-    # The leaderboard reads the top rows straight off this index.
-    c.execute("CREATE INDEX IF NOT EXISTS idx_user_scores_rank ON user_scores (score DESC, user_id)")
-
-    for stmt in _user_scores_function_sql():
-        c.execute(stmt)
-
-    c.execute("SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND tgname LIKE 'us\\_trg\\_%'")
-    have = {(r['tgname'] if isinstance(r, dict) else r[0]) for r in c.fetchall()}
-    for name, table, events, fn in _USER_SCORE_TRIGGERS:
-        if name not in have:
-            c.execute(f"CREATE TRIGGER {name} {events} ON {table} FOR EACH ROW EXECUTE FUNCTION {fn}()")
-
-    if not existed:
-        logger.info("Backfilling user_scores from the score formula")
-        c.execute(_USER_SCORES_BACKFILL_SQL)
-        c.execute("SELECT COUNT(*) FROM user_scores")
-        n = c.fetchone()
-        logger.info(f"user_scores filled for {n[0] if not isinstance(n, dict) else list(n.values())[0]} users")
-
-
-def user_scores_reconcile():
-    """Repair any drift between user_scores and the formula. Returns the number of rows that were
-    off (0 on a healthy database)."""
-    row = db_fetch_one(_USER_SCORES_RECONCILE_SQL)
-    off = int(row['mismatched']) if row else 0
-    if off:
-        logger.warning(f"user_scores reconcile: {off} rows were off "
-                       f"({int(row['updated'])} updated, {int(row['inserted'])} inserted)")
-        _leaderboard_cache_bust()
-        calculate_user_rating.cache_clear()
-    return off
-
-
-_USER_SCORES_RECONCILE_EVERY = max(600, int(os.getenv('SCORE_RECONCILE_SECONDS', '10800')))
-
-
-def _user_scores_reconcile_loop():
-    time.sleep(300)   # let startup settle first
-    while True:
-        try:
-            user_scores_reconcile()
-        except Exception as e:
-            logger.warning(f"user_scores reconcile failed: {e}")
-        time.sleep(_USER_SCORES_RECONCILE_EVERY)
-
-
 # ---- leaderboard cache (60s, busted whenever anything that moves a score changes) ----
 _LEADERBOARD_TTL_SECONDS = 60
 _leaderboard_gen = 0
@@ -1657,28 +1409,17 @@ def _leaderboard_cache_bust():
 
 @lru_cache(maxsize=16)
 def _leaderboard_rows_cached(top_n, gen, bucket):
-    if _USER_SCORES_STATE['ready']:
-        # Top rows straight off idx_user_scores_rank; no aggregation at all.
-        rows = db_fetch_all("""
-            SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge, COALESCE(u.hide_aura, FALSE) AS hide_aura, s.score AS total
-            FROM user_scores s
-            JOIN users u ON u.user_id = s.user_id
-            WHERE u.is_admin = FALSE
-            ORDER BY s.score DESC, s.user_id
-            LIMIT %s
-        """, (top_n,))
-    else:
-        rows = db_fetch_all(f"""
-            WITH score_authors AS (
-                SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
-            ),
-            {_SCORE_CTES_SQL}
-            SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge, COALESCE(u.hide_aura, FALSE) AS hide_aura, s.score AS total
-            FROM author_scores s
-            JOIN users u ON u.user_id = s.author_id
-            ORDER BY s.score DESC, u.user_id
-            LIMIT %s
-        """, (top_n,))
+    rows = db_fetch_all(f"""
+        WITH score_authors AS (
+            SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
+        ),
+        {_SCORE_CTES_SQL}
+        SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge, COALESCE(u.hide_aura, FALSE) AS hide_aura, s.score AS total
+        FROM author_scores s
+        JOIN users u ON u.user_id = s.author_id
+        ORDER BY s.score DESC, u.user_id
+        LIMIT %s
+    """, (top_n,))
     return tuple(dict(r) for r in (rows or []))
 
 
@@ -1698,34 +1439,17 @@ def get_my_alltime_rank(user_id):
     hit = _MY_RANK_CACHE.get(key)
     if hit and time.time() - hit[0] < 60:
         return hit[1]
-    if _USER_SCORES_STATE['ready']:
-        # Rank = 1 + how many non-admins sort ahead of this user (higher score, or same score
-        # and a smaller id): the same order as the leaderboard, without numbering every user.
-        row = db_fetch_one("""
-            WITH me AS (
-                SELECT s.score FROM user_scores s
-                JOIN users u ON u.user_id = s.user_id
-                WHERE s.user_id = %s AND u.is_admin = FALSE
-            )
-            SELECT me.score AS score,
-                   1 + (SELECT COUNT(*) FROM user_scores s2
-                        JOIN users u2 ON u2.user_id = s2.user_id
-                        WHERE u2.is_admin = FALSE
-                          AND (s2.score > me.score OR (s2.score = me.score AND s2.user_id < %s))) AS rank
-            FROM me
-        """, (key, key))
-    else:
-        row = db_fetch_one(f"""
-            WITH score_authors AS (
-                SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
-            ),
-            {_SCORE_CTES_SQL}
-            SELECT r.rank, r.score FROM (
-                SELECT s.author_id, s.score,
-                       ROW_NUMBER() OVER (ORDER BY s.score DESC, s.author_id) AS rank
-                FROM author_scores s
-            ) r WHERE r.author_id = %s
-        """, (key,))
+    row = db_fetch_one(f"""
+        WITH score_authors AS (
+            SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
+        ),
+        {_SCORE_CTES_SQL}
+        SELECT r.rank, r.score FROM (
+            SELECT s.author_id, s.score,
+                   ROW_NUMBER() OVER (ORDER BY s.score DESC, s.author_id) AS rank
+            FROM author_scores s
+        ) r WHERE r.author_id = %s
+    """, (key,))
     res = (int(row['rank']), int(row['score'] or 0)) if row else (None, 0)
     if len(_MY_RANK_CACHE) > 5000:
         _MY_RANK_CACHE.clear()
@@ -1740,6 +1464,7 @@ def get_my_alltime_rank(user_id):
 # approximately with em-spaces. Tweak DELETED_POST_* below if it looks off on your clients.
 DELETED_POST_ICON = "\u26A0\uFE0F"                       # ⚠️  yellow warning sign
 DELETED_POST_NOTICE = ("This content has been", "deleted by the author.")
+DELETED_POST_NOTICE_ADMIN = ("This content has been", "removed by an admin.")
 _EM_SPACE = "\u2003"
 
 
@@ -1760,11 +1485,13 @@ def _center_prop(visible_text, width_cells):
     return _EM_SPACE * max(0, round(pad_em))
 
 
-def build_deleted_channel_text(vent_display, hashtags):
+def build_deleted_channel_text(vent_display, hashtags, by_admin=False):
     """HTML for the channel message of a deleted post: warning sign first, whole notice
-    centered and tap-to-copy (single <code> block), then hashtags and footer links centered."""
-    first = f"{DELETED_POST_ICON} {DELETED_POST_NOTICE[0]}"
-    lines = [first, DELETED_POST_NOTICE[1], "", vent_display, "\u2501" * 15]
+    centered and tap-to-copy (single <code> block), then hashtags and footer links centered.
+    by_admin=True words it as a moderation removal instead of an author deletion."""
+    notice = DELETED_POST_NOTICE_ADMIN if by_admin else DELETED_POST_NOTICE
+    first = f"{DELETED_POST_ICON} {notice[0]}"
+    lines = [first, notice[1], "", vent_display, "\u2501" * 15]
     width = max(_mono_cells(first), max(_mono_cells(l) for l in lines))
     block = "\n".join(_center_mono(l, width) if i else l for i, l in enumerate(lines))
     if _mono_cells(first) < width:
@@ -1776,6 +1503,223 @@ def build_deleted_channel_text(vent_display, hashtags):
         f"{tag_pad}{html.escape(hashtags)}\n"
         f"{link_pad}<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
     )
+
+
+# ---- deleted vents: who removed it, restore window, placeholder choice ----
+# posts.deleted_reason: 'author' (NULL on older rows counts as the author) or 'admin'.
+# posts.deleted_at starts the restore window; only an author's own deletion can be restored,
+# and only for RESTORE_WINDOW_HOURS. A deleted vent always leaves a placeholder. The text/media stay
+# in the database and are never sent to clients while a vent is deleted.
+RESTORE_WINDOW_HOURS = 24
+
+
+def deleted_notice(reason, noun="content"):
+    """The sentence shown in place of a deleted vent."""
+    if reason == 'admin':
+        return f"This {noun} has been removed by an admin."
+    return f"This {noun} has been deleted by the author."
+
+
+def soft_delete_post(post_id, reason):
+    """Mark a vent deleted (content kept so an author deletion can be restored). True if a row
+    changed. An admin removal also overrides an earlier author deletion, so the author can no
+    longer restore a vent an admin took down."""
+    row = db_fetch_one("""
+        UPDATE posts
+        SET deleted = TRUE, deleted_at = LOCALTIMESTAMP, deleted_reason = %s
+        WHERE post_id = %s
+          AND (COALESCE(deleted, FALSE) = FALSE
+               OR (%s = 'admin' AND deleted_reason IS DISTINCT FROM 'admin'))
+        RETURNING post_id
+    """, (reason, int(post_id), reason))
+    return bool(row)
+
+
+def restore_deleted_post(post_id, author_id):
+    """Undo an author's deletion if it is still inside the window. One atomic statement, so a
+    double tap or a race with an admin removal can't both win. Returns the restored row or None."""
+    return db_fetch_one("""
+        UPDATE posts
+        SET deleted = FALSE, deleted_at = NULL, deleted_reason = NULL
+        WHERE post_id = %s
+          AND author_id = %s
+          AND deleted = TRUE
+          AND deleted_reason = 'author'
+          AND deleted_at IS NOT NULL
+          AND deleted_at > LOCALTIMESTAMP - make_interval(hours => %s)
+        RETURNING *
+    """, (int(post_id), str(author_id), RESTORE_WINDOW_HOURS))
+
+
+def list_restorable_posts(author_id):
+    """The author's vents they can still restore, newest deletion first, with seconds left."""
+    return db_fetch_all("""
+        SELECT post_id, vent_number,
+               GREATEST(0, EXTRACT(EPOCH FROM (deleted_at + make_interval(hours => %s) - LOCALTIMESTAMP)))::int AS secs_left
+        FROM posts
+        WHERE author_id = %s AND approved = TRUE AND deleted = TRUE AND deleted_reason = 'author'
+          AND deleted_at IS NOT NULL AND deleted_at > LOCALTIMESTAMP - make_interval(hours => %s)
+        ORDER BY deleted_at DESC LIMIT 20
+    """, (RESTORE_WINDOW_HOURS, str(author_id), RESTORE_WINDOW_HOURS)) or []
+
+
+def _vent_label(post, for_placeholder=False):
+    if post.get('vent_number'):
+        return f"Vent - {post['vent_number']:03d}"
+    return "Vent" if for_placeholder else f"Post #{post['post_id']}"
+
+
+async def _post_hashtags(post_id):
+    rows = await db_fetch_all_async("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,))
+    cats = [r['category_code'] for r in (rows or [])]
+    return ' '.join(f"#{c}" for c in cats) if cats else "#Other"
+
+
+async def channel_show_placeholder(context, post, by_admin=False, remove_media=False):
+    """Turn the vent's channel message into the deleted/removed placeholder (comments button kept).
+    remove_media=True deletes the whole message for photo/voice/audio vents instead, because a
+    caption edit would leave the media itself visible. True if the channel now shows no content."""
+    msg_id = post.get('channel_message_id')
+    if not msg_id:
+        return False
+    media_type = post.get('media_type') or 'text'
+    if remove_media and media_type != 'text':
+        try:
+            await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=msg_id)
+            return True
+        except Exception as e:
+            logger.error(f"Could not delete channel message {msg_id}, falling back to a caption edit: {e}")
+    try:
+        text = build_deleted_channel_text(_vent_label(post, True), await _post_hashtags(post['post_id']), by_admin)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+            f"Add/view Comments ({post.get('comment_count') or 0})",
+            url=f"https://t.me/{BOT_USERNAME}?start=comments_{post['post_id']}")]])
+        if media_type == 'text':
+            await context.bot.edit_message_text(chat_id=CHANNEL_ID, message_id=msg_id, text=text,
+                                                parse_mode=ParseMode.HTML, reply_markup=kb,
+                                                disable_web_page_preview=True)
+        else:
+            await context.bot.edit_message_caption(chat_id=CHANNEL_ID, message_id=msg_id, caption=text,
+                                                   parse_mode=ParseMode.HTML, reply_markup=kb)
+        return media_type == 'text'
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            return media_type == 'text'
+        logger.error(f"Error editing channel message to placeholder: {e}")
+    except Exception as e:
+        logger.error(f"Error editing channel message to placeholder: {e}")
+    return False
+
+
+async def channel_restore_post(context, post):
+    """Put a restored vent back in the channel: edit the placeholder back to the original text, or
+    - when that message is gone - publish it again and store the new message id. True on success."""
+    post_id = post['post_id']
+    hashtags = await _post_hashtags(post_id)
+    body_html = EXPLICIT_WARNING_HTML if post.get('explicit') else html.escape(post.get('content') or '')
+    text = (
+        f"{vent_header_html(_vent_label(post), post.get('revealed_sex'))}\n\n"
+        f"{body_html}\n\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"{html.escape(hashtags)}\n"
+        f"<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
+    )
+    kb = build_channel_post_keyboard(post_id, post.get('comment_count') or 0, bool(post.get('explicit')))
+    media_type = post.get('media_type') or 'text'
+    msg_id = post.get('channel_message_id')
+
+    if msg_id:
+        try:
+            if media_type == 'text':
+                await context.bot.edit_message_text(chat_id=CHANNEL_ID, message_id=msg_id, text=text,
+                                                    parse_mode=ParseMode.HTML, reply_markup=kb,
+                                                    disable_web_page_preview=True)
+            else:
+                await context.bot.edit_message_caption(chat_id=CHANNEL_ID, message_id=msg_id, caption=text,
+                                                       parse_mode=ParseMode.HTML, reply_markup=kb)
+            return True
+        except BadRequest as e:
+            err = str(e).lower()
+            if "not modified" in err:
+                return True
+            if "not found" not in err and "can't be edited" not in err:
+                logger.error(f"Could not restore channel message for post {post_id}: {e}")
+                return False
+            # the message is gone: fall through and publish it again
+        except Exception as e:
+            logger.error(f"Could not restore channel message for post {post_id}: {e}")
+            return False
+
+    try:
+        reply_to = None
+        if post.get('thread_from_post_id'):
+            parent = await db_fetch_one_async("SELECT channel_message_id FROM posts WHERE post_id = %s",
+                                              (post['thread_from_post_id'],))
+            reply_to = parent['channel_message_id'] if parent and parent.get('channel_message_id') else None
+        common = dict(chat_id=CHANNEL_ID, parse_mode=ParseMode.HTML, reply_markup=kb,
+                      reply_to_message_id=reply_to, allow_sending_without_reply=True)
+        if media_type == 'text':
+            msg = await context.bot.send_message(text=text, disable_web_page_preview=True, **common)
+        elif media_type == 'photo':
+            msg = await context.bot.send_photo(photo=post['media_id'], caption=text, **common)
+        elif media_type == 'voice':
+            msg = await context.bot.send_voice(voice=post['media_id'], caption=text, **common)
+        elif media_type == 'audio':
+            msg = await context.bot.send_audio(audio=post['media_id'], caption=text, **common)
+        else:
+            logger.error(f"Cannot republish post {post_id}: unsupported media type {media_type}")
+            return False
+        await db_execute_async("UPDATE posts SET channel_message_id = %s WHERE post_id = %s",
+                               (msg.message_id, post_id))
+        return True
+    except Exception as e:
+        logger.error(f"Could not republish post {post_id} to the channel: {e}")
+        return False
+
+
+async def perform_author_delete(update, context, user_id, post_id, from_page):
+    """An author deletes their own published vent. It always leaves a 'deleted by the author'
+    placeholder and can be restored for RESTORE_WINDOW_HOURS."""
+    query = update.callback_query
+    post = await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+    if not post or str(post['author_id']) != str(user_id):
+        await query.answer("You can only delete your own posts", show_alert=True)
+        return
+    if post.get('deleted'):
+        await query.answer("This post is already deleted", show_alert=True)
+        return
+
+    if post.get('channel_message_id'):
+        await channel_show_placeholder(context, post, False)
+    changed = await asyncio.to_thread(soft_delete_post, post_id, 'author')
+    if not changed:
+        await query.answer("This post is already deleted", show_alert=True)
+        return
+
+    await query.answer("Post deleted")
+    try:
+        await context.bot.send_message(
+            query.message.chat_id,
+            f"Your vent was deleted.\n\nChanged your mind? You can restore it for "
+            f"{RESTORE_WINDOW_HOURS} hours.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "Restore vent", callback_data=f"restore_post_{post_id}_{from_page}")]])
+        )
+    except Exception as e:
+        logger.error(f"Could not send the restore prompt: {e}")
+    await show_previous_posts(update, context, from_page)
+
+
+async def _recently_deleted_button(user_id):
+    """'Recently deleted (n)' button for the My Posts screen, or None when nothing can be restored."""
+    try:
+        rows = await asyncio.to_thread(list_restorable_posts, user_id)
+    except Exception as e:
+        logger.error(f"Could not look up restorable posts: {e}")
+        return None
+    if not rows:
+        return None
+    return InlineKeyboardButton(f"Recently deleted ({len(rows)})", callback_data="recently_deleted")
 
 
 def get_admin_conversations(limit=20, offset=0, search=None):
@@ -2638,21 +2582,25 @@ def calculate_user_rating(user_id):
     # _SCORE_CTES_SQL so every screen agrees):
     #   Approved posts +10 | Comments +2 | Reactions per REACTION_WEIGHTS (on comments and
     #   posts) | Followers +2 | Blocks received -10
-    if _USER_SCORES_STATE['ready']:
-        row = db_fetch_one("SELECT score FROM user_scores WHERE user_id = %s", (str(user_id),))
-    else:
-        row = db_fetch_one(
-            f"WITH score_authors AS (SELECT %s::text AS author_id), {_SCORE_CTES_SQL} "
-            "SELECT score FROM author_scores",
-            (str(user_id),)
-        )
+    row = db_fetch_one(
+        f"WITH score_authors AS (SELECT %s::text AS author_id), {_SCORE_CTES_SQL} "
+        "SELECT score FROM author_scores",
+        (str(user_id),)
+    )
     return int(row['score']) if row and row['score'] is not None else 0
 
+# Aura scores shown next to comments: cached per author for a short time. The score query joins
+# every post/comment/reaction of each author, so recomputing it on every comments-page open and
+# every Older/Newer tap was the slowest part of loading comments. Aura on a comment list being up
+# to _RATING_TTL_SECONDS old is fine (the leaderboard itself is cached for 60s).
+_RATING_TTL_SECONDS = 90
+_rating_cache = {}            # str(user_id) -> (score, expires_at_monotonic)
+_rating_cache_lock = threading.Lock()
+
 def get_user_ratings_batch(user_ids):
-    """Aura scores for many users in ONE query. Returns {user_id: score} keyed by the ids passed
-    in (0 for a user with no row). Reads the precomputed user_scores table: a primary-key lookup
-    per author, always current, so the 90-second in-memory cache that used to hide the cost of
-    the old multi-join query is gone. Falls back to the formula only if the table is unavailable."""
+    """Same scoring as calculate_user_rating(), for many users in ONE query (it used to be
+    5 GROUP-BY queries). Returns {user_id: score} keyed by the ids passed in. Scores computed in
+    the last _RATING_TTL_SECONDS come from memory; only the rest hit the database."""
     originals = {}
     for uid in user_ids:
         if uid is not None:
@@ -2660,25 +2608,38 @@ def get_user_ratings_batch(user_ids):
     if not originals:
         return {}
     ratings = {orig: 0 for orig in originals.values()}
-    keys = list(originals)
+    now = time.monotonic()
+    missing = []
+    with _rating_cache_lock:
+        for key, orig in originals.items():
+            hit = _rating_cache.get(key)
+            if hit and hit[1] > now:
+                ratings[orig] = hit[0]
+            else:
+                missing.append(key)
+    if not missing:
+        return ratings
 
     t0 = time.monotonic()
-    if _USER_SCORES_STATE['ready']:
-        rows = db_fetch_all(
-            "SELECT user_id AS author_id, score FROM user_scores WHERE user_id = ANY(%s::text[])",
-            (keys,)
-        )
-    else:
-        rows = db_fetch_all(
-            f"WITH score_authors AS (SELECT UNNEST(%s::text[]) AS author_id), {_SCORE_CTES_SQL} "
-            "SELECT author_id, score FROM author_scores",
-            (keys,)
-        )
-    logger.info(f"ratings query for {len(keys)} authors took {(time.monotonic() - t0) * 1000:.0f}ms")
+    rows = db_fetch_all(
+        f"WITH score_authors AS (SELECT UNNEST(%s::text[]) AS author_id), {_SCORE_CTES_SQL} "
+        "SELECT author_id, score FROM author_scores",
+        (missing,)
+    )
+    logger.info(f"ratings query for {len(missing)} authors took {(time.monotonic() - t0) * 1000:.0f}ms")
+    fresh = {}
     for row in rows or []:
-        orig = originals.get(str(row['author_id']))
+        key = str(row['author_id'])
+        fresh[key] = int(row['score'] or 0)
+        orig = originals.get(key)
         if orig is not None:
-            ratings[orig] = int(row['score'] or 0)
+            ratings[orig] = fresh[key]
+    with _rating_cache_lock:
+        if len(_rating_cache) > 20000:
+            _rating_cache.clear()
+        expires = time.monotonic() + _RATING_TTL_SECONDS
+        for key in missing:
+            _rating_cache[key] = (fresh.get(key, 0), expires)
     return ratings
 
 def calculate_top_weekly_contributors(limit=3):
@@ -2964,30 +2925,16 @@ def format_time_ago(timestamp):
 def get_user_rank(user_id):
     """1-based leaderboard rank of a (non-admin) user, or None. One query: the shared score
     CTE plus RANK() over it - no more loading every user into Python to find one position."""
-    if _USER_SCORES_STATE['ready']:
-        # RANK() semantics (ties share a rank): 1 + non-admins with a strictly higher score.
-        row = db_fetch_one("""
-            WITH me AS (
-                SELECT s.score FROM user_scores s
-                JOIN users u ON u.user_id = s.user_id
-                WHERE s.user_id = %s AND u.is_admin = FALSE
-            )
-            SELECT 1 + (SELECT COUNT(*) FROM user_scores s2
-                        JOIN users u2 ON u2.user_id = s2.user_id
-                        WHERE u2.is_admin = FALSE AND s2.score > me.score) AS rnk
-            FROM me
-        """, (str(user_id),))
-    else:
-        row = db_fetch_one(f"""
-            WITH score_authors AS (
-                SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
-            ),
-            {_SCORE_CTES_SQL},
-            ranked AS (
-                SELECT author_id, RANK() OVER (ORDER BY score DESC) AS rnk FROM author_scores
-            )
-            SELECT rnk FROM ranked WHERE author_id = %s
-        """, (str(user_id),))
+    row = db_fetch_one(f"""
+        WITH score_authors AS (
+            SELECT user_id AS author_id FROM users WHERE is_admin = FALSE
+        ),
+        {_SCORE_CTES_SQL},
+        ranked AS (
+            SELECT author_id, RANK() OVER (ORDER BY score DESC) AS rnk FROM author_scores
+        )
+        SELECT rnk FROM ranked WHERE author_id = %s
+    """, (str(user_id),))
     return int(row['rnk']) if row else None
 
 def build_channel_post_keyboard(post_id: int, comment_count: int, explicit: bool = False):
@@ -6311,7 +6258,7 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
 
     # Build the post header
     if post.get('deleted'):
-        post_text = "This content has been deleted by the author."
+        post_text = deleted_notice(post.get('deleted_reason'), "content")
     else:
         post_text = post['content']
     escaped_text = escape_markdown(post_text, version=2)
@@ -6934,42 +6881,6 @@ def _fetch_comments_page_data(post_id, per_page, offset, user_id):
         'is_viewer_admin': is_viewer_admin,
     }
 
-# ---- comments page delivery: first few comments now, the rest queued per chat ----
-# A comments page is up to 10 messages that Telegram must receive one after another. Sending them
-# all inside the handler made the page feel slow; now the first COMMENTS_SEND_NOW go out
-# immediately and the remainder (plus the Older/Newer footer) is sent by a background task.
-# Per chat, ONE sender runs at a time (a lock), and every page request takes a ticket: if a newer
-# request arrives (double tap, quick Older/Newer, another post) the older one stops after the
-# message it is on and never sends its footer, so two pages can't interleave. Other chats are
-# never held up.
-COMMENTS_SEND_NOW = 4
-_comment_ticket = {}    # chat_id -> number of the newest page request
-_comment_locks = {}     # chat_id -> asyncio.Lock held while that chat is being sent to
-
-
-def _comment_lock(chat_id):
-    lock = _comment_locks.get(chat_id)
-    if lock is None:
-        if len(_comment_locks) > 5000:       # forget idle chats; a fresh lock is always safe then
-            for cid in [c for c, l in _comment_locks.items() if not l.locked()]:
-                _comment_locks.pop(cid, None)
-        lock = _comment_locks[chat_id] = asyncio.Lock()
-    return lock
-
-
-def _start_comment_tail(coro):
-    """Run the queued remainder of a page in the background (reference kept until it ends)."""
-    task = asyncio.create_task(coro)
-    _bg_tasks.add(task)
-
-    def _done(t):
-        _bg_tasks.discard(t)
-        if not t.cancelled() and t.exception() is not None:
-            logger.error(f"Queued comments task crashed: {t.exception()}")
-    task.add_done_callback(_done)
-    return task
-
-
 async def show_comments_page(update, context, post_id, page=1, reply_pages=None):
     if update.effective_chat is None:
         logger.error("Cannot determine chat from update: %s", update)
@@ -6978,12 +6889,6 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     # Show typing animation
     await typing_animation(context, chat_id, 0.5)
-
-    # Ticket for this request; a later request for the same chat makes this one stand down
-    # (see _comment_ticket above).
-    ticket = _comment_ticket[chat_id] = _comment_ticket.get(chat_id, 0) + 1
-    def _superseded():
-        return _comment_ticket.get(chat_id) != ticket
 
     user_id = str(update.effective_user.id)
     per_page = 10
@@ -7032,19 +6937,18 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
     context._user_id = user_id
     msg_ids = {}
 
-    def _comment_view(comment):
-        """(author_text, reply_to_id, pre-fetched reaction data) for one comment of this page."""
+    for comment in comments:
         comment_id = comment['comment_id']
         parent_id = comment.get('parent_comment_id', 0)
-
+        
         # User cached or joined data
         rating = ratings_map.get(comment['author_id'], 0)
         is_author = str(comment['author_id']) == str(post_author_id)
-
+        
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{comment['author_id']}_{post_id}"
         show_aura = not comment.get('hide_aura') or str(user_id) == str(comment['author_id']) or is_viewer_admin
         aura_text = f"_Aura_ ⚡ {escape_markdown(str(rating), version=2)} pts" if (not comment.get('is_admin') and show_aura) else ""
-
+        
         if is_author:
             # Vent author: show sex emoji + clickable "Vent author" (no custom avatar, no aura)
             sex_emoji = comment.get('sex') or '👤'
@@ -7060,83 +6964,43 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             author_label = f"[_{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}_]({profile_link})"
             author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
-        # Threading logic - check this page's already-sent messages first
+        # Threading logic - FIX: check current batch msg_ids first
         reply_to_id = msg_ids.get(parent_id) or parent_msg_ids.get(parent_id)
+        
+        # Pre-fetched data for button builder
         pref = reaction_data.get(comment_id, {'likes': 0, 'dislikes': 0, 'laughs': 0, 'user_reaction': None})
-        return author_text, reply_to_id, pref
-
-    async def _send_comments(batch):
+        
         # persist=False: the loop only sends. Telegram needs ONE ordered message after another
         # (arrival order = display order, so this can't be parallelised), which makes every
-        # millisecond between two sends visible. The message-id bookkeeping is written in a batch
-        # (persist_comment_msg_ids) once the messages are out.
-        # Returns False if a newer request took over (the caller then stops).
-        for comment in batch:
-            if _superseded():
-                return False
-            author_text, reply_to_id, pref = _comment_view(comment)
-            new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id,
-                                                    pre_fetched_data=pref, persist=False)
-            if new_msg_id:
-                msg_ids[comment['comment_id']] = new_msg_id
-        return True
+        # millisecond between two sends visible. The message-id bookkeeping is written once,
+        # in a batch, after the last comment is out (see persist_comment_msg_ids below).
+        new_msg_id = await send_comment_message(context, chat_id, comment, author_text, reply_to_id, pre_fetched_data=pref, persist=False)
+        if new_msg_id:
+            msg_ids[comment_id] = new_msg_id
 
-    async def _send_footer():
-        # Pagination / Add comment button
-        is_last_page = page >= total_pages
-
-        if total_pages > 1:
-            nav_buttons = []
-            if page > 1: nav_buttons.append(InlineKeyboardButton("Older", callback_data=f"viewcomments_{post_id}_{page-1}"))
-            if page < total_pages: nav_buttons.append(InlineKeyboardButton("Newer", callback_data=f"viewcomments_{post_id}_{page+1}"))
-            rows = [nav_buttons]
-            if is_last_page:
-                rows.append([InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")])
-            await context.bot.send_message(chat_id, f"Page {page}/{total_pages}", reply_markup=InlineKeyboardMarkup(rows))
-        elif is_last_page:
-            # Single page — standalone add comment button
-            await context.bot.send_message(
-                chat_id,
-                "Add your thoughts to the conversation",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")]])
-            )
-
-    # SPEED: the first COMMENTS_SEND_NOW comments go out right here so the page appears at once;
-    # the rest are sent by a background task that then adds the page footer. The handler returns
-    # as soon as the first batch is out.
-    head, tail = comments[:COMMENTS_SEND_NOW], comments[COMMENTS_SEND_NOW:]
-    async with _comment_lock(chat_id):
-        if _superseded():
-            return
-        await _send_comments(head)
-    _head_ms = (time.monotonic() - _t_start) * 1000 - _fetch_ms
     if msg_ids:
-        db_background(persist_comment_msg_ids, chat_id, list(msg_ids.items()))   # replies can thread already
+        db_background(persist_comment_msg_ids, chat_id, list(msg_ids.items()))
     logger.info(f"comments post={post_id} page={page}: data {_fetch_ms:.0f}ms, "
-                f"first {len(msg_ids)} sent in {_head_ms:.0f}ms, {len(tail)} queued")
+                f"sent {len(msg_ids)} in {(time.monotonic() - _t_start) * 1000 - _fetch_ms:.0f}ms")
 
-    if not tail:
-        async with _comment_lock(chat_id):
-            if not _superseded():
-                await _send_footer()
-        return
+    # Pagination Add comment button
+    is_last_page = page >= total_pages
 
-    async def _finish_comments_tail():
-        sent_before = set(msg_ids)
-        try:
-            async with _comment_lock(chat_id):
-                if await _send_comments(tail):
-                    await _send_footer()
-        except Exception as e:
-            logger.error(f"Queued comments for chat {chat_id} post {post_id} failed: {e}")
-        finally:
-            late = [(cid, mid) for cid, mid in msg_ids.items() if cid not in sent_before]
-            if late:
-                db_background(persist_comment_msg_ids, chat_id, late)
-
-    _start_comment_tail(_finish_comments_tail())
-
-
+    if total_pages > 1:
+        nav_buttons = []
+        if page > 1: nav_buttons.append(InlineKeyboardButton("Older", callback_data=f"viewcomments_{post_id}_{page-1}"))
+        if page < total_pages: nav_buttons.append(InlineKeyboardButton("Newer", callback_data=f"viewcomments_{post_id}_{page+1}"))
+        rows = [nav_buttons]
+        if is_last_page:
+            rows.append([InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")])
+        await context.bot.send_message(chat_id, f"Page {page}/{total_pages}", reply_markup=InlineKeyboardMarkup(rows))
+    elif is_last_page:
+        # Single page — standalone add comment button
+        await context.bot.send_message(
+            chat_id,
+            "Add your thoughts to the conversation",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")]])
+        )
 async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None, rating_override=None, show_aura=None):
     """Send a single reply message with proper formatting using pre-fetched user data if available"""
     # Use joined data if available, else fetch
@@ -7674,6 +7538,11 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
         text = "*My Posts*\n\nYou haven't posted anything yet or your posts are pending approval."
         keyboard = [
             [InlineKeyboardButton("Share My Thoughts", callback_data='ask')],
+        ]
+        _rd_btn = await _recently_deleted_button(user_id)
+        if _rd_btn:
+            keyboard.append([_rd_btn])
+        keyboard += [
             [InlineKeyboardButton("Back to My Content", callback_data='my_content_menu')],
             [InlineKeyboardButton("Main Menu", callback_data='menu')]
         ]
@@ -7741,6 +7610,10 @@ async def show_previous_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
             InlineKeyboardButton(button_text, callback_data=f"viewpost_{post['post_id']}_{page}")
         ])
     
+    _rd_btn = await _recently_deleted_button(user_id)
+    if _rd_btn:
+        keyboard.append([_rd_btn])
+
     # Add pagination if needed
     if total_pages > 1:
         pagination_row = []
@@ -9321,7 +9194,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ])
                     
                     await query.message.edit_text(
-                        "*Delete Post*\n\nAre you sure you want to delete this post? This action cannot be undone.",
+                        "*Delete Post*\n\nAre you sure you want to delete this post? A notice that it was deleted "
+                        f"by the author will stay in its place, and you can restore it within {RESTORE_WINDOW_HOURS} hours.",
                         reply_markup=keyboard,
                         parse_mode=ParseMode.MARKDOWN
                     )
@@ -9336,58 +9210,55 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parts = query.data.split('_')
                 post_id = int(parts[3])
                 from_page = int(parts[4]) if len(parts) > 4 else 1
-                
-                post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
-                
-                if post and post['author_id'] == user_id:
-                    if post['channel_message_id']:
-                        try:
-                            if post.get('vent_number'):
-                                vent_display = f"Vent - {post['vent_number']:03d}"
-                            else:
-                                vent_display = "Vent"
-
-                            cats_row = (await db_fetch_all_async("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,)))
-                            categories = [row['category_code'] for row in cats_row]
-                            hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
-
-                            channel_text = build_deleted_channel_text(vent_display, hashtags)
-
-                            comment_count = post.get('comment_count') or 0
-                            keyboard = InlineKeyboardMarkup([
-                                [InlineKeyboardButton(f"Add/view Comments ({comment_count})",
-                                    url=f"https://t.me/{BOT_USERNAME}?start=comments_{post_id}")]
-                            ])
-
-                            if post.get('media_type', 'text') == 'text':
-                                await context.bot.edit_message_text(
-                                    chat_id=CHANNEL_ID, message_id=post['channel_message_id'],
-                                    text=channel_text, parse_mode=ParseMode.HTML,
-                                    reply_markup=keyboard, disable_web_page_preview=True
-                                )
-                            else:
-                                await context.bot.edit_message_caption(
-                                    chat_id=CHANNEL_ID, message_id=post['channel_message_id'],
-                                    caption=channel_text, parse_mode=ParseMode.HTML, reply_markup=keyboard
-                                )
-                        except Exception as e:
-                            logger.error(f"Error editing channel message: {e}")
-                    
-                    (await db_execute_async("UPDATE posts SET deleted = TRUE WHERE post_id = %s", (post_id,)))
-                    
-                    await query.answer("Post deleted successfully")
-                    await query.message.edit_text(
-                        "Post has been deleted successfully.",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    
-                    # Return to the post list at the same page
-                    await show_previous_posts(update, context, from_page)
-                else:
-                    await query.answer("You can only delete your own posts", show_alert=True)
+                await perform_author_delete(update, context, user_id, post_id, from_page)
             except Exception as e:
                 logger.error(f"Error deleting post: {e}")
                 await query.answer("Error deleting post", show_alert=True)
+
+        elif query.data.startswith("restore_post_"):
+            try:
+                parts = query.data.split('_')
+                post_id = int(parts[2])
+                from_page = int(parts[3]) if len(parts) > 3 else 1
+                row = await asyncio.to_thread(restore_deleted_post, post_id, user_id)
+                if not row:
+                    await query.answer(
+                        f"This vent can't be restored: the {RESTORE_WINDOW_HOURS} hours are over, "
+                        "it was removed by an admin, or it isn't yours.", show_alert=True)
+                    return
+                ok = await channel_restore_post(context, row)
+                await query.answer("Vent restored")
+                if not ok:
+                    await context.bot.send_message(
+                        query.message.chat_id,
+                        "Your vent is back in the app, but I couldn't update its channel message. "
+                        "Please contact an admin if it is still missing there.")
+                await show_previous_posts(update, context, from_page)
+            except Exception as e:
+                logger.error(f"Error restoring post: {e}")
+                await query.answer("Error restoring post", show_alert=True)
+
+        elif query.data == "recently_deleted":
+            try:
+                rows = await asyncio.to_thread(list_restorable_posts, user_id)
+                if not rows:
+                    await query.answer("Nothing to restore right now.", show_alert=True)
+                    await show_previous_posts(update, context, 1)
+                    return
+                kb_rows = []
+                for r in rows:
+                    h, m = divmod(max(0, int(r['secs_left'])) // 60, 60)
+                    label = f"Restore {_vent_label(r)} ({h}h {m}m left)"
+                    kb_rows.append([InlineKeyboardButton(label, callback_data=f"restore_post_{r['post_id']}_1")])
+                kb_rows.append([InlineKeyboardButton("Back to My Posts", callback_data="my_posts_1")])
+                await query.message.edit_text(
+                    f"*Recently deleted*\n\nTap a vent to put it back. Vents you delete can be restored for "
+                    f"{RESTORE_WINDOW_HOURS} hours.",
+                    reply_markup=InlineKeyboardMarkup(kb_rows), parse_mode=ParseMode.MARKDOWN)
+                await query.answer()
+            except Exception as e:
+                logger.error(f"Error showing recently deleted posts: {e}")
+                await query.answer("Error loading deleted posts", show_alert=True)
 
         elif query.data.startswith("cancel_delete_post_"):
             try:
@@ -10834,22 +10705,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await query.answer("Post already deleted.", show_alert=True)
                         return
 
-                    deleted_ids = await asyncio.to_thread(delete_post_cascade, [target_id])
-                    if not deleted_ids:
-                        raise Exception("Post deletion from database failed (no rows returned)")
-
-                    if post.get('channel_message_id'):
-                        try:
-                            await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=post['channel_message_id'])
-                        except Exception as e:
-                            logger.error(f"Failed to delete channel message: {e}")
-                            try:
-                                await context.bot.edit_message_text(
-                                    chat_id=CHANNEL_ID, message_id=post['channel_message_id'],
-                                    text="This content has been removed by an admin.", reply_markup=None
-                                )
-                            except Exception as edit_err:
-                                logger.error(f"Also failed to edit channel message: {edit_err}")
+                    if post.get('approved'):
+                        # A published vent leaves a "removed by an admin" placeholder (the text and media
+                        # stay in the database for moderation but are never shown) and the author can't
+                        # restore it. Comments stay, like under an author-deleted vent.
+                        removed = await asyncio.to_thread(soft_delete_post, target_id, 'admin')
+                        if not removed:
+                            await query.answer("This vent was already removed by an admin.", show_alert=True)
+                            return
+                        if post.get('channel_message_id'):
+                            await channel_show_placeholder(context, post, by_admin=True, remove_media=True)
+                    else:
+                        # Never published: nothing public to leave a placeholder for.
+                        deleted_ids = await asyncio.to_thread(delete_post_cascade, [target_id])
+                        if not deleted_ids:
+                            raise Exception("Post deletion from database failed (no rows returned)")
 
                     author_id = post.get('author_id')
                     logger.info(f"Post {target_id} deleted by admin {user_id}")
@@ -12502,10 +12372,6 @@ def main():
     
     
     
-    # Keep the precomputed aura scores honest: a periodic check that repairs any drift.
-    if _USER_SCORES_STATE['ready']:
-        threading.Thread(target=_user_scores_reconcile_loop, name="user-scores-reconcile", daemon=True).start()
-
     # Start Flask server in a separate thread for Render
     port = int(os.environ.get('PORT', 5000))
     threading.Thread(
@@ -14904,12 +14770,15 @@ function threadTimeline(list){
 
 // Feed card for a vent its author deleted: no text, media or reactions - just a notice. The card
 // still opens the conversation (comments stay), and keeps its thread chip/panel if it has one.
+function delNote(p,noun){
+  return 'This '+noun+(p.deleted_by==='admin'?' has been removed by an admin.':' has been deleted by the author.');
+}
 function renderDeletedPost(p){
   return `<div class="post-card post-deleted${p.thread?' is-thread':''}" data-pid="${p.id}">
     <div class="post-meta"><div class="ava" style="width:34px;height:34px;opacity:.6">${avaHtml(p.author?.avatar||p.author?.sex)}</div><div><div class="post-name" style="color:var(--text3)">Vent author</div></div><div class="post-time">${esc(p.day_label?'Approved '+(p.time_ago||''):(p.time_ago||''))}</div></div>
     ${threadChip(p)}
     ${ventLabel(p)}
-    <div class="del-note" onclick="openPost(${p.id})"><span class="del-ico">${ICONS.alert}</span><span>This vent has been deleted by the author.</span></div>
+    <div class="del-note" onclick="openPost(${p.id})"><span class="del-ico">${ICONS.alert}</span><span>${esc(delNote(p,'vent'))}</span></div>
     ${threadPanel(p)}
     <div class="post-footer" onclick="openPost(${p.id})"><div class="post-footer-left"><span class="stat-btn"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="cc">${p.comments||0}</span></span></div><span class="read-more">Read →</span></div>
   </div>`;
@@ -14957,7 +14826,7 @@ async function openPost(id, reveal){
       currentPostAuthorId = null;
       document.getElementById('detail-post').innerHTML=`
         <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
-          <div style="font-size:16px;line-height:1.65;color:var(--text3);font-style:italic;padding:16px;display:flex;align-items:center;gap:8px;"><span style="width:18px;height:18px;flex-shrink:0;display:inline-flex">${ICONS.alert}</span> This post has been deleted by the author.</div>
+          <div style="font-size:16px;line-height:1.65;color:var(--text3);font-style:italic;padding:16px;display:flex;align-items:center;gap:8px;"><span style="width:18px;height:18px;flex-shrink:0;display:inline-flex">${ICONS.alert}</span> ${esc(delNote(p,'post'))}</div>
         </div>`;
       await fetchAndRenderComments(id,null,revealParam);
       return;
@@ -16987,6 +16856,7 @@ _FEED_SQL = f"""
                p.comment_count, p.media_type,
                p.media_id, p.explicit, p.author_id, p.vent_number, p.revealed_sex,
                COALESCE(p.deleted, FALSE) AS deleted,
+               p.deleted_reason,
                COUNT(*) OVER () AS total_count
         FROM posts p
         -- Vents their author deleted stay in the feed (as a "deleted" placeholder card) so the
@@ -17001,11 +16871,16 @@ _FEED_SQL = f"""
           )
         ORDER BY p.approved_at DESC NULLS LAST, p.post_id DESC
         LIMIT %s OFFSET %s
-    )
+    ),
+    score_authors AS (
+        SELECT DISTINCT author_id FROM page_posts
+    ),
+    {_SCORE_CTES_SQL}
     SELECT
         pp.post_id, pp.content, pp.timestamp, pp.approved_at, pp.thread_from_post_id,
         pp.comment_count, pp.media_type,
         pp.media_id, pp.explicit, pp.total_count, pp.vent_number, pp.revealed_sex, pp.deleted,
+        pp.deleted_reason,
         u.user_id AS author_id,
         u.sex AS author_sex,
         u.avatar_emoji AS author_avatar,
@@ -17040,21 +16915,10 @@ _FEED_SQL = f"""
         SELECT r.type FROM reactions r
         WHERE r.post_id = pp.post_id AND r.user_id = %s LIMIT 1
     ) ur ON TRUE
-    LEFT JOIN user_scores asr ON asr.user_id = pp.author_id
+    LEFT JOIN author_scores asr ON asr.author_id = pp.author_id
     LEFT JOIN users v ON v.user_id = %s
     ORDER BY pp.approved_at DESC NULLS LAST, pp.post_id DESC
 """
-
-# Same page query, scoring authors with the formula instead of the user_scores table. Only used
-# if user_scores could not be set up at startup.
-_FEED_SQL_FORMULA = _FEED_SQL.replace(
-    "    )\n    SELECT\n        pp.post_id",
-    "    ),\n    score_authors AS (\n        SELECT DISTINCT author_id FROM page_posts\n    ),\n"
-    + _SCORE_CTES_SQL + "\n    SELECT\n        pp.post_id", 1
-).replace(
-    "LEFT JOIN user_scores asr ON asr.user_id = pp.author_id",
-    "LEFT JOIN author_scores asr ON asr.author_id = pp.author_id"
-)
 
 # Earlier vents of each thread tip on the current page, newest first (depth 1 = direct parent).
 # Walks thread_from_post_id upward; depth-capped so a bad cycle can never loop forever.
@@ -17069,7 +16933,7 @@ _THREAD_ANCESTORS_SQL = """
         WHERE a.thread_from_post_id IS NOT NULL AND ch.depth < 25
     )
     SELECT ch.tip_id, ch.depth, a.post_id, a.vent_number, a.content, a.explicit, a.author_id,
-           a.approved_at, a.timestamp, COALESCE(a.deleted, FALSE) AS deleted
+           a.approved_at, a.timestamp, COALESCE(a.deleted, FALSE) AS deleted, a.deleted_reason
     FROM chain ch JOIN posts a ON a.post_id = ch.anc_id
     WHERE a.approved = TRUE
     ORDER BY ch.tip_id, ch.depth ASC
@@ -17093,7 +16957,7 @@ _THREAD_MEMBERS_SQL = """
         WHERE down.d < 50
     )
     SELECT DISTINCT p.post_id, p.vent_number, p.content, p.explicit, p.author_id,
-           COALESCE(p.deleted, FALSE) AS deleted,
+           COALESCE(p.deleted, FALSE) AS deleted, p.deleted_reason,
            COALESCE(p.approved_at, p.timestamp) AS shown_at
     FROM down JOIN posts p ON p.post_id = down.post_id
     WHERE p.approved = TRUE
@@ -17131,11 +16995,18 @@ def _feed_day_label(ts):
     return ts.strftime('%b %d').replace(' 0', ' ')
 
 
+def _deleted_by(row):
+    """'admin' / 'author' for a deleted vent, None otherwise (what the mini app words its notice by)."""
+    if not row.get('deleted'):
+        return None
+    return 'admin' if row.get('deleted_reason') == 'admin' else 'author'
+
+
 def _thread_preview(row, can_see_explicit, limit=140):
     """Short preview of a thread member; explicit vents stay veiled for other viewers.
     A deleted vent never exposes its text (the row still holds it in the database)."""
     if row.get('deleted'):
-        return "This vent has been deleted by the author.", False
+        return deleted_notice(row.get('deleted_reason'), "vent"), False
     if row.get('explicit') and not can_see_explicit:
         return "", True
     text = (row.get('content') or '').strip()
@@ -17160,6 +17031,7 @@ def _build_thread_payload(post_id, viewer_id, viewer_is_admin):
             'preview': preview,
             'content_hidden': hidden,
             'deleted': bool(r.get('deleted')),
+            'deleted_by': _deleted_by(r),
             'time_ago': _feed_time_ago(r['shown_at']),
             'current': r['post_id'] == post_id,
         })
@@ -17176,8 +17048,7 @@ def mini_app_get_posts():
         per_page = _clamp_int(request.args.get('per_page'), 1, 50, 10)
         offset = (page - 1) * per_page
 
-        posts = db_fetch_all(_FEED_SQL if _USER_SCORES_STATE['ready'] else _FEED_SQL_FORMULA,
-                              (per_page, offset, uid, uid, uid))
+        posts = db_fetch_all(_FEED_SQL, (per_page, offset, uid, uid, uid))
 
         formatted_posts = []
         is_admin_viewer = bool(posts and posts[0].get('viewer_is_admin'))
@@ -17212,7 +17083,7 @@ def mini_app_get_posts():
             if is_deleted:
                 # Placeholder only: the real text/media still sit in the database, so they are
                 # never copied into the response (not even into full_content).
-                content_preview = "This vent has been deleted by the author."
+                content_preview = deleted_notice(post.get('deleted_reason'), "vent")
                 post['content'] = content_preview
                 post['media_type'], post['media_id'] = 'text', None
             elif hide_content:
@@ -17235,6 +17106,7 @@ def mini_app_get_posts():
                         'preview': preview,
                         'content_hidden': hidden,
                         'deleted': bool(r.get('deleted')),
+            'deleted_by': _deleted_by(r),
                         'time_ago': _feed_time_ago(r.get('approved_at') or r['timestamp']),
                     })
                 thread = {'count': len(earlier) + 1, 'earlier': earlier}
@@ -17253,6 +17125,7 @@ def mini_app_get_posts():
                 'unread_comments': post['unread_comments'],
                 'explicit': is_explicit,
                 'deleted': is_deleted,
+                'deleted_by': _deleted_by(post),
                 'content_hidden': hide_content,
                 'author': {
                     'name': 'Anonymous',
@@ -17305,6 +17178,7 @@ def mini_app_get_single_post(post_id):
         post = db_fetch_one('''
             SELECT 
                 p.post_id, p.vent_number, p.revealed_sex, p.content, p.timestamp, p.approved_at, p.comment_count, p.media_type, p.media_id, p.deleted, p.explicit,
+                p.deleted_reason,
                 u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
                 u.is_admin as author_is_admin,
                 STRING_AGG(pc.category_code, ', ') as categories
@@ -17312,7 +17186,7 @@ def mini_app_get_single_post(post_id):
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.post_id = %s AND p.approved = TRUE
-            GROUP BY p.post_id, p.deleted, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
+            GROUP BY p.post_id, p.deleted, p.deleted_reason, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
         ''', (post_id,))
         
         if not post:
@@ -17357,13 +17231,14 @@ def mini_app_get_single_post(post_id):
         if post.get('deleted'):
             formatted_post = {
                 'id': post['post_id'],
-                'content': "This content has been deleted by the author.",
+                'content': deleted_notice(post.get('deleted_reason'), "content"),
                 'categories': category_list,
                 'vent_number': post.get('vent_number'),
                 'time_ago': time_ago,
                 'comments': post['comment_count'] or 0,
                 'author_id': post['author_id'],
                 'deleted': True,
+                'deleted_by': _deleted_by(post),
                 'explicit': is_explicit,
                 'content_hidden': False,
                 'author': {
