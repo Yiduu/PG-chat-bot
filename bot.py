@@ -606,13 +606,11 @@ def init_db():
                     logger.info("Adding missing column: deleted to posts table")
                     c.execute("ALTER TABLE posts ADD COLUMN deleted BOOLEAN DEFAULT FALSE")
 
-                # Deleted-vent options: when/why a vent was deleted, and whether its placeholder is
-                # hidden. deleted_reason is 'author' or 'admin' (NULL on older rows = the author);
+                # Deleted vents: when/why a vent was deleted. deleted_reason is 'author' or 'admin' (NULL on older rows = the author);
                 # deleted_at starts the 24-hour restore window (NULL on older rows = not restorable).
                 for col_name, col_type in [
                     ('deleted_at', 'TIMESTAMP DEFAULT NULL'),
                     ('deleted_reason', 'TEXT DEFAULT NULL'),
-                    ('placeholder_hidden', 'BOOLEAN DEFAULT FALSE'),
                 ]:
                     if ('posts', col_name) not in existing_columns:
                         logger.info(f"Adding missing column: {col_name} to posts table")
@@ -1510,55 +1508,46 @@ def build_deleted_channel_text(vent_display, hashtags, by_admin=False):
 # ---- deleted vents: who removed it, restore window, placeholder choice ----
 # posts.deleted_reason: 'author' (NULL on older rows counts as the author) or 'admin'.
 # posts.deleted_at starts the restore window; only an author's own deletion can be restored,
-# and only for RESTORE_WINDOW_HOURS. posts.placeholder_hidden: the author chose "Remove completely"
-# (no placeholder in the channel or the feed). The text/media always stay in the database and are
-# never sent to clients while a vent is deleted.
+# and only for RESTORE_WINDOW_HOURS. A deleted vent always leaves a placeholder. The text/media stay
+# in the database and are never sent to clients while a vent is deleted.
 RESTORE_WINDOW_HOURS = 24
 
 
-def deleted_notice(reason, noun="content", hidden=False):
+def deleted_notice(reason, noun="content"):
     """The sentence shown in place of a deleted vent."""
-    if hidden:
-        return f"This {noun} is no longer available."
     if reason == 'admin':
         return f"This {noun} has been removed by an admin."
     return f"This {noun} has been deleted by the author."
 
 
-def soft_delete_post(post_id, reason, hide_placeholder=False):
+def soft_delete_post(post_id, reason):
     """Mark a vent deleted (content kept so an author deletion can be restored). True if a row
     changed. An admin removal also overrides an earlier author deletion, so the author can no
     longer restore a vent an admin took down."""
     row = db_fetch_one("""
         UPDATE posts
-        SET deleted = TRUE, deleted_at = LOCALTIMESTAMP, deleted_reason = %s, placeholder_hidden = %s
+        SET deleted = TRUE, deleted_at = LOCALTIMESTAMP, deleted_reason = %s
         WHERE post_id = %s
           AND (COALESCE(deleted, FALSE) = FALSE
                OR (%s = 'admin' AND deleted_reason IS DISTINCT FROM 'admin'))
         RETURNING post_id
-    """, (reason, bool(hide_placeholder), int(post_id), reason))
+    """, (reason, int(post_id), reason))
     return bool(row)
 
 
 def restore_deleted_post(post_id, author_id):
     """Undo an author's deletion if it is still inside the window. One atomic statement, so a
-    double tap or a race with an admin removal can't both win. Returns the restored row (plus
-    was_hidden: whether the channel message had been removed) or None."""
+    double tap or a race with an admin removal can't both win. Returns the restored row or None."""
     return db_fetch_one("""
-        WITH old AS (
-            SELECT post_id, COALESCE(placeholder_hidden, FALSE) AS was_hidden
-            FROM posts WHERE post_id = %s FOR UPDATE
-        )
-        UPDATE posts p
-        SET deleted = FALSE, deleted_at = NULL, deleted_reason = NULL, placeholder_hidden = FALSE
-        FROM old
-        WHERE p.post_id = old.post_id
-          AND p.author_id = %s
-          AND p.deleted = TRUE
-          AND p.deleted_reason = 'author'
-          AND p.deleted_at IS NOT NULL
-          AND p.deleted_at > LOCALTIMESTAMP - make_interval(hours => %s)
-        RETURNING p.*, old.was_hidden
+        UPDATE posts
+        SET deleted = FALSE, deleted_at = NULL, deleted_reason = NULL
+        WHERE post_id = %s
+          AND author_id = %s
+          AND deleted = TRUE
+          AND deleted_reason = 'author'
+          AND deleted_at IS NOT NULL
+          AND deleted_at > LOCALTIMESTAMP - make_interval(hours => %s)
+        RETURNING *
     """, (int(post_id), str(author_id), RESTORE_WINDOW_HOURS))
 
 
@@ -1622,24 +1611,9 @@ async def channel_show_placeholder(context, post, by_admin=False, remove_media=F
     return False
 
 
-async def channel_hide_post(context, post):
-    """Remove the vent's channel message completely. False if Telegram refused (the caller then
-    falls back to the placeholder)."""
-    msg_id = post.get('channel_message_id')
-    if not msg_id:
-        return False
-    try:
-        await context.bot.delete_message(chat_id=CHANNEL_ID, message_id=msg_id)
-        return True
-    except Exception as e:
-        logger.error(f"Could not delete channel message {msg_id}: {e}")
-        return False
-
-
-async def channel_restore_post(context, post, was_hidden):
+async def channel_restore_post(context, post):
     """Put a restored vent back in the channel: edit the placeholder back to the original text, or
-    - when the message had been removed (or is gone) - publish it again and store the new message
-    id. True on success."""
+    - when that message is gone - publish it again and store the new message id. True on success."""
     post_id = post['post_id']
     hashtags = await _post_hashtags(post_id)
     body_html = EXPLICIT_WARNING_HTML if post.get('explicit') else html.escape(post.get('content') or '')
@@ -1654,7 +1628,7 @@ async def channel_restore_post(context, post, was_hidden):
     media_type = post.get('media_type') or 'text'
     msg_id = post.get('channel_message_id')
 
-    if msg_id and not was_hidden:
+    if msg_id:
         try:
             if media_type == 'text':
                 await context.bot.edit_message_text(chat_id=CHANNEL_ID, message_id=msg_id, text=text,
@@ -1703,10 +1677,9 @@ async def channel_restore_post(context, post, was_hidden):
         return False
 
 
-async def perform_author_delete(update, context, user_id, post_id, from_page, hide):
-    """An author deletes their own published vent. hide=False leaves a 'deleted by the author'
-    placeholder; hide=True removes it from the channel and the feed. Either way it can be restored
-    for RESTORE_WINDOW_HOURS."""
+async def perform_author_delete(update, context, user_id, post_id, from_page):
+    """An author deletes their own published vent. It always leaves a 'deleted by the author'
+    placeholder and can be restored for RESTORE_WINDOW_HOURS."""
     query = update.callback_query
     post = await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,))
     if not post or str(post['author_id']) != str(user_id):
@@ -1716,30 +1689,18 @@ async def perform_author_delete(update, context, user_id, post_id, from_page, hi
         await query.answer("This post is already deleted", show_alert=True)
         return
 
-    has_channel_msg = bool(post.get('channel_message_id'))
-    hidden = False
-    if has_channel_msg:
-        if hide:
-            hidden = await channel_hide_post(context, post)
-            if not hidden:
-                await channel_show_placeholder(context, post, False)   # Telegram refused: keep a placeholder
-        else:
-            await channel_show_placeholder(context, post, False)
-    elif hide:
-        hidden = True
-    changed = await asyncio.to_thread(soft_delete_post, post_id, 'author', hidden)
+    if post.get('channel_message_id'):
+        await channel_show_placeholder(context, post, False)
+    changed = await asyncio.to_thread(soft_delete_post, post_id, 'author')
     if not changed:
         await query.answer("This post is already deleted", show_alert=True)
         return
 
     await query.answer("Post deleted")
-    note = ""
-    if hide and not hidden:
-        note = "\n\nTelegram wouldn't let me remove the channel message, so a placeholder is shown there instead."
     try:
         await context.bot.send_message(
             query.message.chat_id,
-            f"Your vent was deleted.{note}\n\nChanged your mind? You can restore it for "
+            f"Your vent was deleted.\n\nChanged your mind? You can restore it for "
             f"{RESTORE_WINDOW_HOURS} hours.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
                 "Restore vent", callback_data=f"restore_post_{post_id}_{from_page}")]])
@@ -6297,7 +6258,7 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
 
     # Build the post header
     if post.get('deleted'):
-        post_text = deleted_notice(post.get('deleted_reason'), "content", bool(post.get('placeholder_hidden')))
+        post_text = deleted_notice(post.get('deleted_reason'), "content")
     else:
         post_text = post['content']
     escaped_text = escape_markdown(post_text, version=2)
@@ -9226,16 +9187,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if post and post['author_id'] == user_id:
                     # Ask for confirmation with page info
                     keyboard = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("Keep a placeholder", callback_data=f"confirm_delete_post_{post_id}_{from_page}")],
-                        [InlineKeyboardButton("Remove completely", callback_data=f"confirm_delete_hide_{post_id}_{from_page}")],
-                        [InlineKeyboardButton("Cancel", callback_data=f"cancel_delete_post_{post_id}_{from_page}")]
+                        [
+                            InlineKeyboardButton("Yes, Delete", callback_data=f"confirm_delete_post_{post_id}_{from_page}"),
+                            InlineKeyboardButton("Cancel", callback_data=f"cancel_delete_post_{post_id}_{from_page}")
+                        ]
                     ])
                     
                     await query.message.edit_text(
-                        "*Delete Post*\n\nHow should this vent be deleted?\n\n"
-                        "• *Keep a placeholder*: a notice that it was deleted by the author stays in the channel and the feed.\n"
-                        f"• *Remove completely*: it disappears from the channel and the feed.\n\n"
-                        f"Either way, you can restore it within {RESTORE_WINDOW_HOURS} hours.",
+                        "*Delete Post*\n\nAre you sure you want to delete this post? A notice that it was deleted "
+                        f"by the author will stay in its place, and you can restore it within {RESTORE_WINDOW_HOURS} hours.",
                         reply_markup=keyboard,
                         parse_mode=ParseMode.MARKDOWN
                     )
@@ -9245,13 +9205,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error in delete_post handler: {e}")
                 await query.answer("Error processing request", show_alert=True)
 
-        elif query.data.startswith("confirm_delete_post_") or query.data.startswith("confirm_delete_hide_"):
+        elif query.data.startswith("confirm_delete_post_"):
             try:
                 parts = query.data.split('_')
                 post_id = int(parts[3])
                 from_page = int(parts[4]) if len(parts) > 4 else 1
-                await perform_author_delete(update, context, user_id, post_id, from_page,
-                                            hide=query.data.startswith("confirm_delete_hide_"))
+                await perform_author_delete(update, context, user_id, post_id, from_page)
             except Exception as e:
                 logger.error(f"Error deleting post: {e}")
                 await query.answer("Error deleting post", show_alert=True)
@@ -9267,7 +9226,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"This vent can't be restored: the {RESTORE_WINDOW_HOURS} hours are over, "
                         "it was removed by an admin, or it isn't yours.", show_alert=True)
                     return
-                ok = await channel_restore_post(context, row, bool(row.get('was_hidden')))
+                ok = await channel_restore_post(context, row)
                 await query.answer("Vent restored")
                 if not ok:
                     await context.bot.send_message(
@@ -10750,7 +10709,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # A published vent leaves a "removed by an admin" placeholder (the text and media
                         # stay in the database for moderation but are never shown) and the author can't
                         # restore it. Comments stay, like under an author-deleted vent.
-                        removed = await asyncio.to_thread(soft_delete_post, target_id, 'admin', False)
+                        removed = await asyncio.to_thread(soft_delete_post, target_id, 'admin')
                         if not removed:
                             await query.answer("This vent was already removed by an admin.", show_alert=True)
                             return
@@ -14812,7 +14771,6 @@ function threadTimeline(list){
 // Feed card for a vent its author deleted: no text, media or reactions - just a notice. The card
 // still opens the conversation (comments stay), and keeps its thread chip/panel if it has one.
 function delNote(p,noun){
-  if(p.hidden)return 'This '+noun+' is no longer available.';
   return 'This '+noun+(p.deleted_by==='admin'?' has been removed by an admin.':' has been deleted by the author.');
 }
 function renderDeletedPost(p){
@@ -16898,14 +16856,12 @@ _FEED_SQL = f"""
                p.comment_count, p.media_type,
                p.media_id, p.explicit, p.author_id, p.vent_number, p.revealed_sex,
                COALESCE(p.deleted, FALSE) AS deleted,
-               p.deleted_reason, COALESCE(p.placeholder_hidden, FALSE) AS placeholder_hidden,
+               p.deleted_reason,
                COUNT(*) OVER () AS total_count
         FROM posts p
         -- Vents their author deleted stay in the feed (as a "deleted" placeholder card) so the
         -- conversation and its position in the timeline are not silently removed.
         WHERE p.approved = TRUE
-          -- "Remove completely": a deleted vent whose author hid the placeholder is not in the feed.
-          AND NOT (COALESCE(p.deleted, FALSE) AND COALESCE(p.placeholder_hidden, FALSE))
           -- A vent with an approved continuation is folded into the continuation's thread card,
           -- so only the newest vent of each thread is a feed entry.
           AND NOT EXISTS (
@@ -16924,7 +16880,7 @@ _FEED_SQL = f"""
         pp.post_id, pp.content, pp.timestamp, pp.approved_at, pp.thread_from_post_id,
         pp.comment_count, pp.media_type,
         pp.media_id, pp.explicit, pp.total_count, pp.vent_number, pp.revealed_sex, pp.deleted,
-        pp.deleted_reason, pp.placeholder_hidden,
+        pp.deleted_reason,
         u.user_id AS author_id,
         u.sex AS author_sex,
         u.avatar_emoji AS author_avatar,
@@ -16980,7 +16936,6 @@ _THREAD_ANCESTORS_SQL = """
            a.approved_at, a.timestamp, COALESCE(a.deleted, FALSE) AS deleted, a.deleted_reason
     FROM chain ch JOIN posts a ON a.post_id = ch.anc_id
     WHERE a.approved = TRUE
-      AND NOT (COALESCE(a.deleted, FALSE) AND COALESCE(a.placeholder_hidden, FALSE))
     ORDER BY ch.tip_id, ch.depth ASC
 """
 
@@ -17006,7 +16961,6 @@ _THREAD_MEMBERS_SQL = """
            COALESCE(p.approved_at, p.timestamp) AS shown_at
     FROM down JOIN posts p ON p.post_id = down.post_id
     WHERE p.approved = TRUE
-      AND NOT (COALESCE(p.deleted, FALSE) AND COALESCE(p.placeholder_hidden, FALSE))
     ORDER BY shown_at ASC, p.post_id ASC
 """
 
@@ -17224,7 +17178,7 @@ def mini_app_get_single_post(post_id):
         post = db_fetch_one('''
             SELECT 
                 p.post_id, p.vent_number, p.revealed_sex, p.content, p.timestamp, p.approved_at, p.comment_count, p.media_type, p.media_id, p.deleted, p.explicit,
-                p.deleted_reason, p.placeholder_hidden,
+                p.deleted_reason,
                 u.user_id as author_id, u.sex as author_sex, u.avatar_emoji as author_avatar, u.anonymous_name as author_name,
                 u.is_admin as author_is_admin,
                 STRING_AGG(pc.category_code, ', ') as categories
@@ -17232,7 +17186,7 @@ def mini_app_get_single_post(post_id):
             JOIN users u ON p.author_id = u.user_id
             LEFT JOIN post_categories pc ON p.post_id = pc.post_id
             WHERE p.post_id = %s AND p.approved = TRUE
-            GROUP BY p.post_id, p.deleted, p.deleted_reason, p.placeholder_hidden, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
+            GROUP BY p.post_id, p.deleted, p.deleted_reason, u.user_id, u.sex, u.avatar_emoji, u.anonymous_name, u.is_admin
         ''', (post_id,))
         
         if not post:
@@ -17277,7 +17231,7 @@ def mini_app_get_single_post(post_id):
         if post.get('deleted'):
             formatted_post = {
                 'id': post['post_id'],
-                'content': deleted_notice(post.get('deleted_reason'), "content", bool(post.get('placeholder_hidden'))),
+                'content': deleted_notice(post.get('deleted_reason'), "content"),
                 'categories': category_list,
                 'vent_number': post.get('vent_number'),
                 'time_ago': time_ago,
@@ -17285,7 +17239,6 @@ def mini_app_get_single_post(post_id):
                 'author_id': post['author_id'],
                 'deleted': True,
                 'deleted_by': _deleted_by(post),
-                'hidden': bool(post.get('placeholder_hidden')),
                 'explicit': is_explicit,
                 'content_hidden': False,
                 'author': {
