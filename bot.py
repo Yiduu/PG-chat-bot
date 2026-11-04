@@ -99,12 +99,7 @@ def _center_lines(lines):
 # Only the heading is padded (5 em-spaces + 1 en-space ≈ 5.5em) so it sits
 # centred over the body lines. The body lines have no padding, so the last
 # line keeps its full width and "ይጫኑ።" no longer wraps.
-EXPLICIT_WARNING_HTML = (
-    "\u2003\u2003\u2003\u2003\u2003\u2002⚠️ ማስጠንቀቂያ\n\n"
-    "የዚህ post ይዘት ለሁሉም አባላት ተገቢ አይደለም።\n"
-    "በራስዎ ሃላፊነት ይህንን ፖስት ማንበብ ከፈለጉ፣\n"
-    "ከታች ያለውን \"View Post\" የሚለውን ይጫኑ።"
-)
+# EXPLICIT_WARNING_HTML is built below (after the deleted-notice helpers) so it shares their look.
 # Add color variables near the top of bot.py (after loading env)
 PRIMARY_COLOR = os.getenv('PRIMARY_COLOR')
 SECONDARY_COLOR = os.getenv('SECONDARY_COLOR')
@@ -734,6 +729,55 @@ async def fix_missing_sex(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _invalidate_user_cache()
     
     await update.message.reply_text(f"Fixed missing sex for {rows_fixed} users.")
+
+
+async def refresh_explicit_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: re-edit every already-published explicit vent in the channel so it uses
+    the current EXPLICIT_WARNING_HTML style. Edits in place only (never re-posts)."""
+    user_id = str(update.effective_user.id)
+    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
+    if not user or not user.get('is_admin'):
+        await update.message.reply_text("Admin only.")
+        return
+
+    rows = await db_fetch_all_async(
+        "SELECT * FROM posts WHERE explicit = TRUE AND approved = TRUE "
+        "AND channel_message_id IS NOT NULL AND COALESCE(deleted, FALSE) = FALSE "
+        "ORDER BY post_id")
+    rows = rows or []
+    status = await update.message.reply_text(f"Updating {len(rows)} explicit posts...")
+    done = same = failed = 0
+    for post in rows:
+        try:
+            hashtags = await _post_hashtags(post['post_id'])
+            text = (
+                f"{vent_header_html(_vent_label(post), post.get('revealed_sex'))}\n\n"
+                f"{EXPLICIT_WARNING_HTML}\n\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"{html.escape(hashtags)}\n"
+                f"<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
+            )
+            kb = build_channel_post_keyboard(post['post_id'], post.get('comment_count') or 0, True)
+            if (post.get('media_type') or 'text') == 'text':
+                await context.bot.edit_message_text(
+                    chat_id=CHANNEL_ID, message_id=post['channel_message_id'], text=text,
+                    parse_mode=ParseMode.HTML, reply_markup=kb, disable_web_page_preview=True)
+            else:
+                await context.bot.edit_message_caption(
+                    chat_id=CHANNEL_ID, message_id=post['channel_message_id'], caption=text,
+                    parse_mode=ParseMode.HTML, reply_markup=kb)
+            done += 1
+        except BadRequest as e:
+            if "not modified" in str(e).lower():
+                same += 1
+            else:
+                failed += 1
+                logger.warning(f"refresh_explicit_posts: post {post['post_id']}: {e}")
+        except Exception as e:
+            failed += 1
+            logger.warning(f"refresh_explicit_posts: post {post['post_id']}: {e}")
+        await asyncio.sleep(0.4)  # stay well under Telegram's channel edit limits
+    await status.edit_text(f"Done. Updated {done}, already current {same}, failed {failed} (of {len(rows)}).")
 
 
 async def reset_weekly_badges_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1523,6 +1567,30 @@ def build_deleted_channel_text(vent_display, hashtags, by_admin=False):
         f"{tag_pad}{html.escape(hashtags)}\n"
         f"{link_pad}<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
     )
+
+
+# Explicit-content warning in the same style as the "deleted by the author" notice:
+# one centered, monospace <code> block with the warning sign first. Lines are kept short
+# so Telegram doesn't wrap them (a wrapped line would break the centering).
+EXPLICIT_WARNING_TITLE = "ማስጠንቀቂያ"
+EXPLICIT_WARNING_NOTICE = (
+    "የዚህ post ይዘት ለሁሉም",
+    "አባላት ተገቢ አይደለም።",
+    "በራስዎ ሃላፊነት ይህንን ፖስት",
+    "ማንበብ ከፈለጉ፣",
+    "ከታች ያለውን \"View Post\"",
+    "የሚለውን ይጫኑ።",
+)
+
+
+def build_explicit_warning_html():
+    lines = [f"{DELETED_POST_ICON} {EXPLICIT_WARNING_TITLE}", ""] + list(EXPLICIT_WARNING_NOTICE)
+    width = max(_mono_cells(l) for l in lines)
+    block = "\n".join(_center_mono(l, width) for l in lines)
+    return f"<code>{html.escape(block)}</code>"
+
+
+EXPLICIT_WARNING_HTML = build_explicit_warning_html()
 
 
 # ---- deleted vents: who removed it, restore window, placeholder choice ----
@@ -12642,6 +12710,7 @@ def main():
     app.add_handler(CommandHandler("about", about_command))
     app.add_handler(CommandHandler("fixventnumbers", fix_vent_numbers))
     app.add_handler(CommandHandler("fix_missing_sex", fix_missing_sex))
+    app.add_handler(CommandHandler("refresh_explicit", refresh_explicit_posts))
     app.add_handler(CommandHandler("recount_comments", recount_comments))
     app.add_handler(CommandHandler("reset_weekly_badges", reset_weekly_badges_command))
     
