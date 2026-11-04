@@ -249,3 +249,37 @@ def test_skip_tap_outside_the_nickname_step_does_nothing(world):
     world.add(8, sex='👨', done=True)
     assert gate(world, tap_update(world, 8, 'onb_skip_nick'), ctx())
     assert world.users['8']['anonymous_name'] == 'Anonymous'
+
+
+# ---------------- user who already chose a name but never set sex ----------------
+
+def test_custom_name_without_sex_is_asked_sex_only_and_keeps_name(world):
+    world.add(90, sex='👤', name='Grace')
+    c = ctx(['comments_6'])
+    run(bot.start(text_update(world, 90, '/start comments_6'), c))
+    assert 'select your sex' in world.sent[-1][0].lower()
+
+    assert gate(world, tap_update(world, 90, 'onb_sex_female'), c)
+    assert world.users['90']['sex'] == '👩' and world.users['90']['onboarding_done'] is True
+    assert world.users['90']['anonymous_name'] == 'Grace'            # untouched
+    assert not any('nickname' in str(t).lower() and 'choose' in str(t).lower() for t, _ in world.sent)
+    assert any('Your name stays Grace' in str(t) for t, _ in world.sent)
+    assert bot.get_state(c) == bot.STATE_IDLE                         # not waiting for a nickname
+    assert world.comments_shown == [6]                                # the link still continues
+
+
+def test_custom_name_user_typing_after_sex_is_not_captured_as_nickname(world):
+    world.add(91, sex='👤', name='Peter')
+    c = ctx([])
+    gate(world, text_update(world, 91, 'hello'), c)                   # intercepted, question shown
+    gate(world, tap_update(world, 91, 'onb_sex_male'), c)
+    assert gate(world, text_update(world, 91, 'Something else'), c) is False
+    assert world.users['91']['anonymous_name'] == 'Peter'
+
+
+def test_default_name_in_any_case_still_gets_the_nickname_question(world):
+    world.add(92, sex='👤', name='anonymous')
+    c = ctx([])
+    gate(world, text_update(world, 92, 'hi'), c)
+    gate(world, tap_update(world, 92, 'onb_sex_male'), c)
+    assert bot.get_state(c) == bot.STATE_ONBOARDING_NICKNAME

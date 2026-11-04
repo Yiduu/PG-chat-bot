@@ -5200,16 +5200,17 @@ async def onboarding_prompt_sex(update, context):
     )
 
 
-async def onboarding_finish(update, context, user_id, nickname):
+async def onboarding_finish(update, context, user_id, nickname, kept_name=None):
     """Save the optional nickname, then continue where the user was heading: replay the deep link
-    they opened the bot with (e.g. view comments), or show the normal welcome."""
+    they opened the bot with (e.g. view comments), or show the normal welcome.
+    kept_name: the user already had a custom name, so the nickname question was never asked."""
     payload = context.user_data.pop('onboarding_payload', None)
     context.user_data['state'] = STATE_IDLE
     if nickname:
         await db_update_user_async(user_id, anonymous_name=nickname)
 
     query = update.callback_query
-    if query:
+    if query and not kept_name:
         try:
             await query.answer()
             await query.edit_message_text("Nickname: skipped")
@@ -5217,8 +5218,12 @@ async def onboarding_finish(update, context, user_id, nickname):
             pass
 
     message = update.effective_message
-    note = (f"Nickname set to {nickname}." if nickname
-            else "Nickname skipped, you will show up as Anonymous. You can change it any time from your Profile.")
+    if kept_name:
+        note = f"Your name stays {kept_name}."
+    elif nickname:
+        note = f"Nickname set to {nickname}."
+    else:
+        note = "Nickname skipped, you will show up as Anonymous. You can change it any time from your Profile."
     if payload:
         # This message also installs the main reply keyboard for brand-new users.
         await message.reply_text(f"{note}\n\nYou're all set.", reply_markup=get_main_menu(user_id))
@@ -5254,12 +5259,17 @@ async def onboarding_gate(update, context, row):
         emoji, label = ONBOARDING_SEX_CHOICES[data]
         # Mark the questionnaire done together with the sex, so the nickname step can never trap anyone.
         await db_update_user_async(uid, sex=emoji, onboarding_done=True)
-        set_state(context, STATE_ONBOARDING_NICKNAME)
         try:
             await query.answer()
             await query.edit_message_text(f"Sex: {label}")
         except Exception:
             pass
+        # Someone who already chose a name earlier keeps it: no nickname question for them.
+        existing_name = (row.get('anonymous_name') or '').strip()
+        if existing_name.lower() not in ('', 'anonymous'):
+            await onboarding_finish(update, context, uid, None, kept_name=existing_name)
+            raise ApplicationHandlerStop
+        set_state(context, STATE_ONBOARDING_NICKNAME)
         await query.message.reply_text(
             "Now choose a nickname (up to 30 characters), or tap Skip to stay Anonymous.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Skip", callback_data='onb_skip_nick')]])
