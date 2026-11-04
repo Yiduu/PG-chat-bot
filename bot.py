@@ -5171,6 +5171,11 @@ ONBOARDING_SEX_CHOICES = {
 _MENU_BUTTON_TEXTS = {"Share", "Chat Requests", "Profile", "Posts", "Top", "Settings", "Open App", "❌ Cancel"}
 
 
+async def _is_admin_user(user_id):
+    row = await asyncio.to_thread(get_user_cached, str(user_id))
+    return bool(row and row.get('is_admin'))
+
+
 def needs_onboarding(row):
     """True for a user who still has to answer the questionnaire: they have not finished it AND
     have no sex set (new users start with the 👤 placeholder). Once the sex is 👨/👩 or the
@@ -9042,9 +9047,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Changing sex...", show_alert=False)
             btns = [
                 [InlineKeyboardButton("Male", callback_data='sex_male')],
-                [InlineKeyboardButton("Female", callback_data='sex_female')],
-                [InlineKeyboardButton("Remove/Hide Sex", callback_data='sex_hide')]
+                [InlineKeyboardButton("Female", callback_data='sex_female')]
             ]
+            # Only administrators may hide their sex; everyone else must keep Male or Female.
+            if await _is_admin_user(user_id):
+                btns.append([InlineKeyboardButton("Remove/Hide Sex", callback_data='sex_hide')])
             await query.message.reply_text("Select your sex:", reply_markup=InlineKeyboardMarkup(btns))
 
         elif query.data.startswith('sex_'):
@@ -9052,11 +9059,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sex = '👨'
             elif query.data == 'sex_female':
                 sex = '👩'
-            elif query.data == 'sex_hide':
+            elif query.data == 'sex_hide' and await _is_admin_user(user_id):
                 sex = '👤'
             else:
-                sex = '👤'  # fallback
-            
+                # sex_hide from a non-admin (e.g. an old message that still has the button), or an
+                # unknown sex_* value: change nothing.
+                await query.answer("Only Male or Female can be selected.", show_alert=True)
+                return
+
             await db_update_user_async(user_id, sex=sex)
             await query.message.reply_text("Sex updated!")
             await send_updated_profile(user_id, query.message.chat.id, context)

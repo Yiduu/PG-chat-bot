@@ -283,3 +283,40 @@ def test_default_name_in_any_case_still_gets_the_nickname_question(world):
     gate(world, text_update(world, 92, 'hi'), c)
     gate(world, tap_update(world, 92, 'onb_sex_male'), c)
     assert bot.get_state(c) == bot.STATE_ONBOARDING_NICKNAME
+
+
+# ---------------- only admins may hide their sex ----------------
+
+def _edit_sex_buttons(world, uid):
+    run(bot.button_handler(tap_update(world, uid, 'edit_sex'), ctx()))
+    return button_data(world.sent[-1][1])
+
+
+def test_non_admin_does_not_get_the_hide_sex_button(world):
+    world.add(30, sex='👨', done=True)
+    assert _edit_sex_buttons(world, 30) == ['sex_male', 'sex_female']
+
+
+def test_admin_still_gets_the_hide_sex_button(world):
+    world.add(31, sex='👨', done=True, is_admin=True)
+    assert _edit_sex_buttons(world, 31) == ['sex_male', 'sex_female', 'sex_hide']
+
+
+def test_non_admin_cannot_hide_sex_even_from_an_old_message(world):
+    world.add(32, sex='👩', done=True)
+    run(bot.button_handler(tap_update(world, 32, 'sex_hide'), ctx()))
+    assert world.users['32']['sex'] == '👩'
+    run(bot.button_handler(tap_update(world, 32, 'sex_whatever'), ctx()))   # unknown value must not reset it either
+    assert world.users['32']['sex'] == '👩'
+
+
+def test_admin_can_hide_and_non_admin_can_still_switch_male_female(world, monkeypatch):
+    async def fake_profile(*a, **k):
+        return None
+    monkeypatch.setattr(bot, "send_updated_profile", fake_profile)
+    world.add(33, sex='👨', done=True, is_admin=True)
+    run(bot.button_handler(tap_update(world, 33, 'sex_hide'), ctx()))
+    assert world.users['33']['sex'] == '👤'
+    world.add(34, sex='👨', done=True)
+    run(bot.button_handler(tap_update(world, 34, 'sex_female'), ctx()))
+    assert world.users['34']['sex'] == '👩'
