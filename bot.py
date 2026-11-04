@@ -12624,6 +12624,20 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 }
 .cat-chip:active{transform:scale(0.97)}
 .cat-chip.on{background:rgba(var(--gold-rgb),0.12);border-color:var(--gold);color:var(--gold2)}
+.feed-cats{display:flex;gap:8px;overflow-x:auto;padding:2px 16px 12px;scrollbar-width:none}
+.feed-cats::-webkit-scrollbar{display:none}
+.feed-cat{flex:0 0 auto;padding:7px 14px;border-radius:40px;border:1.5px solid var(--border);background:var(--glass);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+.feed-cat.on{background:rgba(var(--gold-rgb),0.12);border-color:var(--gold);color:var(--gold2)}
+.rp-tabs{display:flex;gap:8px;padding:0 16px 12px}
+.rp-tabs .btn-ghost{flex:1}
+.rp-tabs .btn-ghost.on{background:rgba(var(--gold-rgb),0.12);border-color:var(--gold);color:var(--gold2)}
+.rep-card{margin:0 16px 12px;padding:14px;border:1px solid var(--border);border-radius:18px;background:var(--glass)}
+.rep-meta{font-size:12px;color:var(--text3);margin-bottom:6px}
+.rep-reason{font-size:14px;font-weight:700;color:var(--gold);margin-bottom:6px}
+.rep-prev{font-size:14px;color:var(--text2);line-height:1.5;margin-bottom:10px;word-break:break-word}
+.rep-btns{display:flex;gap:8px}
+.rep-btns .modal-btn{flex:1;margin-top:0;padding:10px 6px;font-size:13px}
+.rep-btns .rep-del{background:#e05252;color:#fff}
 .cat-check{width:16px;height:16px;
   display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;
   color:transparent;transition:color 0.15s}
@@ -13500,6 +13514,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
     <div class="page" id="page-feed">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Community</h1><div class="page-head-sub">Read, reflect, respond</div></div></div></div>
       <div class="search-wrap"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><input id="search-inp" type="text" placeholder="Search vents…"></div>
+      <div class="feed-cats" id="feed-cats"></div>
       <div id="feed-list"></div><div id="feed-more" style="padding:16px;text-align:center;display:none"><button class="btn-ghost" id="load-more-btn">Load more</button></div>
     </div>
     <div class="page" id="page-detail">
@@ -13625,6 +13640,7 @@ let pendingMedia = null, pendingCommentMedia = null, pendingChatMedia = null;
 let feedPage = 1, feedHasMore = true, feedLoading = false, searchQ = '', currentPostId = null, feedLastDay = '';
 // Scroll offset of the feed at the moment a vent was opened from it (null = vent was not opened from the feed).
 let feedScrollY = null;
+let feedCat = '';
 let chatsCache = [];
 let crMsgsCache = [];
 let crChat = {};   // chat-level state from the server: blocked_by_me, can_chat, cleared, share_url, ...
@@ -14469,6 +14485,43 @@ function go(name,btn){
 }
 function gotoFeed(){go('feed',document.querySelector('[data-page="feed"]'));}
 
+// ---- category chips on the feed ----
+function renderFeedCats(){
+  const box=document.getElementById('feed-cats');if(!box)return;
+  box.innerHTML=[['','All']].concat(CATS.map(c=>[c[0],c[2]])).map(c=>`<div class="feed-cat${feedCat===c[0]?' on':''}" data-c="${c[0]}" onclick="setFeedCat(this.dataset.c)">${esc(c[1])}</div>`).join('');
+}
+function setFeedCat(c){
+  if(feedLoading){setTimeout(()=>setFeedCat(c),150);return}
+  feedCat=c||'';feedPage=1;renderFeedCats();loadFeed();
+}
+
+// ---- follow / unfollow ----
+async function toggleFollow(userId,follow){
+  try{
+    await api('/api/mini-app/follow',{method:'POST',body:JSON.stringify({user_id:UID,target_id:userId,follow:follow})});
+    showUserProfile(userId);
+  }catch(e){toast(e.message||'Could not update follow')}
+}
+
+// ---- report a vent or a response ----
+const REPORT_REASONS=['Spam','Harassment or bullying','Inappropriate or explicit content','Someone may be in danger','Other'];
+let reportTarget=null;
+function openReport(type,id){
+  reportTarget={type:type,id:id};
+  crOpenSheet('<h3>Report this '+(type==='post'?'vent':'response')+'</h3><p>Pick the closest reason. Admins will review it.</p>'+
+    REPORT_REASONS.map((r,i)=>'<button type="button" class="modal-btn modal-btn-secondary" onclick="submitReport('+i+')">'+esc(r)+'</button>').join('')+
+    '<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
+}
+async function submitReport(i){
+  const t=reportTarget;if(!t)return;
+  crCloseSheet();
+  try{
+    await api('/api/mini-app/report',{method:'POST',body:JSON.stringify({user_id:UID,target_type:t.type,target_id:t.id,reason:REPORT_REASONS[i]})});
+    toast('Thanks. Admins will review this.');
+  }catch(e){toast(e.message||'Could not send report')}
+  reportTarget=null;
+}
+
 function renderCats(){
   const g=document.getElementById('cat-grid');
   g.innerHTML=CATS.map(([c,icon,l])=>`<div class="cat-chip" data-c="${c}" onclick="toggleCat(this,'${c}')"><div class="cat-check"></div>${icon}<span>${esc(l)}</span></div>`).join('');
@@ -14628,7 +14681,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     clearTimeout(st);searchQ=e.target.value.trim();st=setTimeout(()=>{feedPage=1;loadFeed()},500);
   });
   buildEmojiPicker();
-  renderCats();
+  renderCats();renderFeedCats();
   initAppearance();
   ['ep-name','ep-bio'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',updateEditUI)});
   // Initially hide comment bar
@@ -14713,8 +14766,8 @@ async function loadFeed(append=false){
     list.insertAdjacentHTML('beforeend', `<div id="feed-load-skel">${skelPosts(2)}</div>`);
   }
   try{
-    let url=`/api/mini-app/get-posts?page=${feedPage}&user_id=${UID}`;
-    if(searchQ)url=`/api/mini-app/search?q=${encodeURIComponent(searchQ)}&page=${feedPage}&user_id=${UID}`;
+    let url=`/api/mini-app/get-posts?page=${feedPage}&user_id=${UID}&category=${encodeURIComponent(feedCat)}`;
+    if(searchQ)url=`/api/mini-app/search?q=${encodeURIComponent(searchQ)}&page=${feedPage}&user_id=${UID}&category=${encodeURIComponent(feedCat)}`;
     const d=await api(url);
     const posts=d.data||[];feedHasMore=d.has_more;
     if(!append){list.innerHTML='';feedLastDay='';}
@@ -14868,6 +14921,7 @@ async function openPost(id, reveal){
         ${p.media_id?renderMedia(p.media_type,p.media_id):''}
         <div>
           ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
+          ${String(p.author_id)===String(UID)?'':`<button class="ca-btn" style="margin-top:6px" onclick="openReport('post',${p.id})">${ICONS.alert} Report</button>`}
         </div>
       </div>`;
     await fetchAndRenderComments(id,p.author_id,revealParam);
@@ -14922,7 +14976,7 @@ function renderComments(comments,postAuthorId){
     }
     return `<div class="comment-item" id="cmt-${c.id}"><div class="ava" style="width:30px;height:30px;font-size:14px">${avaHtml(c.author?.sex)}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${nameBadge}${esc(name)} <span style="font-size:11px;color:var(--text3)">${esc(c.time_ago||'')}</span></div>${cmtQuoteHtml(c.reply_to)}<div class="comment-text">${esc(c.content)}</div>${c.media_id?renderMedia(c.media_type,c.media_id):''}
       ${renderReactionButtons(c.id, 'comment', c.reactions?.counts || {}, c.reactions?.user_reaction)}
-      <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:''}</div></div></div>`;
+      <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:`<button class="ca-btn" onclick="openReport('comment',${c.id})">${ICONS.alert} Report</button>`}</div></div></div>`;
   };
   const olderBtn=cmtHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderComments()">Load older responses</button></div>':'';
   box.innerHTML=olderBtn+roots.map(c=>rr(c,0)).join('')+vrPendHtmlFor('comment');
@@ -15318,11 +15372,16 @@ async function checkAdminStatus(){
         <div class="page-head-wrap"><div class="page-head" style="padding-top:24px">
           <div><h1>Chat Monitor</h1><div class="page-head-sub">Admin oversight — live</div></div>
         </div></div>
-        <div class="search-wrap">
+        <div class="rp-tabs">
+          <button class="btn-ghost on" id="admin-tab-chats" onclick="adminTab('chats')">Chats</button>
+          <button class="btn-ghost" id="admin-tab-reports" onclick="adminTab('reports')">Reports</button>
+        </div>
+        <div class="search-wrap" id="admin-chats-search">
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
           <input id="admin-search-inp" type="text" placeholder="Search by name or user ID…">
         </div>
         <div id="admin-chats-list"></div>
+        <div id="admin-reports-list" style="display:none"></div>
       </div>`);
 
     let st;
@@ -15331,6 +15390,61 @@ async function checkAdminStatus(){
       st = setTimeout(()=>loadAdminChats(e.target.value.trim(), 1), 400);
     });
   }catch(e){console.error('checkAdminStatus failed:', e);}
+}
+
+let adminReportsPage = 1;
+function adminTab(which){
+  const rep = which==='reports';
+  document.getElementById('admin-chats-search').style.display = rep ? 'none' : '';
+  document.getElementById('admin-chats-list').style.display = rep ? 'none' : '';
+  document.getElementById('admin-reports-list').style.display = rep ? '' : 'none';
+  document.getElementById('admin-tab-chats').classList.toggle('on', !rep);
+  document.getElementById('admin-tab-reports').classList.toggle('on', rep);
+  if(rep) loadAdminReports(1);
+}
+async function loadAdminReports(page){
+  adminReportsPage = page || 1;
+  const box = document.getElementById('admin-reports-list');
+  box.innerHTML = skelPosts(2);
+  try{
+    const d = await api(`/api/mini-app/admin/reports?admin_id=${UID}&page=${adminReportsPage}`);
+    const rows = d.data || [];
+    if(!rows.length){
+      box.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:14px">No pending reports</div>';
+      return;
+    }
+    const kind = {post:'Vent', comment:'Response', user:'User'};
+    const cards = rows.map(r=>`<div class="rep-card" id="rep-${r.id}">
+      <div class="rep-meta">${esc(kind[r.type]||'Content')} #${r.target_id} · ${esc(r.created||'')}</div>
+      <div class="rep-reason">${esc(r.reason)}</div>
+      <div class="rep-prev">${esc(r.preview)}</div>
+      <div class="rep-btns">
+        <button class="modal-btn modal-btn-secondary" onclick="adminReportAct(${r.id},'dismiss')">Dismiss</button>
+        ${r.type==='user'?'':`<button class="modal-btn rep-del" onclick="adminAsk(${r.id},'delete')">Delete</button>`}
+        <button class="modal-btn modal-btn-secondary" onclick="adminAsk(${r.id},'warn')">Warn</button>
+      </div></div>`).join('');
+    const nav = `<div style="display:flex;justify-content:center;gap:10px;padding:4px 0 12px">
+      ${adminReportsPage>1?`<button class="btn-ghost" onclick="loadAdminReports(${adminReportsPage-1})">◀ Prev</button>`:''}
+      ${d.has_more?`<button class="btn-ghost" onclick="loadAdminReports(${adminReportsPage+1})">Next ▶</button>`:''}
+    </div>`;
+    box.innerHTML = `<div style="padding:0 16px 10px;font-size:13px;color:var(--text3)">${d.pending} pending</div>` + cards + nav;
+  }catch(e){
+    box.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load reports</div>';
+  }
+}
+function adminAsk(id, action){
+  const del = action==='delete';
+  crOpenSheet('<h3>'+(del?'Remove this content?':'Warn the author?')+'</h3><p>'+
+    (del?'The author is notified. A removed vent leaves a placeholder in the feed and the channel.':'The author gets a warning. Repeated warnings lead to a ban.')+'</p>'+
+    '<button type="button" class="modal-btn solid-danger" onclick="crCloseSheet();adminReportAct('+id+',&quot;'+action+'&quot;)">'+(del?'Remove':'Send warning')+'</button>'+
+    '<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
+}
+async function adminReportAct(id, action){
+  try{
+    await api('/api/mini-app/admin/resolve-report',{method:'POST',body:JSON.stringify({admin_id:UID,report_id:id,action:action})});
+    toast(action==='dismiss'?'Report dismissed':action==='warn'?'Author warned':'Content removed');
+  }catch(e){ toast(e.message||'Could not update report'); }
+  loadAdminReports(adminReportsPage);
 }
 
 async function loadAdminChats(search='', page=1){
@@ -16086,6 +16200,7 @@ async function showUserProfile(userId){
         ${u.bio?`<div class="modal-bio">${esc(u.bio)}</div>`:''}
         <div class="modal-stats"><div class="modal-stat"><div class="modal-stat-num">${u.stats?.posts||0}</div><div class="modal-stat-lbl">Vents</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.comments||0}</div><div class="modal-stat-lbl">Replies</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.followers||0}</div><div class="modal-stat-lbl">Followers</div></div></div>
         ${buttonHtml}
+        <button class="modal-btn modal-btn-secondary" onclick="toggleFollow('${esc(u.id)}',${!u.is_following})">${u.is_following?'Following ✓':'Follow'}</button>
       `;
     }
     
@@ -16862,6 +16977,9 @@ _FEED_SQL = f"""
         -- Vents their author deleted stay in the feed (as a "deleted" placeholder card) so the
         -- conversation and its position in the timeline are not silently removed.
         WHERE p.approved = TRUE
+          AND (%s = '' OR EXISTS (
+              SELECT 1 FROM post_categories pcf
+              WHERE pcf.post_id = p.post_id AND pcf.category_code = %s))
           -- A vent with an approved continuation is folded into the continuation's thread card,
           -- so only the newest vent of each thread is a feed entry.
           AND NOT EXISTS (
@@ -17048,7 +17166,10 @@ def mini_app_get_posts():
         per_page = _clamp_int(request.args.get('per_page'), 1, 50, 10)
         offset = (page - 1) * per_page
 
-        posts = db_fetch_all(_FEED_SQL, (per_page, offset, uid, uid, uid))
+        category = (request.args.get('category') or '').strip()
+        if category not in {code for _, code in CATEGORIES}:
+            category = ''
+        posts = db_fetch_all(_FEED_SQL, (category, category, per_page, offset, uid, uid, uid))
 
         formatted_posts = []
         is_admin_viewer = bool(posts and posts[0].get('viewer_is_admin'))
@@ -18489,6 +18610,10 @@ def mini_app_profile(user_id):
         
         # Bio and role follow the same privacy switches the bot's profile card uses.
         is_target_admin = bool(user.get('is_admin'))
+        is_following = bool(
+            viewer_id and not is_owner and db_fetch_one(
+                "SELECT 1 FROM followers WHERE follower_id = %s AND followed_id = %s",
+                (str(viewer_id), str(user_id))))
         bio_display = (user.get('bio') or "").strip()
         role_display = "Administrator" if is_target_admin else ""
         if not is_viewer_admin and not is_owner:
@@ -18510,6 +18635,7 @@ def mini_app_profile(user_id):
                 'rating': rating_display,
                 'aura': aura_display,
                 'is_admin': is_target_admin,
+                'is_following': is_following,
                 'stats': {
                     'followers': follower_count,
                     'posts': "Hidden" if (profile_private and not is_viewer_admin and not is_owner) else (posts['count'] if posts else 0),
@@ -18656,6 +18782,229 @@ def mini_app_admin_approve_post():
     except Exception as e:
         logger.error(f"Error in mini-app approve post: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+# ==================== MINI APP: REPORTS, FOLLOW, ADMIN REPORT REVIEW ====================
+MINI_REPORT_REASONS = (
+    'Spam', 'Harassment or bullying', 'Inappropriate or explicit content',
+    'Someone may be in danger', 'Other',
+)
+
+
+def _run_with_bot(make_coro):
+    """Run one of the bot's async helpers from a synchronous Flask route.
+    make_coro(ctx) must return a coroutine; ctx.bot is a live telegram Bot. Those helpers only
+    use context.bot, so a tiny stand-in context is enough."""
+    from types import SimpleNamespace
+    from telegram import Bot
+
+    async def _runner():
+        async with Bot(TOKEN) as bot:
+            return await make_coro(SimpleNamespace(bot=bot))
+    return asyncio.run(_runner())
+
+
+@flask_app.route('/api/mini-app/report', methods=['POST'])
+def mini_app_report():
+    """Report a vent or a response. Same rules as the bot: no duplicates, 5 reports per day."""
+    try:
+        data = request.get_json(silent=True) or {}
+        user_id = str(data.get('user_id') or '')
+        target_type = data.get('target_type')
+        reason = (data.get('reason') or '').strip()[:200]
+        try:
+            target_id = int(data.get('target_id'))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid request'}), 400
+        if not user_id or target_type not in ('post', 'comment') or not reason:
+            return jsonify({'success': False, 'error': 'Invalid request'}), 400
+        if not db_fetch_one("SELECT 1 FROM users WHERE user_id = %s", (user_id,)):
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+
+        preview, author_id = get_report_content_preview(target_type, target_id)
+        if author_id is None:
+            return jsonify({'success': False, 'error': 'That content no longer exists'}), 404
+        if str(author_id) == user_id:
+            return jsonify({'success': False, 'error': "You can't report your own content"}), 400
+
+        report_id = create_report(user_id, target_type, target_id, reason)
+        if report_id is None:
+            return jsonify({'success': False, 'error': 'You already reported this'}), 409
+        if report_id == -1:
+            return jsonify({'success': False, 'error': 'Daily report limit reached. Try again tomorrow.'}), 429
+
+        if ADMIN_ID:
+            text = (f"<b>New Report #{report_id}</b>\n"
+                    f"Type: {_report_type_label(target_type)}\n"
+                    f"Reason: {html.escape(reason)}\n\n"
+                    f"<blockquote>{html.escape(preview or '')}</blockquote>")
+            markup = {"inline_keyboard": [[{"text": "Review Reports", "callback_data": "admin_reports"}]]}
+            _fire_and_forget(send_telegram_message_sync, ADMIN_ID, text, parse_mode='HTML', reply_markup=markup)
+        return jsonify({'success': True, 'report_id': report_id})
+    except Exception as e:
+        logger.error(f"Mini-app report error: {e}")
+        return jsonify({'success': False, 'error': 'Could not send report'}), 500
+
+
+@flask_app.route('/api/mini-app/follow', methods=['POST'])
+def mini_app_follow():
+    """Follow or unfollow a user (follower count feeds the aura score, like in the bot)."""
+    try:
+        data = request.get_json(silent=True) or {}
+        user_id = str(data.get('user_id') or '')
+        target_id = str(data.get('target_id') or '')
+        want = bool(data.get('follow', True))
+        if not user_id or not target_id or user_id == target_id:
+            return jsonify({'success': False, 'error': 'Invalid request'}), 400
+        target = db_fetch_one("SELECT notifications_enabled FROM users WHERE user_id = %s", (target_id,))
+        if not target:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+
+        if want:
+            inserted = db_fetch_one(
+                "INSERT INTO followers (follower_id, followed_id) VALUES (%s, %s) "
+                "ON CONFLICT DO NOTHING RETURNING follower_id",
+                (user_id, target_id))
+            if inserted and target.get('notifications_enabled'):
+                me = db_fetch_one("SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (user_id,))
+                if me:
+                    name = f"{me.get('avatar_emoji') or ''} {me['anonymous_name']}".strip()
+                    _fire_and_forget(
+                        send_telegram_message_sync, target_id,
+                        f"<b>New Follower!</b>\n<b>{html.escape(name)}</b> started following you.\n"
+                        f"View their profile: /start profileid_{user_id}",
+                        parse_mode='HTML')
+        else:
+            db_execute("DELETE FROM followers WHERE follower_id = %s AND followed_id = %s", (user_id, target_id))
+
+        calculate_user_rating.cache_clear()
+        _leaderboard_cache_bust()
+        format_aura.cache_clear()
+        return jsonify({'success': True, 'following': want})
+    except Exception as e:
+        logger.error(f"Mini-app follow error: {e}")
+        return jsonify({'success': False, 'error': 'Could not update follow'}), 500
+
+
+@flask_app.route('/api/mini-app/admin/reports', methods=['GET'])
+def mini_app_admin_reports():
+    """Pending reports, newest first, 10 per page. Reporter identity is not returned."""
+    try:
+        admin_id = request.args.get('admin_id') or request.args.get('user_id')
+        if not admin_id or not _require_admin(admin_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        page = _clamp_int(request.args.get('page'), 1, 100000, 1)
+        per_page = 10
+        rows = get_pending_reports((page - 1) * per_page, per_page + 1) or []
+        items = []
+        for r in rows[:per_page]:
+            preview, _author = get_report_content_preview(r['target_type'], r['target_id'])
+            created = r.get('created_at')
+            items.append({
+                'id': r['report_id'],
+                'type': r['target_type'],
+                'target_id': r['target_id'],
+                'reason': r['reason'],
+                'preview': preview or '[content no longer exists]',
+                'created': created.strftime('%b %d, %H:%M') if created else '',
+            })
+        total = db_fetch_one("SELECT COUNT(*) AS n FROM reports WHERE status = 'pending'")
+        return jsonify({'success': True, 'data': items, 'has_more': len(rows) > per_page,
+                        'pending': int(total['n']) if total else 0})
+    except Exception as e:
+        logger.error(f"Mini-app admin reports error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@flask_app.route('/api/mini-app/admin/resolve-report', methods=['POST'])
+def mini_app_admin_resolve_report():
+    """Dismiss a report, delete the reported content, or warn its author. Mirrors the bot's
+    report_dismiss / report_delete / report_warn buttons."""
+    try:
+        data = request.get_json(silent=True) or {}
+        admin_id = str(data.get('admin_id') or data.get('user_id') or '')
+        if not admin_id or not _require_admin(admin_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        action = data.get('action')
+        try:
+            report_id = int(data.get('report_id'))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid request'}), 400
+
+        report = db_fetch_one("SELECT * FROM reports WHERE report_id = %s", (report_id,))
+        if not report:
+            return jsonify({'success': False, 'error': 'Report not found'}), 404
+        if report['status'] != 'pending':
+            return jsonify({'success': False, 'error': 'This report was already handled'}), 409
+        ttype, tid = report['target_type'], report['target_id']
+
+        if action == 'dismiss':
+            resolve_report(report_id, admin_id, 'dismissed', None)
+            return jsonify({'success': True})
+
+        if action == 'warn':
+            _preview, author_id = get_report_content_preview(ttype, tid)
+            if not author_id:
+                return jsonify({'success': False, 'error': 'That content no longer exists'}), 404
+            ok, msg = _run_with_bot(lambda ctx: mod_warn_user(
+                ctx, author_id, admin_id,
+                f"Reported content (report #{report_id}). Please follow the community guidelines."))
+            if not ok:
+                return jsonify({'success': False, 'error': msg}), 400
+            resolve_report(report_id, admin_id, 'action_taken', 'warned')
+            return jsonify({'success': True})
+
+        if action == 'delete':
+            author_id = None
+            if ttype == 'post':
+                post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (tid,))
+                if not post:
+                    return jsonify({'success': False, 'error': 'Post already deleted'}), 404
+                if post.get('approved'):
+                    # Published vent: leave the "removed by an admin" placeholder, like the bot does.
+                    if not soft_delete_post(tid, 'admin'):
+                        return jsonify({'success': False, 'error': 'Already removed by an admin'}), 409
+                    if post.get('channel_message_id'):
+                        _run_with_bot(lambda ctx: channel_show_placeholder(
+                            ctx, post, by_admin=True, remove_media=True))
+                else:
+                    if not delete_post_cascade([tid]):
+                        raise RuntimeError('Post deletion failed')
+                author_id = post.get('author_id')
+            elif ttype == 'comment':
+                comment = db_fetch_one("SELECT * FROM comments WHERE comment_id = %s", (tid,))
+                if not comment:
+                    return jsonify({'success': False, 'error': 'Comment already deleted'}), 404
+                post_id = comment['post_id']
+                db_execute("UPDATE comments SET parent_comment_id = 0 WHERE parent_comment_id = %s", (tid,))
+                db_execute("DELETE FROM reactions WHERE comment_id = %s", (tid,))
+                if not db_fetch_one("DELETE FROM comments WHERE comment_id = %s RETURNING comment_id", (tid,)):
+                    raise RuntimeError('Comment deletion failed')
+                _run_with_bot(lambda ctx: adopt_orphaned_replies(ctx, post_id))
+                author_id = comment.get('author_id')
+            else:
+                return jsonify({'success': False, 'error': 'User reports have no content to delete'}), 400
+
+            resolve_report(report_id, admin_id, 'action_taken', 'deleted')
+            db_execute(
+                "UPDATE reports SET status='action_taken', reviewed_by=%s, reviewed_at=NOW(), action_taken='deleted' "
+                "WHERE target_type=%s AND target_id=%s AND status='pending'",
+                (admin_id, ttype, tid))
+            calculate_user_rating.cache_clear()
+            _leaderboard_cache_bust()
+            format_aura.cache_clear()
+            if author_id and str(author_id) != admin_id:
+                _fire_and_forget(
+                    send_telegram_message_sync, author_id,
+                    "Your content was reviewed and removed by an admin due to a community report. "
+                    "Please ensure your posts follow our community guidelines.",
+                    parse_mode=None)
+            return jsonify({'success': True})
+
+        return jsonify({'success': False, 'error': 'Unknown action'}), 400
+    except Exception as e:
+        logger.error(f"Mini-app resolve report error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Could not update the report'}), 500
+
 
 @flask_app.route('/api/mini-app/search', methods=['GET'])
 def mini_app_search():
