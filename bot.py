@@ -105,10 +105,6 @@ EXPLICIT_WARNING_HTML = (
     "በራስዎ ሃላፊነት ይህንን ፖስት ማንበብ ከፈለጉ፣\n"
     "ከታች ያለውን \"View Post\" የሚለውን ይጫኑ።"
 )
-# Per-vent "show my sex" question. Plain text on purpose: no emoji decoration.
-SHOW_SEX_QUESTION = "Show your sex under the vent number on this post?"
-SHOW_SEX_YES_LABEL = "Yes"
-SHOW_SEX_NO_LABEL = "No"
 # Add color variables near the top of bot.py (after loading env)
 PRIMARY_COLOR = os.getenv('PRIMARY_COLOR')
 SECONDARY_COLOR = os.getenv('SECONDARY_COLOR')
@@ -1890,7 +1886,7 @@ def reset_state(context: ContextTypes.DEFAULT_TYPE):
     for key in ('comment_post_id', 'comment_idx', 'reply_idx', 'nested_idx',
                 'selected_category', 'selected_categories', 'private_message_target',
                 'thread_context_post_id', 'thread_from_post_id', 'rejecting_post',
-                'reporting', 'pending_explicit_check', 'pending_sex_check', 'editing_comment', 'editing_post',
+                'reporting', 'pending_explicit_check', 'pending_sex_check', 'pending_admin_sex_check', 'editing_comment', 'editing_post',
                 'pending_post', 'broadcasting', 'broadcast_step', 'broadcast_type',
                 'editing_categories_for_pending', 'pending_comment_edit',
                 'editing_published_post', 'editing_pm_id'):
@@ -2911,6 +2907,32 @@ def normalize_revealed_sex(value):
     unset 👤 placeholder, junk) means 'show nothing'."""
     return value if value in ('👨', '👩') else None
 
+# Every vent shows a sex under the vent number. There is no opt-out.
+#  - Normal users: always their saved profile sex. Nothing a client sends can change it.
+#  - Admins: they pick Male or Female per vent (they sometimes post on behalf of a user who
+#    asked them to), so a requested value is honoured for admins and for admins only. If
+#    an admin supplies none, their profile sex is the fallback.
+# Authors with nothing valid to show get None.
+ADMIN_VENT_SEX_CHOICES = {'male': '👨', 'female': '👩'}
+
+def resolve_vent_sex(row, requested=None):
+    profile = normalize_revealed_sex(row.get('sex') if row else None)
+    if row and row.get('is_admin'):
+        return normalize_revealed_sex(requested) or profile
+    return profile
+
+def get_author_vent_sex(user_id, requested=None):
+    if user_id is None:
+        return None
+    row = db_fetch_one("SELECT sex, is_admin FROM users WHERE user_id = %s", (str(user_id),))
+    return resolve_vent_sex(row, requested)
+
+async def get_author_vent_sex_async(user_id, requested=None):
+    if user_id is None:
+        return None
+    row = await db_fetch_one_async("SELECT sex, is_admin FROM users WHERE user_id = %s", (str(user_id),))
+    return resolve_vent_sex(row, requested)
+
 def vent_header_html(vent_display: str, revealed_sex=None) -> str:
     """HTML for the top line of a channel post: the copyable vent number, with the
     author's chosen sex emoji on its own line right under it (outside <code>, so it
@@ -3263,8 +3285,40 @@ async def show_privacy_settings(update: Update, context: ContextTypes.DEFAULT_TY
         if "Message is not modified" not in str(e):
             logger.error(f"Error in show_privacy_settings: {e}")
 
-async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None, explicit: bool = False, revealed_sex: str = None):
-    revealed_sex = normalize_revealed_sex(revealed_sex)
+async def proceed_to_post_preview(update, context, query, pending):
+    """Next step after the explicit question. Normal users go straight to the preview (their
+    sex is forced from the profile). Admins are asked Male/Female first, because they may be
+    posting on behalf of someone else."""
+    if await _is_admin_user(query.from_user.id) and not normalize_revealed_sex(pending.get('admin_sex')):
+        context.user_data['pending_admin_sex_check'] = pending
+        await query.message.reply_text(
+            "Which sex should this vent show under the vent number?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Male", callback_data='post_as_male')],
+                [InlineKeyboardButton("Female", callback_data='post_as_female')],
+            ])
+        )
+        return
+    fake_update = SimpleNamespace(
+        callback_query=None,
+        message=query.message,
+        effective_user=update.effective_user,
+        effective_chat=update.effective_chat
+    )
+    await send_post_confirmation(
+        fake_update, context,
+        pending['content'], pending['category'],
+        pending.get('media_type', 'text'), pending.get('media_id'),
+        thread_from_post_id=pending.get('thread_from_post_id'),
+        explicit=pending.get('explicit', False),
+        requested_sex=pending.get('admin_sex')
+    )
+
+
+async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, post_content: str, category: str, media_type: str = 'text', media_id: str = None, thread_from_post_id: int = None, explicit: bool = False, requested_sex: str = None):
+    _author = update.effective_user or (update.callback_query.from_user if update.callback_query else None)
+    revealed_sex = await get_author_vent_sex_async(_author.id if _author else None, requested_sex)
+    is_admin_author = bool(_author) and await _is_admin_user(_author.id)
     keyboard = [
         [
             InlineKeyboardButton("Edit Text", callback_data='edit_post'),
@@ -3280,6 +3334,12 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     else:
         keyboard.append([
             InlineKeyboardButton("Thread to Previous Post", callback_data='select_thread_post')
+        ])
+
+    if is_admin_author:
+        # Admins can swap Male/Female at any point before submitting.
+        keyboard.append([
+            InlineKeyboardButton(f"Posting as {revealed_sex or 'not set'}: tap to switch", callback_data='admin_swap_sex')
         ])
 
     keyboard.append([
@@ -3303,7 +3363,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     
     explicit_tag = "*Marked as explicit content*\n\n" if explicit else ""
     if revealed_sex:
-        explicit_tag += "*Your sex will be shown under the vent number*\n\n"
+        explicit_tag += "*Your sex is shown under the vent number*\n\n"
     
     preview_text = (
         f"{thread_text}{explicit_tag}*Post Preview* [{escape_markdown(cat_display, 2)}]\n\n"
@@ -8885,7 +8945,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pending_post.get('media_type', 'text'), pending_post.get('media_id'),
                     thread_from_post_id=pending_post.get('thread_from_post_id'),
                     explicit=pending_post.get('explicit', False),
-                    revealed_sex=pending_post.get('revealed_sex')
+                    requested_sex=pending_post.get('revealed_sex')
                 )
                 return
 
@@ -9944,71 +10004,67 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
             # Send the preview as a fresh message (not an edit) so photo/voice posts render correctly
-            # Only users who have actually set a sex get the extra question; for
-            # everyone else the flow is exactly what it was before.
-            sex_row = (await db_fetch_one_async("SELECT sex FROM users WHERE user_id = %s", (user_id,)))
-            user_sex = normalize_revealed_sex(sex_row['sex'] if sex_row else None)
-            if user_sex:
-                context.user_data['pending_sex_check'] = {
-                    'content': pending['content'],
-                    'category': pending['category'],
-                    'media_type': pending.get('media_type', 'text'),
-                    'media_id': pending.get('media_id'),
-                    'thread_from_post_id': pending.get('thread_from_post_id'),
-                    'explicit': explicit_flag,
-                    'sex': user_sex,
-                }
-                sex_kb = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(SHOW_SEX_NO_LABEL, callback_data='post_sex_no'),
-                        InlineKeyboardButton(SHOW_SEX_YES_LABEL, callback_data='post_sex_yes')
-                    ]
-                ])
-                await query.message.reply_text(SHOW_SEX_QUESTION, reply_markup=sex_kb)
-                return
-
-            fake_update = SimpleNamespace(
-                callback_query=None,
-                message=query.message,
-                effective_user=update.effective_user,
-                effective_chat=update.effective_chat
-            )
-            await send_post_confirmation(
-                fake_update, context,
-                pending['content'], pending['category'],
-                pending.get('media_type', 'text'), pending.get('media_id'),
-                thread_from_post_id=pending.get('thread_from_post_id'),
-                explicit=explicit_flag
-            )
+            await proceed_to_post_preview(update, context, query, {
+                'content': pending['content'],
+                'category': pending['category'],
+                'media_type': pending.get('media_type', 'text'),
+                'media_id': pending.get('media_id'),
+                'thread_from_post_id': pending.get('thread_from_post_id'),
+                'explicit': explicit_flag,
+            })
             return
 
         elif query.data in ('post_sex_yes', 'post_sex_no'):
-            pending = context.user_data.get('pending_sex_check')
+            # Legacy buttons from before the sex badge became mandatory. The choice is
+            # ignored; the post carries the author's sex either way.
+            pending = context.user_data.pop('pending_sex_check', None)
             if not pending:
                 await query.answer("Post data not found. Please start over.", show_alert=True)
                 return
             await query.answer()
-            del context.user_data['pending_sex_check']
-
-            # Remove the Yes/No buttons from the question message
             try:
                 await query.edit_message_reply_markup(reply_markup=None)
             except Exception:
                 pass
+            await proceed_to_post_preview(update, context, query, pending)
+            return
 
-            fake_update = SimpleNamespace(
-                callback_query=None,
-                message=query.message,
-                effective_user=update.effective_user,
-                effective_chat=update.effective_chat
-            )
+        elif query.data in ('post_as_male', 'post_as_female'):
+            if not await _is_admin_user(user_id):
+                await query.answer("Admins only.", show_alert=True)
+                return
+            pending = context.user_data.pop('pending_admin_sex_check', None)
+            if not pending:
+                await query.answer("Post data not found. Please start over.", show_alert=True)
+                return
+            await query.answer()
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            pending['admin_sex'] = '👨' if query.data == 'post_as_male' else '👩'
+            await proceed_to_post_preview(update, context, query, pending)
+            return
+
+        elif query.data == 'admin_swap_sex':
+            if not await _is_admin_user(user_id):
+                await query.answer("Admins only.", show_alert=True)
+                return
+            pending_post = context.user_data.get('pending_post')
+            if not pending_post:
+                await query.answer("Post data not found. Please start over.", show_alert=True)
+                return
+            await query.answer()
+            current = normalize_revealed_sex(pending_post.get('revealed_sex'))
+            pending_post['revealed_sex'] = '👩' if current == '👨' else '👨'
+            context.user_data['pending_post'] = pending_post
             await send_post_confirmation(
-                fake_update, context,
-                pending['content'], pending['category'],
-                pending.get('media_type', 'text'), pending.get('media_id'),
-                thread_from_post_id=pending.get('thread_from_post_id'),
-                explicit=pending.get('explicit', False),
-                revealed_sex=pending['sex'] if query.data == 'post_sex_yes' else None
+                update, context,
+                pending_post['content'], pending_post['category'],
+                pending_post.get('media_type', 'text'), pending_post.get('media_id'),
+                thread_from_post_id=pending_post.get('thread_from_post_id'),
+                explicit=pending_post.get('explicit', False),
+                requested_sex=pending_post['revealed_sex']
             )
             return
 
@@ -10125,7 +10181,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pending_post.get('media_type', 'text'), pending_post.get('media_id'),
                 thread_from_post_id=None,
                 explicit=pending_post.get('explicit', False),
-                revealed_sex=pending_post.get('revealed_sex')
+                requested_sex=pending_post.get('revealed_sex')
             )
             return
 
@@ -10175,7 +10231,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pending_post.get('media_type', 'text'), pending_post.get('media_id'),
                 thread_from_post_id=new_thread_id,
                 explicit=pending_post.get('explicit', False),
-                revealed_sex=pending_post.get('revealed_sex')
+                requested_sex=pending_post.get('revealed_sex')
             )
             return
 
@@ -10270,7 +10326,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_id = pending_post.get('media_id')
                 thread_from_post_id = pending_post.get('thread_from_post_id')
                 explicit_flag = pending_post.get('explicit', False)
-                revealed_sex = normalize_revealed_sex(pending_post.get('revealed_sex'))
+                # forced: profile sex for users; an admin's own Male/Female choice for admins
+                revealed_sex = await get_author_vent_sex_async(user_id, pending_post.get('revealed_sex'))
                 
                 # Insert post (without 'category' column which was dropped)
                 if thread_from_post_id:
@@ -11288,7 +11345,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pending_post.get('media_id'),
                 pending_post.get('thread_from_post_id'),
                 explicit=pending_post.get('explicit', False),
-                revealed_sex=pending_post.get('revealed_sex')
+                requested_sex=pending_post.get('revealed_sex')
             )
             return
         else:
@@ -13667,6 +13724,15 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
 .opt-card{margin:14px 16px 0;background:var(--glass);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
 .opt-row{display:flex;align-items:center;gap:14px;padding:14px 16px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .opt-row + .opt-row,.opt-row + #vent-sex-row,.opt-row.sep{border-top:1px solid var(--border)}
+#vent-sex-row{padding:14px 16px}
+.sex-head{display:flex;align-items:center;gap:14px}
+.seg2{display:flex;gap:8px;margin-top:12px}
+.seg2 label{flex:1;position:relative;cursor:pointer}
+.seg2 input{position:absolute;opacity:0;inset:0;width:100%;height:100%;margin:0;cursor:pointer}
+.seg2 span{display:flex;align-items:center;justify-content:center;gap:7px;min-height:44px;border-radius:12px;
+  border:1.5px solid var(--border);color:var(--text2);font-size:14px;font-weight:600;background:var(--bg2);transition:all .15s}
+.seg2 input:checked + span{border-color:var(--gold);background:rgba(var(--gold-rgb),0.14);color:var(--text)}
+.seg2 input:focus-visible + span{outline:2px solid var(--gold);outline-offset:2px}
 .opt-ico{width:40px;height:40px;border-radius:12px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
   background:rgba(var(--gold-rgb),0.12);border:1px solid var(--border2)}
 .opt-ico svg{width:20px;height:20px;stroke:var(--gold);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
@@ -13682,16 +13748,6 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
 .opt-note{display:none;margin:0 16px 14px;padding:11px 13px;border-radius:12px;font-size:13px;line-height:1.5;color:var(--text2);
   background:rgba(var(--warn-rgb),0.08);border:1px solid rgba(var(--warn-rgb),0.3)}
 .opt-note.show{display:block}
-#vent-sex-row{padding:14px 16px}
-.sex-head{display:flex;align-items:center;gap:14px}
-.seg2{display:flex;gap:8px;margin-top:12px}
-.seg2 label{flex:1;position:relative;cursor:pointer}
-.seg2 input{position:absolute;opacity:0;inset:0;width:100%;height:100%;margin:0;cursor:pointer}
-.seg2 span{display:flex;align-items:center;justify-content:center;gap:7px;min-height:44px;border-radius:12px;
-  border:1.5px solid var(--border);color:var(--text2);font-size:14px;font-weight:600;background:var(--bg2);transition:all .15s}
-.seg2 input:checked + span{border-color:var(--gold);background:rgba(var(--gold-rgb),0.14);color:var(--text)}
-.seg2 input:focus-visible + span{outline:2px solid var(--gold);outline-offset:2px}
-.seg2 svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .sens-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:13px;font-size:12px;font-weight:800;letter-spacing:.4px;
   color:var(--warn);background:rgba(var(--warn-rgb),0.12);border:1px solid rgba(var(--warn-rgb),0.45)}
 .sens-chip svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -13730,11 +13786,11 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
         <div id="vent-sex-row" style="display:none">
           <div class="sex-head">
             <span class="opt-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M12 11.5L6.3 21h11.4z"/></svg></span>
-            <span class="opt-text"><span class="opt-title">Show my gender</span><span class="opt-sub">A small badge under your vent number. Your name stays hidden.</span></span>
+            <span class="opt-text"><span class="opt-title">Post this vent as</span><span class="opt-sub">Admin only. Pick Male or Female for each vent, for example when posting for someone else.</span></span>
           </div>
-          <div class="seg2" role="radiogroup" aria-label="Show gender on this post">
-            <label><input type="radio" name="vent-show-sex" value="no" checked><span>Hidden</span></label>
-            <label><input type="radio" name="vent-show-sex" value="yes"><span>Show badge</span></label>
+          <div class="seg2" role="radiogroup" aria-label="Sex shown on this vent">
+            <label><input type="radio" name="vent-as-sex" value="male"><span>Male</span></label>
+            <label><input type="radio" name="vent-as-sex" value="female"><span>Female</span></label>
           </div>
         </div>
       </div>
@@ -14063,6 +14119,47 @@ const CATS = [
 ];
 
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+// Everyone who vents shows a sex under the vent number. A user with none saved gets this
+// popup the moment they open the vent page (or try to post) and cannot post until they pick.
+let sexGateState='unknown', sexGatePromise=null;
+async function ensureVentSex(){
+  if(!UID||sexGateState==='ok')return true;
+  try{
+    const d=await api(`/api/mini-app/profile/${UID}?viewer_id=${UID}`);
+    const sx=d.data.sex;
+    if(d.data.is_admin||sx==='👨'||sx==='👩'){sexGateState='ok';return true}
+  }catch(e){return true} // can't tell: the server is the backstop and will answer needs_onboarding
+  return showSexGate();
+}
+function showSexGate(){
+  if(sexGatePromise)return sexGatePromise;
+  sexGatePromise=new Promise(resolve=>{
+    const m=document.createElement('div');
+    m.className='cr-sheet-mask';m.id='sex-gate-mask';
+    m.innerHTML='<div class="cr-sheet" role="dialog" aria-modal="true" aria-labelledby="sex-gate-title">'+
+      '<h3 id="sex-gate-title">Choose your sex</h3>'+
+      '<p>Every vent shows its author sex under the vent number. Your name stays hidden. Pick one to continue.</p>'+
+      '<button type="button" class="modal-btn modal-btn-primary" data-sex="male">Male</button>'+
+      '<button type="button" class="modal-btn modal-btn-primary" data-sex="female">Female</button>'+
+      '<button type="button" class="modal-btn modal-btn-secondary" data-back="1">Not now, back to feed</button>'+
+      '</div>';
+    document.body.appendChild(m);
+    const finish=ok=>{m.remove();sexGatePromise=null;resolve(ok)};
+    m.addEventListener('click',async e=>{
+      const b=e.target.closest('button');if(!b)return;
+      if(b.dataset.back){finish(false);if(typeof go==='function')go('feed');return}
+      const btns=m.querySelectorAll('button');btns.forEach(x=>x.disabled=true);
+      try{
+        await api('/api/mini-app/set-sex',{method:'POST',body:JSON.stringify({user_id:UID,sex:b.dataset.sex})});
+        sexGateState='ok';toast('Saved');finish(true);
+      }catch(err){
+        if(/already set/i.test(err.message)){sexGateState='ok';finish(true);return}
+        toast(err.message);btns.forEach(x=>x.disabled=false);
+      }
+    });
+  });
+  return sexGatePromise;
+}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3000)}
 function showBanScreen(msg){
   if(document.getElementById('banScreen'))return;
@@ -14074,7 +14171,7 @@ function showBanScreen(msg){
 async function api(path,opts={}){
   const r=await fetch(API+path,{headers:{'Content-Type':'application/json'},...opts});
   const d=await r.json();if(d&&d.banned)showBanScreen(d.error);
-  if(!r.ok||!d.success)throw new Error(d.error||'Error');return d;
+  if(!r.ok||!d.success){const err=new Error(d.error||'Error');if(d&&d.needs_onboarding)err.needsOnboarding=true;throw err}return d;
 }
 
 const MAX_MEDIA_BYTES=20*1024*1024;
@@ -14702,8 +14799,8 @@ function go(name,btn){
         ink.style.left = (index * 20) + '%';
       }
     }
+  if(name==='vent')ensureVentSex();
   if(name==='feed'&&feedPage===1&&!resumeFeed)loadFeed();
-  if(name==='vent')refreshVentSexRow();
   if(name==='leaderboard')loadLB();
   if(name==='settings')loadMe();
   if(name==='chats')loadChats();
@@ -14934,31 +15031,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
 });
 
-// Per-vent "show my sex" question: only offered to users who actually have a sex saved.
-let ventSexCheckedAt=0;
-function ventShowSexChoice(){
-  const row=document.getElementById('vent-sex-row');
-  if(!row||row.style.display==='none')return false;
-  const picked=document.querySelector('input[name="vent-show-sex"]:checked');
-  return !!picked&&picked.value==='yes';
-}
-function resetVentShowSex(){
-  const no=document.querySelector('input[name="vent-show-sex"][value="no"]');
-  if(no)no.checked=true;
-}
-async function refreshVentSexRow(){
-  const row=document.getElementById('vent-sex-row');
-  if(!row||!UID)return;
-  if(Date.now()-ventSexCheckedAt<60000)return;
-  try{
-    const d=await api(`/api/mini-app/profile/${UID}?viewer_id=${UID}`);
-    const sx=d&&d.data?d.data.sex:null;
-    const has=(sx==='👨'||sx==='👩');
-    row.style.display=has?'block':'none';
-    if(!has)resetVentShowSex();
-    ventSexCheckedAt=Date.now();
-  }catch(e){row.style.display='none';resetVentShowSex()}
-}
 function ventLabel(p){
   if(p.vent_number===null||p.vent_number===undefined)return '';
   const n=String(p.vent_number).padStart(3,'0');
@@ -14972,10 +15044,18 @@ async function submitVent(){
   if(uploadingGuard('vent'))return;
   if(!txt&&!pendingMedia)return toast('Write something first');
   if(!cats.length)return toast('Pick at least one category');
+  if(!(await ensureVentSex()))return;
+  let ventSex=null;
+  if(isAdminUser){
+    const picked=document.querySelector('input[name="vent-as-sex"]:checked');
+    if(!picked)return toast('Choose Male or Female for this vent');
+    ventSex=picked.value;
+  }
   const btn=document.getElementById('submit-vent');
   btn.disabled=true;btn.textContent='Posting…';btn.classList.remove('attn');
   try{
-    const payload={user_id:UID,content:txt,categories:cats,explicit:document.getElementById('vent-explicit-check').checked,reveal_sex:ventShowSexChoice()};
+    const payload={user_id:UID,content:txt,categories:cats,explicit:document.getElementById('vent-explicit-check').checked};
+    if(ventSex)payload.vent_sex=ventSex;
     if(pendingMedia){payload.media_type=pendingMedia.media_type;payload.media_id=pendingMedia.media_id}
     await api('/api/mini-app/submit-vent',{method:'POST',body:JSON.stringify(payload)});
     toast('✅ Shared — awaiting review');
@@ -14983,12 +15063,14 @@ async function submitVent(){
     document.getElementById('vent-cnt').textContent='0';
     document.getElementById('vent-explicit-check').checked=false;
     document.getElementById('vent-explicit-note').classList.remove('show');
-    resetVentShowSex();
     selCats.clear();document.querySelectorAll('.cat-chip').forEach(c=>c.classList.remove('on'));
     pendingMedia=null;document.getElementById('vent-file-input').value='';
     document.getElementById('vent-attach-btn').classList.remove('has-media');
     renderMediaPreview(document.getElementById('vent-media-preview'),null);
-  }catch(e){toast(e.message)}
+  }catch(e){
+    if(e.needsOnboarding){sexGateState='need';showSexGate().then(ok=>{if(ok)toast('Saved. Tap Post again.')})}
+    else toast(e.message)
+  }
   finally{btn.disabled=false;btn.textContent='Post Anonymously'}
 }
 
@@ -15597,6 +15679,15 @@ async function checkAdminStatus(){
     const d = await api(`/api/mini-app/profile/${UID}?viewer_id=${UID}`);
     isAdminUser = !!d.data.is_admin;
     if(!isAdminUser) return;
+
+    // Admins choose Male/Female per vent. Preselect their profile sex as a convenience.
+    const sexRow=document.getElementById('vent-sex-row');
+    if(sexRow){
+      sexRow.style.display='block';
+      const pick=d.data.sex==='👨'?'male':(d.data.sex==='👩'?'female':null);
+      const el=pick&&document.querySelector(`input[name="vent-as-sex"][value="${pick}"]`);
+      if(el)el.checked=true;
+    }
 
     // Insert before nav-ink shifts break — recompute ink width for 6 items
     document.getElementById('nav').insertAdjacentHTML('beforeend',
@@ -16526,7 +16617,7 @@ async function init(){
   if(!UID&&!(tg&&tg.initData)){location.replace('/login');return}
   document.getElementById('auth').style.display='none';
   document.getElementById('app').style.display='flex';
-  if(UID){loadFeed(); checkAdminStatus(); refreshVentSexRow(); openChatFromLink();}
+  if(UID){loadFeed(); checkAdminStatus(); openChatFromLink();}
   else{document.getElementById('feed-list').innerHTML='<div style="text-align:center;padding:60px 20px;color:var(--text3)"><div style="width:32px;height:32px;margin:0 auto 12px;color:var(--text3)">'+ICONS.lock+'</div><div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Sign in required</div><div style="font-size:13px">Open via the Telegram bot to access Christian Vent</div></div>';}
 
   // Setup voice buttons after DOM ready
@@ -16565,8 +16656,6 @@ def mini_app_submit_vent():
         media_id = data.get('media_id')
 
         explicit = bool(data.get('explicit', False))
-        # Strict boolean on purpose: the string "false" must not count as a yes.
-        reveal_sex = data.get('reveal_sex') is True
 
         if not user_id:
             return jsonify({'success': False, 'error': 'User ID required'}), 400
@@ -16589,13 +16678,21 @@ def mini_app_submit_vent():
             # detector's default ('document') when the client didn't say what it uploaded.
             media_type = _detect_mini_app_media_type(None, None)[0]
 
-        # Per-post "show my sex": the emoji is read from the user's saved profile at
-        # submission time (never trusted from the client). Users with no sex set (👤)
-        # get None, i.e. nothing is shown, even if the client sent reveal_sex=true.
-        revealed_sex = None
-        if reveal_sex:
-            sex_row = db_fetch_one("SELECT sex FROM users WHERE user_id = %s", (str(user_id),))
-            revealed_sex = normalize_revealed_sex(sex_row['sex'] if sex_row else None)
+        # A sex is always shown under the vent number. Users: their saved profile sex (any
+        # client flag such as reveal_sex or vent_sex is ignored). Admins: the Male/Female
+        # they picked for this vent, since they may post on someone's behalf.
+        sex_row = db_fetch_one("SELECT sex, is_admin FROM users WHERE user_id = %s", (str(user_id),))
+        is_admin_author = bool(sex_row and sex_row.get('is_admin'))
+        requested_sex = ADMIN_VENT_SEX_CHOICES.get(str(data.get('vent_sex') or '').strip().lower())
+        revealed_sex = resolve_vent_sex(sex_row, requested_sex)
+        if not revealed_sex:
+            if is_admin_author:
+                return jsonify({'success': False, 'error': 'Choose Male or Female for this vent.'}), 400
+            return jsonify({
+                'success': False,
+                'needs_onboarding': True,
+                'error': 'Please choose your sex in the bot first (send /start), then try again.'
+            }), 403
 
         # Insert the post
         post_row = db_execute(
@@ -19325,6 +19422,30 @@ def mini_app_search():
         return jsonify({'success': True, 'data': formatted_posts})
     except Exception as e:
         logger.error(f"Search error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@flask_app.route('/api/mini-app/set-sex', methods=['POST'])
+def mini_app_set_sex():
+    """First-time Male/Female choice from the mini app popup. It mirrors the bot's onboarding
+    question: it only works while no valid sex is saved ("Already set" otherwise), and it
+    marks onboarding as done so the bot does not ask again."""
+    try:
+        data = request.get_json(silent=True) or {}
+        user_id = data.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': 'User ID required'}), 400
+        emoji = ADMIN_VENT_SEX_CHOICES.get(str(data.get('sex') or '').strip().lower())
+        if not emoji:
+            return jsonify({'success': False, 'error': 'Choose Male or Female.'}), 400
+        row = db_fetch_one("SELECT sex FROM users WHERE user_id = %s", (str(user_id),))
+        if not row:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        if normalize_revealed_sex(row.get('sex')):
+            return jsonify({'success': False, 'error': 'Already set. You can change it from your Profile.'}), 409
+        db_update_user(user_id, sex=emoji, onboarding_done=True)
+        return jsonify({'success': True, 'sex': emoji})
+    except Exception as e:
+        logger.error(f"Set sex error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @flask_app.route('/api/mini-app/profile/<user_id>', methods=['PUT'])
