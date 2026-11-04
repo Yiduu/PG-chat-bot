@@ -322,7 +322,9 @@ def init_db():
                     ('share_username', 'BOOLEAN DEFAULT FALSE'),
                     ('tg_username', 'TEXT'),
                     # Opt-out: when FALSE, nobody can send this user a new chat request.
-                    ('accept_chat_requests', 'BOOLEAN DEFAULT TRUE')
+                    ('accept_chat_requests', 'BOOLEAN DEFAULT TRUE'),
+                    # First-run questionnaire (sex is mandatory, nickname optional) finished.
+                    ('onboarding_done', 'BOOLEAN DEFAULT FALSE')
                 ]
                 for col_name, col_type in privacy_columns:
                     if ('users', col_name) not in existing_columns:
@@ -1001,7 +1003,8 @@ def _escape_like(term):
 # ---- user row cache (only the columns hot paths actually need) ----
 _USER_CACHE_COLUMNS = (
     "user_id, is_admin, notifications_enabled, anonymous_name, sex, avatar_emoji, bio, "
-    "weekly_badge, hide_aura, hide_bio, hide_follower_count, hide_role, is_banned, ban_reason"
+    "weekly_badge, hide_aura, hide_bio, hide_follower_count, hide_role, is_banned, ban_reason, "
+    "onboarding_done"
 )
 # lru_cache cannot evict a single key, and a plain cache_clear() races with a reader that
 # fetched the old row just before an UPDATE committed (it would re-store stale data right
@@ -1860,6 +1863,9 @@ STATE_AWAITING_EDIT_CONTENT = 'awaiting_edit_content'
 # State entered when a user tapped "Edit" on a private message they sent
 # (see the edit_sent_msg_<id> callback and the block in handle_message).
 STATE_AWAITING_PM_EDIT = 'awaiting_pm_edit'
+# First-run questionnaire: after the user picked their sex, the bot waits for an optional nickname
+# (typed, or the Skip button). See onboarding_gate().
+STATE_ONBOARDING_NICKNAME = 'onboarding_nickname'
 
 
 def get_state(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -5154,6 +5160,366 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
     # Instead of immediate deletion, ask for a reason
     await ask_rejection_reason(update, context, post_id)
 
+# ---------------- First-run questionnaire: sex (mandatory) -> nickname (optional) ----------------
+
+ONBOARDING_SEX_CHOICES = {
+    'onb_sex_male': ('👨', 'Male'),
+    'onb_sex_female': ('👩', 'Female'),
+}
+# Reply-keyboard buttons: typing one of these while the nickname question is open means the user
+# moved on, not that they want it as their nickname.
+_MENU_BUTTON_TEXTS = {"Share", "Chat Requests", "Profile", "Posts", "Top", "Settings", "Open App", "❌ Cancel"}
+
+
+def needs_onboarding(row):
+    """True for a user who still has to answer the questionnaire: they have not finished it AND
+    have no sex set (new users start with the 👤 placeholder). Once the sex is 👨/👩 or the
+    questionnaire is done, this stays False, so choosing "Hide sex" later never brings it back."""
+    if not row:
+        return False
+    if row.get('onboarding_done'):
+        return False
+    return row.get('sex') not in ('👨', '👩')
+
+
+async def onboarding_prompt_sex(update, context):
+    """Ask the mandatory sex question (no skip option)."""
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer()
+        except Exception:
+            pass
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Male", callback_data='onb_sex_male')],
+        [InlineKeyboardButton("Female", callback_data='onb_sex_female')],
+    ])
+    await update.effective_message.reply_text(
+        "Welcome to Christian Vent!\n\nBefore you start, please select your sex:",
+        reply_markup=keyboard
+    )
+
+
+async def onboarding_finish(update, context, user_id, nickname):
+    """Save the optional nickname, then continue where the user was heading: replay the deep link
+    they opened the bot with (e.g. view comments), or show the normal welcome."""
+    payload = context.user_data.pop('onboarding_payload', None)
+    context.user_data['state'] = STATE_IDLE
+    if nickname:
+        await db_update_user_async(user_id, anonymous_name=nickname)
+
+    query = update.callback_query
+    if query:
+        try:
+            await query.answer()
+            await query.edit_message_text("Nickname: skipped")
+        except Exception:
+            pass
+
+    message = update.effective_message
+    note = (f"Nickname set to {nickname}." if nickname
+            else "Nickname skipped, you will show up as Anonymous. You can change it any time from your Profile.")
+    if payload:
+        # This message also installs the main reply keyboard for brand-new users.
+        await message.reply_text(f"{note}\n\nYou're all set.", reply_markup=get_main_menu(user_id))
+        if await process_start_payload(update, context, payload):
+            return
+    else:
+        await message.reply_text(note)
+    await send_welcome_messages(message, user_id)
+
+
+async def onboarding_gate(update, context, row):
+    """Called from ban_gate (so banned users are still stopped first) for every update.
+    Drives the whole questionnaire and raises ApplicationHandlerStop for anything it consumes:
+      - onb_sex_* / onb_skip_nick button taps,
+      - the typed nickname while the nickname question is open,
+      - any other message or button from a user who still has no sex (they get the question again).
+    /start is let through: start() asks the question itself and remembers the deep link."""
+    user = update.effective_user
+    if not user or not row:
+        return
+    if not (update.message or update.callback_query):
+        return
+    uid = str(user.id)
+    query = update.callback_query
+    data = query.data if query else None
+    pending = needs_onboarding(row)
+
+    # --- sex chosen ---
+    if data in ONBOARDING_SEX_CHOICES:
+        if not pending:
+            await query.answer("Already set. You can change it from your Profile.", show_alert=True)
+            raise ApplicationHandlerStop
+        emoji, label = ONBOARDING_SEX_CHOICES[data]
+        # Mark the questionnaire done together with the sex, so the nickname step can never trap anyone.
+        await db_update_user_async(uid, sex=emoji, onboarding_done=True)
+        set_state(context, STATE_ONBOARDING_NICKNAME)
+        try:
+            await query.answer()
+            await query.edit_message_text(f"Sex: {label}")
+        except Exception:
+            pass
+        await query.message.reply_text(
+            "Now choose a nickname (up to 30 characters), or tap Skip to stay Anonymous.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Skip", callback_data='onb_skip_nick')]])
+        )
+        raise ApplicationHandlerStop
+
+    # --- nickname question is open ---
+    if get_state(context) == STATE_ONBOARDING_NICKNAME:
+        if data == 'onb_skip_nick':
+            await onboarding_finish(update, context, uid, None)
+            raise ApplicationHandlerStop
+        message = update.message
+        text = (message.text or "").strip() if message else ""
+        if message and text and not text.startswith('/') and text not in _MENU_BUTTON_TEXTS:
+            if len(text) <= 30:
+                await onboarding_finish(update, context, uid, text)
+            else:
+                await message.reply_text("That nickname is too long (30 characters max). Please try a shorter one, or tap Skip.")
+            raise ApplicationHandlerStop
+        if message and not text:
+            await message.reply_text("Please type your nickname as text, or tap Skip.")
+            raise ApplicationHandlerStop
+        # Anything else (a command, a menu button, another button): the user moved on.
+        context.user_data['state'] = STATE_IDLE
+        context.user_data.pop('onboarding_payload', None)
+    elif data == 'onb_skip_nick':
+        await query.answer()
+        raise ApplicationHandlerStop
+
+    # --- still no sex: ask before anything else works (admins are never locked out) ---
+    if pending and not row.get('is_admin'):
+        first_word = ((update.message.text or "").split(maxsplit=1) or [""])[0] if update.message else ""
+        if first_word.split('@')[0] == '/start':
+            return
+        try:
+            await onboarding_prompt_sex(update, context)
+        except Exception as e:
+            logger.warning(f"Could not send onboarding question to {uid}: {e}")
+        raise ApplicationHandlerStop
+
+
+async def process_start_payload(update, context, arg):
+    """Handle a /start deep-link payload (comments_<id>, viewpost_<id>, viewcomments_<id>_<page>,
+    writecomment_<id>, profileid_<uid>[_<post>], inbox). Returns True if the payload was handled (the
+    caller must not send the welcome message) and False if it was not recognised. Works for both a
+    message update and a button tap (replies go to update.effective_message), so it can also replay a
+    link after the onboarding questions."""
+    user_id = str(update.effective_user.id)
+    message = update.effective_message
+
+    if arg.startswith("comments_"):
+        post_id_str = arg.split("_", 1)[1]
+        if post_id_str.isdigit():
+            post_id = int(post_id_str)
+            # The channel post already showed the explicit warning; don't show a second one here.
+            await show_comments_menu(update, context, post_id, page=1, force_reveal=True)
+        return True
+
+    elif arg.startswith("viewpost_"):
+        post_id_str = arg.split("_", 1)[1]
+        if post_id_str.isdigit():
+            post_id = int(post_id_str)
+            await show_comments_menu(update, context, post_id, page=1, force_reveal=True)
+        return True
+
+    elif arg.startswith("viewcomments_"):
+        parts = arg.split("_")
+        if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
+            post_id = int(parts[1])
+            page = int(parts[2])
+            await show_comments_page(update, context, post_id, page)
+        return True
+
+    elif arg.startswith("writecomment_"):
+        post_id_str = arg.split("_", 1)[1]
+        if post_id_str.isdigit():
+            post_id = int(post_id_str)
+            set_state(context, STATE_AWAITING_COMMENT, comment_post_id=post_id, comment_idx=None)
+
+            post = await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+            preview_text = "Original content not found"
+            if post:
+                content = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
+                preview_text = f"*Replying to:*\n{escape_markdown(content, version=2)}"
+            
+            await message.reply_text(
+                f"{preview_text}\n\nPlease type your comment or send a voice message, GIF, or sticker:\n\nTap Cancel to return to menu.",
+                reply_markup=cancel_menu,
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            return True
+    elif arg.startswith("profileid_"):
+        parts = arg.split("_")
+        if len(parts) >= 2:
+            target_user_id = parts[1]
+            post_id = parts[2] if len(parts) >= 3 else None
+
+            user_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (target_user_id,)))
+            if not user_data:
+                await message.reply_text("User not found.")
+                return True
+
+            followers = (await db_fetch_all_async("SELECT * FROM followers WHERE followed_id = %s", (user_data['user_id'],)))
+            rating = (await asyncio.to_thread(calculate_user_rating, user_data['user_id']))
+            current_user_id = user_id
+
+            # Determine if this is a vent author context (viewing from a post)
+            is_vent_author = False
+            if post_id:
+                post_info = (await db_fetch_one_async("SELECT author_id FROM posts WHERE post_id = %s", (post_id,)))
+                if post_info and str(post_info['author_id']) == str(target_user_id) and str(target_user_id) != str(current_user_id):
+                    is_vent_author = True
+
+            # Build buttons
+            btn = []
+            if user_data['user_id'] != current_user_id:
+                # Check chat request status
+                accepted_request = (await db_fetch_one_async(
+                    "SELECT status FROM chat_requests WHERE "
+                    "((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s)) AND status = 'accepted'",
+                    (current_user_id, user_data['user_id'], user_data['user_id'], current_user_id)
+                ))
+
+                chat_btn_text = "Chat" if accepted_request else "Request to Chat"
+                chat_btn_callback = f'message_{user_data["user_id"]}' if accepted_request else f'chatrequest_{user_data["user_id"]}'
+
+                # For vent authors, only show chat and block/unblock (no follow/unfollow)
+                if is_vent_author:
+                    btn.append([InlineKeyboardButton(chat_btn_text, callback_data=chat_btn_callback)])
+                    # Check block status
+                    is_blocked = (await db_fetch_one_async("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id'])))
+                    if is_blocked:
+                        btn.append([InlineKeyboardButton("Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
+                    else:
+                        btn.append([InlineKeyboardButton("Block User", callback_data=f'block_user_{user_data["user_id"]}')])
+                else:
+                    # Normal profile: show follow/unfollow, chat, block
+                    is_following = (await db_fetch_one_async(
+                        "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
+                        (current_user_id, user_data['user_id'])
+                    ))
+                    if is_following:
+                        btn.append([InlineKeyboardButton("Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
+                    else:
+                        btn.append([InlineKeyboardButton("Follow", callback_data=f'follow_{user_data["user_id"]}')])
+
+                    btn.append([InlineKeyboardButton(chat_btn_text, callback_data=chat_btn_callback)])
+
+                    is_blocked = (await db_fetch_one_async("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id'])))
+                    if is_blocked:
+                        btn.append([InlineKeyboardButton("Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
+                    else:
+                        btn.append([InlineKeyboardButton("Block User", callback_data=f'block_user_{user_data["user_id"]}')])
+
+                btn.append([InlineKeyboardButton("Report User", callback_data=f'report_user_{user_data["user_id"]}')])
+
+            # Prepare display variables
+            display_sex = get_display_sex(user_data)
+            bio = user_data.get('bio', 'No bio set.')
+            is_owner = str(current_user_id) == str(target_user_id)
+
+            # For vent author, we override display name and hide all stats
+            if is_vent_author:
+                display_name = "Vent author"
+                # Hide stats – we will not include them in the text
+                # We also don't show bio for vent author to keep minimal
+                profile_text = f"*{escape_markdown(display_name, version=2)}*{' ' + escape_markdown(display_sex, version=2) if display_sex else ''}\n\n"
+                # Only add a note if not self? But we already handle self above.
+                # Add a simple spacer
+                profile_text += "_This is the author of the vent_\n"
+            else:
+                # Normal profile (including self)
+                display_name = get_display_name(user_data)
+                weekly_badge = user_data.get('weekly_badge')
+                if weekly_badge:
+                    display_name = f"{weekly_badge} {display_name}"
+
+                level = (rating // 10) + 1
+
+                # Privacy filters
+                viewer_data = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (current_user_id,)))
+                is_viewer_admin = viewer_data['is_admin'] if viewer_data else False
+
+                if not is_viewer_admin and not is_owner:
+                    if user_data.get('hide_aura'):
+                        rating_str = "Hidden"
+                        level_str = "Hidden"
+                        aura_str = "Hidden"
+                    else:
+                        rating_str = str(rating)
+                        level_str = str(level)
+                        is_target_admin = user_data.get('is_admin', False)
+                        aura_str = "" if is_target_admin else format_aura(rating)
+
+                    if user_data.get('hide_bio'):
+                        bio = "_[Hidden by user]_"
+
+                    if user_data.get('hide_follower_count'):
+                        follower_count = "Hidden"
+                        following_count = "Hidden"
+                    else:
+                        follower_count = str(len(followers))
+                        following_row = (await db_fetch_one_async(
+                            "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
+                        ))
+                        following_count = str(following_row['count'] if following_row else 0)
+
+                    hide_role = user_data.get('hide_role')
+                else:
+                    rating_str = str(rating)
+                    level_str = str(level)
+                    is_target_admin = user_data.get('is_admin', False)
+                    aura_str = "" if is_target_admin else format_aura(rating)
+                    follower_count = str(len(followers))
+                    following_row = (await db_fetch_one_async(
+                        "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
+                    ))
+                    following_count = str(following_row['count'] if following_row else 0)
+                    hide_role = False
+
+                is_target_admin = user_data.get('is_admin', False)
+                safe_name = escape_markdown(display_name, version=2)
+                safe_sex = escape_markdown(display_sex, version=2)
+                safe_bio = escape_markdown(bio, version=2)
+
+                if is_target_admin:
+                    role_display = "Administrator"
+                    if hide_role and not is_viewer_admin and not is_owner:
+                        role_display = "Hidden"
+                    profile_text = (
+                        f"*{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
+                        f"*Role:* {role_display}\n"
+                        f"*Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
+                        f"*About:*\n{safe_bio}\n"
+                    )
+                else:
+                    safe_level = escape_markdown(level_str, version=2)
+                    safe_rating = escape_markdown(rating_str, version=2)
+                    safe_aura = escape_markdown(aura_str, version=2)
+                    profile_text = (
+                        f"*{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
+                        f"*Aura Level:* {safe_level} \\({safe_aura}\\)\n"
+                        f"*Points:* {safe_rating}\n"
+                        f"*Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
+                        f"*About:*\n{safe_bio}\n"
+                    )
+
+            await message.reply_text(
+                profile_text,
+                reply_markup=InlineKeyboardMarkup(btn) if btn else None,
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            return True
+    
+    elif arg == "inbox":
+        await show_inbox(update, context)
+        return True
+    return False
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
@@ -5172,227 +5538,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     args = context.args
 
-    if args:
-        arg = args[0]
+    # First run (new user) or no sex set yet: ask the questions BEFORE anything else. A deep link
+    # such as ?start=comments_123 is remembered and replayed once the questions are answered.
+    if needs_onboarding(user if user else {'sex': '👤', 'onboarding_done': False}):
+        context.user_data['onboarding_payload'] = args[0] if args else None
+        context.user_data['state'] = STATE_IDLE
+        await onboarding_prompt_sex(update, context)
+        return
 
-        if arg.startswith("comments_"):
-            post_id_str = arg.split("_", 1)[1]
-            if post_id_str.isdigit():
-                post_id = int(post_id_str)
-                # The channel post already showed the explicit warning; don't show a second one here.
-                await show_comments_menu(update, context, post_id, page=1, force_reveal=True)
-            return
+    if args and await process_start_payload(update, context, args[0]):
+        return
 
-        elif arg.startswith("viewpost_"):
-            post_id_str = arg.split("_", 1)[1]
-            if post_id_str.isdigit():
-                post_id = int(post_id_str)
-                await show_comments_menu(update, context, post_id, page=1, force_reveal=True)
-            return
+    await send_welcome_messages(update.message, user_id)
 
-        elif arg.startswith("viewcomments_"):
-            parts = arg.split("_")
-            if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
-                post_id = int(parts[1])
-                page = int(parts[2])
-                await show_comments_page(update, context, post_id, page)
-            return
 
-        elif arg.startswith("writecomment_"):
-            post_id_str = arg.split("_", 1)[1]
-            if post_id_str.isdigit():
-                post_id = int(post_id_str)
-                set_state(context, STATE_AWAITING_COMMENT, comment_post_id=post_id, comment_idx=None)
-
-                post = await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-                preview_text = "Original content not found"
-                if post:
-                    content = post['content'][:100] + '...' if len(post['content']) > 100 else post['content']
-                    preview_text = f"*Replying to:*\n{escape_markdown(content, version=2)}"
-                
-                await update.message.reply_text(
-                    f"{preview_text}\n\nPlease type your comment or send a voice message, GIF, or sticker:\n\nTap Cancel to return to menu.",
-                    reply_markup=cancel_menu,
-                    parse_mode=ParseMode.MARKDOWN_V2
-                )
-                return
-        elif arg.startswith("profileid_"):
-            parts = arg.split("_")
-            if len(parts) >= 2:
-                target_user_id = parts[1]
-                post_id = parts[2] if len(parts) >= 3 else None
-
-                user_data = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (target_user_id,)))
-                if not user_data:
-                    await update.message.reply_text("User not found.")
-                    return
-
-                followers = (await db_fetch_all_async("SELECT * FROM followers WHERE followed_id = %s", (user_data['user_id'],)))
-                rating = (await asyncio.to_thread(calculate_user_rating, user_data['user_id']))
-                current_user_id = user_id
-
-                # Determine if this is a vent author context (viewing from a post)
-                is_vent_author = False
-                if post_id:
-                    post_info = (await db_fetch_one_async("SELECT author_id FROM posts WHERE post_id = %s", (post_id,)))
-                    if post_info and str(post_info['author_id']) == str(target_user_id) and str(target_user_id) != str(current_user_id):
-                        is_vent_author = True
-
-                # Build buttons
-                btn = []
-                if user_data['user_id'] != current_user_id:
-                    # Check chat request status
-                    accepted_request = (await db_fetch_one_async(
-                        "SELECT status FROM chat_requests WHERE "
-                        "((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s)) AND status = 'accepted'",
-                        (current_user_id, user_data['user_id'], user_data['user_id'], current_user_id)
-                    ))
-
-                    chat_btn_text = "Chat" if accepted_request else "Request to Chat"
-                    chat_btn_callback = f'message_{user_data["user_id"]}' if accepted_request else f'chatrequest_{user_data["user_id"]}'
-
-                    # For vent authors, only show chat and block/unblock (no follow/unfollow)
-                    if is_vent_author:
-                        btn.append([InlineKeyboardButton(chat_btn_text, callback_data=chat_btn_callback)])
-                        # Check block status
-                        is_blocked = (await db_fetch_one_async("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id'])))
-                        if is_blocked:
-                            btn.append([InlineKeyboardButton("Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
-                        else:
-                            btn.append([InlineKeyboardButton("Block User", callback_data=f'block_user_{user_data["user_id"]}')])
-                    else:
-                        # Normal profile: show follow/unfollow, chat, block
-                        is_following = (await db_fetch_one_async(
-                            "SELECT * FROM followers WHERE follower_id = %s AND followed_id = %s",
-                            (current_user_id, user_data['user_id'])
-                        ))
-                        if is_following:
-                            btn.append([InlineKeyboardButton("Unfollow", callback_data=f'unfollow_{user_data["user_id"]}')])
-                        else:
-                            btn.append([InlineKeyboardButton("Follow", callback_data=f'follow_{user_data["user_id"]}')])
-
-                        btn.append([InlineKeyboardButton(chat_btn_text, callback_data=chat_btn_callback)])
-
-                        is_blocked = (await db_fetch_one_async("SELECT * FROM blocks WHERE blocker_id = %s AND blocked_id = %s", (current_user_id, user_data['user_id'])))
-                        if is_blocked:
-                            btn.append([InlineKeyboardButton("Unblock User", callback_data=f'unblock_user_{user_data["user_id"]}')])
-                        else:
-                            btn.append([InlineKeyboardButton("Block User", callback_data=f'block_user_{user_data["user_id"]}')])
-
-                    btn.append([InlineKeyboardButton("Report User", callback_data=f'report_user_{user_data["user_id"]}')])
-
-                # Prepare display variables
-                display_sex = get_display_sex(user_data)
-                bio = user_data.get('bio', 'No bio set.')
-                is_owner = str(current_user_id) == str(target_user_id)
-
-                # For vent author, we override display name and hide all stats
-                if is_vent_author:
-                    display_name = "Vent author"
-                    # Hide stats – we will not include them in the text
-                    # We also don't show bio for vent author to keep minimal
-                    profile_text = f"*{escape_markdown(display_name, version=2)}*{' ' + escape_markdown(display_sex, version=2) if display_sex else ''}\n\n"
-                    # Only add a note if not self? But we already handle self above.
-                    # Add a simple spacer
-                    profile_text += "_This is the author of the vent_\n"
-                else:
-                    # Normal profile (including self)
-                    display_name = get_display_name(user_data)
-                    weekly_badge = user_data.get('weekly_badge')
-                    if weekly_badge:
-                        display_name = f"{weekly_badge} {display_name}"
-
-                    level = (rating // 10) + 1
-
-                    # Privacy filters
-                    viewer_data = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (current_user_id,)))
-                    is_viewer_admin = viewer_data['is_admin'] if viewer_data else False
-
-                    if not is_viewer_admin and not is_owner:
-                        if user_data.get('hide_aura'):
-                            rating_str = "Hidden"
-                            level_str = "Hidden"
-                            aura_str = "Hidden"
-                        else:
-                            rating_str = str(rating)
-                            level_str = str(level)
-                            is_target_admin = user_data.get('is_admin', False)
-                            aura_str = "" if is_target_admin else format_aura(rating)
-
-                        if user_data.get('hide_bio'):
-                            bio = "_[Hidden by user]_"
-
-                        if user_data.get('hide_follower_count'):
-                            follower_count = "Hidden"
-                            following_count = "Hidden"
-                        else:
-                            follower_count = str(len(followers))
-                            following_row = (await db_fetch_one_async(
-                                "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
-                            ))
-                            following_count = str(following_row['count'] if following_row else 0)
-
-                        hide_role = user_data.get('hide_role')
-                    else:
-                        rating_str = str(rating)
-                        level_str = str(level)
-                        is_target_admin = user_data.get('is_admin', False)
-                        aura_str = "" if is_target_admin else format_aura(rating)
-                        follower_count = str(len(followers))
-                        following_row = (await db_fetch_one_async(
-                            "SELECT COUNT(*) as count FROM followers WHERE follower_id = %s", (target_user_id,)
-                        ))
-                        following_count = str(following_row['count'] if following_row else 0)
-                        hide_role = False
-
-                    is_target_admin = user_data.get('is_admin', False)
-                    safe_name = escape_markdown(display_name, version=2)
-                    safe_sex = escape_markdown(display_sex, version=2)
-                    safe_bio = escape_markdown(bio, version=2)
-
-                    if is_target_admin:
-                        role_display = "Administrator"
-                        if hide_role and not is_viewer_admin and not is_owner:
-                            role_display = "Hidden"
-                        profile_text = (
-                            f"*{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
-                            f"*Role:* {role_display}\n"
-                            f"*Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
-                            f"*About:*\n{safe_bio}\n"
-                        )
-                    else:
-                        safe_level = escape_markdown(level_str, version=2)
-                        safe_rating = escape_markdown(rating_str, version=2)
-                        safe_aura = escape_markdown(aura_str, version=2)
-                        profile_text = (
-                            f"*{safe_name}*{' ' + safe_sex if safe_sex else ''}\n\n"
-                            f"*Aura Level:* {safe_level} \\({safe_aura}\\)\n"
-                            f"*Points:* {safe_rating}\n"
-                            f"*Followers:* {follower_count} \u2022 *Following:* {following_count}\n\n"
-                            f"*About:*\n{safe_bio}\n"
-                        )
-
-                await update.message.reply_text(
-                    profile_text,
-                    reply_markup=InlineKeyboardMarkup(btn) if btn else None,
-                    parse_mode=ParseMode.MARKDOWN_V2
-                )
-                return
-        
-        elif arg == "inbox":
-            await show_inbox(update, context)
-            return
-    
+async def send_welcome_messages(message, user_id):
     # ----- NO INLINE KEYBOARD – only the reply menu -----
-    await update.message.reply_text(
+    await message.reply_text(
         "*እንኳን ወደ Christian vent በሰላም መጡ* \n\n"
         "ማንነታችሁ ሳይገለጽ ሃሳባችሁን ማጋራት ትችላላችሁ.\n\n",
         reply_markup=get_main_menu(user_id),
         parse_mode=ParseMode.MARKDOWN
     )
-    
+
     # Also send the reply keyboard (buttons above typing area)
-    await update.message.reply_text(
+    await message.reply_text(
         "You can also use the buttons below to navigate:",
         reply_markup=get_main_menu(user_id)
     )
@@ -12305,6 +12475,9 @@ async def ban_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     row = await asyncio.to_thread(get_user_cached, str(user.id))
     if not row or not row.get('is_banned') or row.get('is_admin'):
+        # Not banned. Next gate: the first-run questionnaire (it can only be a gate here, not its
+        # own handler group, because only the first matching handler of a group runs).
+        await onboarding_gate(update, context, row)
         return
 
     reason = row.get('ban_reason')
