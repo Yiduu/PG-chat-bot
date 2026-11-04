@@ -1572,14 +1572,10 @@ def build_deleted_channel_text(vent_display, hashtags, by_admin=False):
 # Explicit-content warning in the same style as the "deleted by the author" notice:
 # one centered, monospace <code> block with the warning sign first. Lines are kept short
 # so Telegram doesn't wrap them (a wrapped line would break the centering).
-EXPLICIT_WARNING_TITLE = "ማስጠንቀቂያ"
+EXPLICIT_WARNING_TITLE = "Warning"
 EXPLICIT_WARNING_NOTICE = (
-    "የዚህ post ይዘት ለሁሉም",
-    "አባላት ተገቢ አይደለም።",
-    "በራስዎ ሃላፊነት ይህንን ፖስት",
-    "ማንበብ ከፈለጉ፣",
-    "ከታች ያለውን \"View Post\"",
-    "የሚለውን ይጫኑ።",
+    "Explicit / sexual content",
+    "Tap \"View Post\" to read it",
 )
 
 
