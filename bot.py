@@ -1089,7 +1089,7 @@ NOT_ACCEPTING_REQUESTS_MSG = "This user isn't accepting chat requests right now.
 # Invisible padding (U+2800 braille blank, which Telegram does not trim) that widens a message
 # bubble, and therefore its inline buttons. Raise/lower the multiplier to make the buttons
 # wider/narrower.
-COMMENT_NAV_WIDTH_PAD = "⠀" * 42
+COMMENT_NAV_WIDTH_PAD = "⠀" * 34
 
 
 def user_accepts_chat_requests(user_id):
