@@ -1033,10 +1033,10 @@ def get_user_cached(user_id):
 
 @lru_cache(maxsize=2048)
 def _user_display_name_cached(user_id, gen):
-    row = db_fetch_one("SELECT anonymous_name FROM users WHERE user_id = %s", (user_id,))
+    row = db_fetch_one("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (user_id,))
     if row is None:
         raise LookupError(user_id)
-    return row['anonymous_name'] or 'Anon'
+    return get_display_name(row) if row.get('anonymous_name') else 'Anon'
 
 
 def get_user_display_name(user_id, default='Anon'):
@@ -2877,7 +2877,11 @@ def get_cancel_reply_keyboard():
     )
 
 def get_display_name(user_data):
-    """Helper to get user's display name with sex emoji"""
+    """Avatar + name with the sex emoji (👨/👩) first."""
+    return get_display_name_with_sex(user_data)
+
+def get_plain_name(user_data):
+    """Avatar + name, no sex (for cards that print the sex separately)"""
     if not user_data:
         return "Anonymous"
     
@@ -5507,7 +5511,7 @@ async def process_start_payload(update, context, arg):
                 profile_text += "_This is the author of the vent_\n"
             else:
                 # Normal profile (including self)
-                display_name = get_display_name(user_data)
+                display_name = get_plain_name(user_data)
                 weekly_badge = user_data.get('weekly_badge')
                 if weekly_badge:
                     display_name = f"{weekly_badge} {display_name}"
@@ -5754,6 +5758,8 @@ async def show_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1)
         status_icon = "" if unread_in_convo > 0 else ""
 
         sender_name = convo['sender_name'][:14] if len(convo['sender_name']) > 14 else convo['sender_name']
+        if convo.get('sender_sex') in ('👨', '👩'):
+            sender_name = f"{convo['sender_sex']} {sender_name}"
 
         # Format timestamp nicely
         timestamp = convo['last_timestamp']
@@ -7282,7 +7288,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
         reply_user = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (reply['author_id'],)))
         is_admin = reply_user.get('is_admin', False) if reply_user else False
         display_sex = get_display_sex(reply_user) if reply_user else '👤'
-        display_name = get_display_name(reply_user) if reply_user else 'Anonymous'
+        display_name = get_plain_name(reply_user) if reply_user else 'Anonymous'
         avatar_emoji = reply_user.get('avatar_emoji') if reply_user else None
         hide_aura = reply_user.get('hide_aura', False) if reply_user else False
     else:
@@ -7566,7 +7572,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
     if not user:
         return
     
-    display_name = get_display_name(user)
+    display_name = get_plain_name(user)
     display_sex = get_display_sex(user)
     rating = (await asyncio.to_thread(calculate_user_rating, user_id))
     
@@ -8273,7 +8279,7 @@ def get_report_content_preview(target_type: str, target_id: int):
         if row:
             return (row['content'] or '[media]')[:100], row['author_id']
     elif target_type == 'user':
-        row = db_fetch_one("SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (str(target_id),))
+        row = db_fetch_one("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (str(target_id),))
         if row:
             return f"User: {get_display_name(row)} (ID {target_id})", str(target_id)
     return None, None
@@ -8592,8 +8598,8 @@ async def show_report_detail(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return
 
     t_type, t_id = report['target_type'], report['target_id']
-    reporter = await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (report['reporter_id'],))
-    reporter_name = html.escape((reporter or {}).get('anonymous_name') or 'Anonymous')
+    reporter = await db_fetch_one_async("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (report['reporter_id'],))
+    reporter_name = html.escape(get_display_name(reporter) if reporter else 'Anonymous')
 
     media_type, media_id = 'text', None
     body = "<i>[Content has been deleted]</i>"
@@ -8603,7 +8609,7 @@ async def show_report_detail(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     if t_type == 'post':
         post = await db_fetch_one_async("""
-            SELECT p.*, u.anonymous_name,
+            SELECT p.*, u.anonymous_name, u.sex, u.avatar_emoji,
                    (SELECT STRING_AGG(category_code, ', ') FROM post_categories WHERE post_id = p.post_id) AS cats
             FROM posts p JOIN users u ON u.user_id = p.author_id
             WHERE p.post_id = %s
@@ -8613,7 +8619,7 @@ async def show_report_detail(update: Update, context: ContextTypes.DEFAULT_TYPE,
             media_type, media_id = post.get('media_type') or 'text', post.get('media_id')
             vent = f"Vent - {post['vent_number']:03d}" if post.get('vent_number') else f"Post #{t_id}"
             lines.append(f"<b>Post:</b> {html.escape(vent)}")
-            lines.append(f"<b>Author:</b> {html.escape(post['anonymous_name'] or 'Anonymous')} (<code>{author_id}</code>)")
+            lines.append(f"<b>Author:</b> {html.escape(get_display_name(post))} (<code>{author_id}</code>)")
             lines.append(f"<b>Categories:</b> {html.escape(post.get('cats') or 'Other')}")
             if post.get('explicit'):
                 lines.append("<b>Marked explicit</b>")
@@ -8624,7 +8630,7 @@ async def show_report_detail(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     elif t_type == 'comment':
         c = await db_fetch_one_async("""
-            SELECT c.*, u.anonymous_name, p.content AS post_content
+            SELECT c.*, u.anonymous_name, u.sex, u.avatar_emoji, p.content AS post_content
             FROM comments c
             JOIN users u ON u.user_id = c.author_id
             LEFT JOIN posts p ON p.post_id = c.post_id
@@ -8634,7 +8640,7 @@ async def show_report_detail(update: Update, context: ContextTypes.DEFAULT_TYPE,
             author_id = str(c['author_id'])
             media_type, media_id = c.get('type') or 'text', c.get('file_id')
             lines.append(f"<b>Comment #{t_id}</b>")
-            lines.append(f"<b>Author:</b> {html.escape(c['anonymous_name'] or 'Anonymous')} (<code>{author_id}</code>)")
+            lines.append(f"<b>Author:</b> {html.escape(get_display_name(c))} (<code>{author_id}</code>)")
             ctx_txt = html.escape(truncate_for_telegram(c.get('post_content') or '', 150))
             if ctx_txt:
                 lines.append(f"<b>On post:</b> <i>{ctx_txt}</i>")
@@ -8695,8 +8701,8 @@ async def notify_admin_of_new_report(
     if not ADMIN_ID:
         return
     try:
-        reporter = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (reporter_id,)))
-        reporter_name = reporter['anonymous_name'] if reporter else 'Anonymous'
+        reporter = (await db_fetch_one_async("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (reporter_id,)))
+        reporter_name = get_display_name(reporter) if reporter else 'Anonymous'
         type_label = _report_type_label(target_type)
         safe_reason = escape_markdown(reason, version=2)
         safe_name = escape_markdown(reporter_name, version=2)
@@ -8815,8 +8821,8 @@ async def send_reaction_notification(context: ContextTypes.DEFAULT_TYPE, comment
         if post and str(reactor_id) == str(post['author_id']):
             reactor_display = "Vent author"
         else:
-            reactor = (await db_fetch_one_async("SELECT anonymous_name FROM users WHERE user_id = %s", (reactor_id,)))
-            reactor_display = reactor['anonymous_name'] if reactor else "Anonymous"
+            reactor = (await db_fetch_one_async("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (reactor_id,)))
+            reactor_display = get_display_name(reactor) if reactor else "Anonymous"
         
         # Content formatting
         post_preview = post['content'][:50] + '...' if post and len(post['content']) > 50 else (post['content'] if post else "")
@@ -9148,11 +9154,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ))
                     if followed_user and followed_user['notifications_enabled']:
                         follower_data = (await db_fetch_one_async(
-                            "SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (user_id,)
+                            "SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (user_id,)
                         ))
                         if follower_data:
-                            follower_name = follower_data.get('avatar_emoji') or ''
-                            follower_name = f"{follower_name} {follower_data['anonymous_name']}".strip()
+                            follower_name = get_display_name(follower_data)
                             try:
                                 await context.bot.send_message(
                                     chat_id=target_uid,
@@ -9186,7 +9191,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             per_page = 10
             offset = (page - 1) * per_page
             rows = (await db_fetch_all_async(
-                "SELECT u.user_id, u.anonymous_name, u.avatar_emoji FROM followers f "
+                "SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji FROM followers f "
                 "JOIN users u ON f.follower_id = u.user_id "
                 "WHERE f.followed_id = %s ORDER BY u.anonymous_name LIMIT %s OFFSET %s",
                 (user_id, per_page, offset)
@@ -9202,7 +9207,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 keyboard = []
                 for r in rows:
-                    label = f"{r['avatar_emoji']} {r['anonymous_name']}".strip() if r.get('avatar_emoji') else r['anonymous_name']
+                    label = get_display_name(r)
                     keyboard.append([InlineKeyboardButton(label, url=f"https://t.me/{context.bot.username}?start=profileid_{r['user_id']}" )])
                 nav = []
                 if page > 1:
@@ -9227,7 +9232,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             per_page = 10
             offset = (page - 1) * per_page
             rows = (await db_fetch_all_async(
-                "SELECT u.user_id, u.anonymous_name, u.avatar_emoji FROM followers f "
+                "SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji FROM followers f "
                 "JOIN users u ON f.followed_id = u.user_id "
                 "WHERE f.follower_id = %s ORDER BY u.anonymous_name LIMIT %s OFFSET %s",
                 (user_id, per_page, offset)
@@ -9243,7 +9248,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 keyboard = []
                 for r in rows:
-                    label = f"{r['avatar_emoji']} {r['anonymous_name']}".strip() if r.get('avatar_emoji') else r['anonymous_name']
+                    label = get_display_name(r)
                     keyboard.append([InlineKeyboardButton(label, url=f"https://t.me/{context.bot.username}?start=profileid_{r['user_id']}" )])
                 nav = []
                 if page > 1:
@@ -12015,7 +12020,7 @@ async def mod_is_admin(user_id) -> bool:
 
 async def mod_get_target(target_id):
     return await db_fetch_one_async(
-        "SELECT user_id, anonymous_name, avatar_emoji, is_admin, is_banned, ban_reason, "
+        "SELECT user_id, anonymous_name, sex, avatar_emoji, is_admin, is_banned, ban_reason, "
         "banned_at, warning_count FROM users WHERE user_id = %s",
         (str(target_id),)
     )
@@ -12213,7 +12218,7 @@ async def mod_banned_content(page=1):
     page = max(1, page)
     offset = (page - 1) * per_page
     rows = await db_fetch_all_async(
-        """SELECT user_id, anonymous_name, avatar_emoji, ban_reason,
+        """SELECT user_id, anonymous_name, sex, avatar_emoji, ban_reason,
                   COUNT(*) OVER () AS total_count
            FROM users WHERE is_banned = TRUE
            ORDER BY banned_at DESC NULLS LAST LIMIT %s OFFSET %s""",
@@ -14107,6 +14112,7 @@ function avKey(v){if(!v)return '';const cp=String(v).codePointAt(0);return cp?cp
 function avEmoji(k){return String.fromCodePoint(parseInt(k,16))+(AV[k]&&AV[k].vs?String.fromCharCode(0xFE0F):'')}
 function avSvg(k){const a=AV[k];return '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="av-svg">'+a.g+'</svg>'}
 function avaHtml(v){const k=avKey(v);if(AV[k])return avSvg(k);if(!v)return avSvg('1f464');return esc(v)}
+function sexTag(s){return (s==='👨'||s==='👩')?s+' ':''}
 
 const CATS = [
   ['StoryTime',ICONS.book,'Story Time'],
@@ -15434,7 +15440,7 @@ function lbPodCol(u,place){
   if(!u)return '<div class="pod-col empty p'+place+'"><div class="pod-plinth"></div></div>';
   const crown=place===1?`<span class="pod-crown">${u.weekly_badge&&lbPeriod==='all'?esc(u.weekly_badge):ICONS.crown}</span>`:'';
   const pts=typeof u.points!=='number'?'Hidden':(lbPeriod==='weekly'?`+${u.points} pts`:`${u.points} pts`);
-  return `<div class="pod-col p${place}"><div class="pod-ava-wrap">${crown}<div class="pod-ava" onclick="showUserProfile('${u.id}')">${avaHtml(u.avatar||u.sex)}</div><span class="pod-badge">${place}</span></div><div class="pod-name" onclick="showUserProfile('${u.id}')">${esc(u.name)}</div><div class="pod-pts">${pts}</div><div class="pod-plinth">${place}</div></div>`;
+  return `<div class="pod-col p${place}"><div class="pod-ava-wrap">${crown}<div class="pod-ava" onclick="showUserProfile('${u.id}')">${avaHtml(u.avatar||u.sex)}</div><span class="pod-badge">${place}</span></div><div class="pod-name" onclick="showUserProfile('${u.id}')">${sexTag(u.sex)}${esc(u.name)}</div><div class="pod-pts">${pts}</div><div class="pod-plinth">${place}</div></div>`;
 }
 function renderLbMe(me){
   const el=document.getElementById('lb-me');if(!el)return;
@@ -15473,7 +15479,7 @@ async function loadLB(){
       rest.forEach((u,i)=>{
         const hid=typeof u.points!=='number';const pts=hid?'Hidden':(lbPeriod==='weekly'?`+${u.points}<small>THIS WEEK</small>`:`${u.points}<small>POINTS</small>`);
         const sub=u.aura?`<div class="lb-info-aura">${esc(u.aura)}</div>`:'';
-        html+=`<div class="lb-row2"><div class="lb-rank2">${i+4}</div><div class="ava" style="width:38px;height:38px">${avaHtml(u.avatar||u.sex)}</div><div class="lb-info"><div class="lb-info-name" onclick="showUserProfile('${u.id}')">${lbPeriod==='all'&&u.weekly_badge?esc(u.weekly_badge)+' ':''}${esc(u.name)}</div>${sub}</div><div class="lb-pts2">${pts}</div></div>`;
+        html+=`<div class="lb-row2"><div class="lb-rank2">${i+4}</div><div class="ava" style="width:38px;height:38px">${avaHtml(u.avatar||u.sex)}</div><div class="lb-info"><div class="lb-info-name" onclick="showUserProfile('${u.id}')">${lbPeriod==='all'&&u.weekly_badge?esc(u.weekly_badge)+' ':''}${sexTag(u.sex)}${esc(u.name)}</div>${sub}</div><div class="lb-pts2">${pts}</div></div>`;
       });
       html+='</div>';
     }
@@ -15543,7 +15549,7 @@ function meHeroHtml(p){
     <div class="me-top">
       <div class="me-ava" onclick="setupEdit()">${avaHtml(p.avatar||p.sex)}</div>
       <div class="me-id">
-        <div class="me-name">${esc(p.weekly_badge||'')} ${esc(p.name)}</div>
+        <div class="me-name">${esc(p.weekly_badge||'')} ${sexTag(p.sex)}${esc(p.name)}</div>
         <div class="me-meta">${showAura?`<span>${esc(p.aura)} ${esc(fmtNum(p.rating))} pts</span>`:''}${p.role?`<span>${ICONS.shield}${esc(p.role)}</span>`:''}</div>
       </div>
     </div>
@@ -15921,7 +15927,7 @@ async function loadMoreChats(){
   }catch(e){toast(e.message)}finally{chatsLoadingMore=false}
 }
 
-function openCR(pid,name,ava){
+function openCR(pid,name,ava,sex){
   clearInterval(adminMonitorPoll); adminMonitorPoll = null; adminViewingPair = null;
   document.querySelector('.cr-input').style.display = ''; // in case admin view had hidden it
   crPartnerId=pid;
@@ -15929,8 +15935,9 @@ function openCR(pid,name,ava){
     const c=chatsCache.find(x=>String(x.partner_id)===String(pid));
     name=c?(c.partner_name||'Anonymous'):'Chat';
     ava=c?(c.partner_avatar||c.partner_sex):null;
+    sex=c?c.partner_sex:null;
   }
-  document.getElementById('cr-name').textContent=name;
+  document.getElementById('cr-name').textContent=sexTag(sex)+name;
   document.getElementById('cr-ava').innerHTML=avaHtml(ava);
   document.getElementById('chat-room').classList.add('open');
   document.getElementById('cr-txt').value='';
@@ -16529,7 +16536,7 @@ async function showUserProfile(userId){
     } else {
       contentDiv.innerHTML = `
         <div class="modal-avatar">${avaHtml(u.avatar||u.sex)}</div>
-        <div class="modal-name">${esc(u.name)}</div>
+        <div class="modal-name">${sexTag(u.sex)}${esc(u.name)}</div>
         ${u.role?`<div class="modal-role">${ICONS.shield}${esc(u.role)}</div>`:''}
         ${u.bio?`<div class="modal-bio">${esc(u.bio)}</div>`:''}
         <div class="modal-stats"><div class="modal-stat"><div class="modal-stat-num">${u.stats?.posts||0}</div><div class="modal-stat-lbl">Vents</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.comments||0}</div><div class="modal-stat-lbl">Replies</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.followers||0}</div><div class="modal-stat-lbl">Followers</div></div></div>
@@ -16543,7 +16550,7 @@ async function showUserProfile(userId){
       btn.onclick = async function(){
         if(requestStatus==='accepted'){
           closeProfileModal();
-          openCR(userId, u.name, u.avatar||u.sex);
+          openCR(userId, u.name, u.avatar||u.sex, u.sex);
         }else{
           const sent = await sendChatRequest(userId);
           if(sent){
@@ -18681,14 +18688,14 @@ def mini_app_send_chat_request():
     # --- Send Telegram notification to the receiver (using requests, no async needed) ---
     try:
         import requests
-        sender = db_fetch_one("SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (sender_id,))
-        sender_name = sender['anonymous_name'] if sender else 'Anonymous'
+        sender = db_fetch_one("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (sender_id,))
+        sender_name = get_display_name(sender) if sender else 'Anonymous'
         sender_icon = sender['avatar_emoji'] if (sender and sender['avatar_emoji']) else '👤'
         
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         payload = {
             "chat_id": int(receiver_id),
-            "text": f"*New Chat Request*\n\n{sender_icon} *{sender_name}* wants to chat with you.",
+            "text": f"*New Chat Request*\n\n*{sender_name}* wants to chat with you.",
             "reply_markup": {
                 "inline_keyboard": [
                     [
@@ -19212,9 +19219,9 @@ def mini_app_follow():
                 "ON CONFLICT DO NOTHING RETURNING follower_id",
                 (user_id, target_id))
             if inserted and target.get('notifications_enabled'):
-                me = db_fetch_one("SELECT anonymous_name, avatar_emoji FROM users WHERE user_id = %s", (user_id,))
+                me = db_fetch_one("SELECT anonymous_name, sex, avatar_emoji FROM users WHERE user_id = %s", (user_id,))
                 if me:
-                    name = f"{me.get('avatar_emoji') or ''} {me['anonymous_name']}".strip()
+                    name = get_display_name(me)
                     _fire_and_forget(
                         send_telegram_message_sync, target_id,
                         f"<b>New Follower!</b>\n<b>{html.escape(name)}</b> started following you.\n"
