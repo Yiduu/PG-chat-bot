@@ -320,7 +320,9 @@ def init_db():
                     ('hide_role', 'BOOLEAN DEFAULT FALSE'),
                     # Opt-in: lets chat partners share this user's real Telegram @username.
                     ('share_username', 'BOOLEAN DEFAULT FALSE'),
-                    ('tg_username', 'TEXT')
+                    ('tg_username', 'TEXT'),
+                    # Opt-out: when FALSE, nobody can send this user a new chat request.
+                    ('accept_chat_requests', 'BOOLEAN DEFAULT TRUE')
                 ]
                 for col_name, col_type in privacy_columns:
                     if ('users', col_name) not in existing_columns:
@@ -1080,6 +1082,20 @@ def db_update_user(user_id, **fields):
 async def db_update_user_async(user_id, **fields):
     """Async wrapper of db_update_user for Telegram handlers."""
     return await asyncio.to_thread(db_update_user, user_id, **fields)
+
+
+NOT_ACCEPTING_REQUESTS_MSG = "This user isn't accepting chat requests right now."
+
+
+def user_accepts_chat_requests(user_id):
+    """True unless the user switched off 'Accept chat requests'. A missing user or a NULL
+    column (rows from before the setting existed) counts as accepting, so the setting can
+    only ever block requests when the user explicitly chose to."""
+    row = db_fetch_one(
+        "SELECT COALESCE(accept_chat_requests, TRUE) AS accepting FROM users WHERE user_id = %s",
+        (str(user_id),)
+    )
+    return True if not row else bool(row['accepting'])
 
 
 # ---- keep-alive HTTP session for Telegram Bot API calls made from Flask/worker threads ----
@@ -3199,18 +3215,20 @@ async def show_privacy_settings(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     
     user = (await db_fetch_one_async("""
-        SELECT hide_aura, hide_bio, hide_follower_count, hide_role 
+        SELECT hide_aura, hide_bio, hide_follower_count, hide_role,
+               COALESCE(accept_chat_requests, TRUE) AS accept_chat_requests
         FROM users WHERE user_id = %s
     """, (user_id,)))
-    
+
     if not user:
         await query.answer("User not found.", show_alert=True)
         return
 
     # Helper for status text
     def s(val): return "HIDDEN" if val else "VISIBLE"
-    
+
     keyboard = [
+        [InlineKeyboardButton(f"Accept Chat Requests: {'ON' if user['accept_chat_requests'] else 'OFF'}", callback_data='toggle_accept_requests')],
         [InlineKeyboardButton(f"Aura & Points: {s(user['hide_aura'])}", callback_data='toggle_hide_aura')],
         [InlineKeyboardButton(f"Bio: {s(user['hide_bio'])}", callback_data='toggle_hide_bio')],
         [InlineKeyboardButton(f"Follower Count: {s(user['hide_follower_count'])}", callback_data='toggle_hide_follower_count')],
@@ -8765,6 +8783,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif query.data == 'privacy_settings':
             await show_privacy_settings(update, context)
 
+        elif query.data == 'toggle_accept_requests':
+            new_val = not (await asyncio.to_thread(user_accepts_chat_requests, user_id))
+            await db_update_user_async(user_id, accept_chat_requests=new_val)
+            await query.answer(
+                "You'll now receive chat requests" if new_val else "New chat requests are now blocked",
+                show_alert=False
+            )
+            await show_privacy_settings(update, context)
+
         elif query.data.startswith('toggle_hide_'):
             metric = query.data.replace('toggle_hide_', '')
             col = f"hide_{metric}"
@@ -9326,7 +9353,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "SELECT status, timestamp FROM chat_requests WHERE sender_id = %s AND receiver_id = %s",
                 (user_id, target_id)
             ))
-            
+
+            # Respect the receiver's "Accept chat requests" switch. An already-accepted chat
+            # stays open; everything else (new request or a reminder) is refused.
+            if not (existing and existing['status'] == 'accepted') \
+                    and not await asyncio.to_thread(user_accepts_chat_requests, target_id):
+                await query.answer(NOT_ACCEPTING_REQUESTS_MSG, show_alert=True)
+                return
+
             if existing:
                 if existing['status'] == 'accepted':
                     await query.answer("Request already accepted!", show_alert=False)
@@ -13564,6 +13598,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       <div class="me-label">Privacy</div>
       <div class="me-group">
         <div class="me-row"><div class="me-text"><div class="me-title">Public profile</div><div class="me-sub">Let others see your profile stats</div></div><label class="toggle"><input type="checkbox" id="set-priv" onchange="saveSetting('privacy_public',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-row"><div class="me-text"><div class="me-title">Accept chat requests</div><div class="me-sub">Off: nobody can send you new requests. Existing chats stay open</div></div><label class="toggle"><input type="checkbox" id="set-accept-requests" onchange="saveSetting('accept_chat_requests',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row"><div class="me-text"><div class="me-title">Hide aura and points</div><div class="me-sub">Others see Hidden instead</div></div><label class="toggle"><input type="checkbox" id="set-hide-aura" onchange="saveSetting('hide_aura',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row"><div class="me-text"><div class="me-title">Share my Telegram username</div><div class="me-sub">Off by default. Lets people you chat with share your @username</div></div><label class="toggle"><input type="checkbox" id="set-share-username" onchange="saveShareUsername(this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row"><div class="me-text"><div class="me-title">Hide bio</div></div><label class="toggle"><input type="checkbox" id="set-hide-bio" onchange="saveSetting('hide_bio',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
@@ -15263,6 +15298,7 @@ function applySettings(d){
   set('set-hide-aura',d.hide_aura);set('set-hide-bio',d.hide_bio);
   set('set-hide-followers',d.hide_follower_count);set('set-hide-role',d.hide_role);
   set('set-share-username',d.share_username);
+  set('set-accept-requests',d.accept_chat_requests!==false);
   const rr=document.getElementById('row-hide-role');
   if(rr)rr.style.display=d.is_admin?'flex':'none';
   botLink=d.bot_link||botLink;
@@ -16148,6 +16184,8 @@ async function crRequestAgain(){
 async function getChatRequestStatus(targetId){
   try{
     const res=await api(`/api/mini-app/chat-request/status?user_id=${UID}&target_id=${targetId}`);
+    // 'closed' = the other user switched off "Accept chat requests" (open chats stay 'accepted').
+    if(res.accepting===false && res.status!=='accepted' && res.status!=='pending') return 'closed';
     return res.status;
   }catch(e){return 'none';}
 }
@@ -16178,6 +16216,8 @@ async function showUserProfile(userId){
       buttonHtml = `<button class="modal-btn modal-btn-primary" id="chatActionBtn">${ICONS.chat} Open Chat</button>`;
     }else if(requestStatus==='pending'){
       buttonHtml = `<button class="modal-btn modal-btn-secondary" disabled style="opacity:0.6">${ICONS.clock} Request Pending</button>`;
+    }else if(requestStatus==='closed'){
+      buttonHtml = `<button class="modal-btn modal-btn-secondary" disabled style="opacity:0.6">Not accepting requests</button>`;
     }else{
       buttonHtml = `<button class="modal-btn modal-btn-primary" id="chatActionBtn">${ICONS.mail} Request to Chat</button>`;
     }
@@ -18287,10 +18327,13 @@ def mini_app_chat_request_status():
         ORDER BY timestamp DESC LIMIT 1
     """, (user_id, target_id, target_id, user_id))
     
+    # 'accepting' lets the app show "not accepting requests" instead of a button that would fail.
+    accepting = user_accepts_chat_requests(target_id)
+
     if not row:
-        return jsonify({'success': True, 'status': 'none'})
-    
-    return jsonify({'success': True, 'status': row['status']})
+        return jsonify({'success': True, 'status': 'none', 'accepting': accepting})
+
+    return jsonify({'success': True, 'status': row['status'], 'accepting': accepting})
 
 
 @flask_app.route('/api/mini-app/chat-request/send', methods=['POST'])
@@ -18324,7 +18367,11 @@ def mini_app_send_chat_request():
             return jsonify({'success': True, 'status': 'accepted', 'message': 'Chat already accepted'})
         elif existing['status'] == 'pending':
             return jsonify({'success': False, 'error': 'Chat request already pending'}), 409
-    
+
+    # Respect the receiver's "Accept chat requests" switch (accepted chats returned above).
+    if not user_accepts_chat_requests(receiver_id):
+        return jsonify({'success': False, 'error': NOT_ACCEPTING_REQUESTS_MSG}), 403
+
     # Insert new pending request
     db_execute("""
         INSERT INTO chat_requests (sender_id, receiver_id, status)
@@ -19213,7 +19260,8 @@ def mini_app_get_settings(user_id):
             "COALESCE(share_username, FALSE) AS share_username, tg_username, "
             "COALESCE(hide_aura, FALSE) AS hide_aura, COALESCE(hide_bio, FALSE) AS hide_bio, "
             "COALESCE(hide_follower_count, FALSE) AS hide_follower_count, "
-            "COALESCE(hide_role, FALSE) AS hide_role "
+            "COALESCE(hide_role, FALSE) AS hide_role, "
+            "COALESCE(accept_chat_requests, TRUE) AS accept_chat_requests "
             "FROM users WHERE user_id = %s",
             (user_id,)
         )
@@ -19229,6 +19277,7 @@ def mini_app_get_settings(user_id):
                 'hide_bio': bool(user['hide_bio']),
                 'hide_follower_count': bool(user['hide_follower_count']),
                 'hide_role': bool(user['hide_role']),
+                'accept_chat_requests': bool(user['accept_chat_requests']),
                 'share_username': bool(user['share_username']) and bool(user['tg_username']),
                 'is_admin': bool(user['is_admin']),
                 'bot_link': f"https://t.me/{BOT_USERNAME}" if BOT_USERNAME else ""
@@ -19252,6 +19301,7 @@ def mini_app_update_settings(user_id):
             'hide_bio': 'hide_bio',
             'hide_follower_count': 'hide_follower_count',
             'hide_role': 'hide_role',
+            'accept_chat_requests': 'accept_chat_requests',
         }
         fields = {}
         for key, column in setting_columns.items():
