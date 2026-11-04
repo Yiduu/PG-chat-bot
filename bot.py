@@ -7011,7 +7011,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     # Telegram sizes inline buttons to the message bubble (and splits a row between its buttons),
     # so a short "Page 2/2" text made these buttons small and easy to miss. Each button now gets
-    # its own row, and the text carries a line of invisible padding so the bubble (and with it
+    # its own row, and the text ends with invisible padding (same line, so no extra gap) so the bubble (and with it
     # every button) is as wide as a normal comment.
     wide_pad = COMMENT_NAV_WIDTH_PAD
 
@@ -7021,12 +7021,12 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         if page < total_pages: rows.append([InlineKeyboardButton("Newer comments", callback_data=f"viewcomments_{post_id}_{page+1}")])
         if is_last_page:
             rows.append([InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")])
-        await context.bot.send_message(chat_id, f"Page {page}/{total_pages}\n{wide_pad}", reply_markup=InlineKeyboardMarkup(rows))
+        await context.bot.send_message(chat_id, f"Page {page}/{total_pages}{wide_pad}", reply_markup=InlineKeyboardMarkup(rows))
     elif is_last_page:
         # Single page — standalone add comment button
         await context.bot.send_message(
             chat_id,
-            f"Add your thoughts to the conversation\n{wide_pad}",
+            f"Add your thoughts to the conversation{wide_pad[:10]}",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")]])
         )
 async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None, rating_override=None, show_aura=None):
