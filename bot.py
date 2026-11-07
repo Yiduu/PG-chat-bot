@@ -1373,10 +1373,18 @@ def reaction_group(rtype):
 #   PREMIUM_EMOJIS=1|0   PREMIUM_EMOJI_LIKE  PREMIUM_EMOJI_DISLIKE  PREMIUM_EMOJI_LAUGH
 #   PREMIUM_EMOJI_ADD_COMMENT  PREMIUM_EMOJI_VIEW_COMMENTS
 PREMIUM_EMOJIS_ON = os.getenv('PREMIUM_EMOJIS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
-PREMIUM_EMOJI_IDS = {
-    key: (os.getenv(f'PREMIUM_EMOJI_{key.upper()}') or '').strip()
-    for key in ('like', 'dislike', 'laugh', 'add_comment', 'view_comments')
+# Brand defaults (orange set). Env vars PREMIUM_EMOJI_<NAME> override them; set one to "0" to drop that icon.
+PREMIUM_EMOJI_DEFAULTS = {
+    'like': '5377653178940535039',          # 👍 orange thumbs up
+    'dislike': '5377310028233453408',       # 👎 orange thumbs down
+    'laugh': '5377779249115582197',         # 😂 laughing face
+    'add_comment': '5336952651504436902',   # ➕ plus
+    'view_comments': '5202126386768140453', # 👀 eyes
 }
+PREMIUM_EMOJI_IDS = {}
+for _key, _default in PREMIUM_EMOJI_DEFAULTS.items():
+    _val = (os.getenv(f'PREMIUM_EMOJI_{_key.upper()}') or _default).strip()
+    PREMIUM_EMOJI_IDS[_key] = '' if _val == '0' else _val
 _ICON_FIELD = 'icon_custom_emoji_id'
 
 
