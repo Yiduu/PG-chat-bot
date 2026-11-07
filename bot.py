@@ -1357,19 +1357,117 @@ def reaction_group(rtype):
     return 'like'
 
 
+# ---- Premium (custom) emoji on inline buttons ---------------------------------------
+# Telegram lets a bot put an animated *premium* emoji in front of an inline button's text via
+# `icon_custom_emoji_id` (Bot API 9.4+). It only works in messages the bot sends directly to
+# private/group/supergroup chats (NOT channel posts) and only if the bot owner has Telegram
+# Premium (or the bot has Fragment usernames). python-telegram-bot 20.3 has no field for it,
+# so it is sent through `api_kwargs`.
+#
+# Rule requested for this bot: premium emoji when available, otherwise NO emoji at all.
+# Button text is therefore always plain text ("Like 3"); the premium emoji is purely an extra
+# icon. No ID configured / feature off / Telegram rejects it  ->  the plain-text button.
+#
+# Configure the IDs through env vars (get an ID by sending the bot, as ADMIN_ID, a message that
+# contains the premium emoji - the bot replies with its ID, see emoji_id_helper):
+#   PREMIUM_EMOJIS=1|0   PREMIUM_EMOJI_LIKE  PREMIUM_EMOJI_DISLIKE  PREMIUM_EMOJI_LAUGH
+#   PREMIUM_EMOJI_ADD_COMMENT  PREMIUM_EMOJI_VIEW_COMMENTS
+PREMIUM_EMOJIS_ON = os.getenv('PREMIUM_EMOJIS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+PREMIUM_EMOJI_IDS = {
+    key: (os.getenv(f'PREMIUM_EMOJI_{key.upper()}') or '').strip()
+    for key in ('like', 'dislike', 'laugh', 'add_comment', 'view_comments')
+}
+_ICON_FIELD = 'icon_custom_emoji_id'
+
+
+def premium_button(text, key, **kwargs):
+    """InlineKeyboardButton that carries the premium emoji `key` when one is configured and
+    enabled; otherwise a plain text button with no emoji."""
+    emoji_id = PREMIUM_EMOJI_IDS.get(key) if PREMIUM_EMOJIS_ON else None
+    if emoji_id:
+        api_kwargs = dict(kwargs.pop('api_kwargs', None) or {})
+        api_kwargs[_ICON_FIELD] = emoji_id
+        return InlineKeyboardButton(text, api_kwargs=api_kwargs, **kwargs)
+    return InlineKeyboardButton(text, **kwargs)
+
+
+def _without_premium_icons(markup):
+    """Copy of `markup` with icon_custom_emoji_id removed from every button, or None when it had
+    none (buttons are immutable in PTB 20, so a new markup is built)."""
+    if not hasattr(markup, 'inline_keyboard'):
+        return None
+    rows, removed = [], False
+    for row in markup.inline_keyboard or []:
+        new_row = []
+        for btn in row:
+            d = btn.to_dict()
+            if d.pop(_ICON_FIELD, None) is not None:
+                removed = True
+            new_row.append(d)
+        rows.append(new_row)
+    return InlineKeyboardMarkup.de_json({'inline_keyboard': rows}, None) if removed else None
+
+
+def _install_premium_emoji_fallback():
+    """If Telegram rejects a message because of a premium-emoji button (owner without Premium,
+    unknown ID, unsupported chat...), strip the icons and resend it once as plain text buttons,
+    so users never lose a comment/keyboard. Icons are switched off after a successful retry."""
+    from telegram import Bot
+    original_post = Bot._post
+
+    async def _post_with_fallback(self, endpoint, data=None, *args, **kwargs):
+        global PREMIUM_EMOJIS_ON
+        try:
+            return await original_post(self, endpoint, data, *args, **kwargs)
+        except BadRequest as exc:
+            plain_markup = _without_premium_icons((data or {}).get('reply_markup')) if PREMIUM_EMOJIS_ON else None
+            if plain_markup is None:
+                raise
+            logger.warning(f"Premium emoji button rejected by Telegram ({exc}); retrying without icons")
+            data = {**data, 'reply_markup': plain_markup}
+            result = await original_post(self, endpoint, data, *args, **kwargs)
+            if endpoint in ('sendMessage', 'sendPhoto', 'sendVoice', 'sendAudio'):
+                # Only a send to a chat where icons are allowed proves the setup itself is bad.
+                PREMIUM_EMOJIS_ON = False
+                logger.warning("Premium emoji buttons disabled for this run (set PREMIUM_EMOJIS=0 or fix the IDs)")
+            return result
+
+    Bot._post = _post_with_fallback
+
+
+_install_premium_emoji_fallback()
+
+
+async def emoji_id_helper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: send the bot a message containing premium emoji and it replies with their IDs."""
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user or not ADMIN_ID or str(user.id) != str(ADMIN_ID):
+        return
+    entities = list(msg.entities or []) + list(msg.caption_entities or [])
+    ids = [e.custom_emoji_id for e in entities if e.type == 'custom_emoji' and e.custom_emoji_id]
+    if not ids:
+        return
+    lines = ["Premium emoji IDs:"] + [f"{i + 1}. {cid}" for i, cid in enumerate(ids)]
+    lines.append("")
+    lines.append("Put them in env vars: PREMIUM_EMOJI_LIKE, PREMIUM_EMOJI_DISLIKE, PREMIUM_EMOJI_LAUGH, "
+                 "PREMIUM_EMOJI_ADD_COMMENT, PREMIUM_EMOJI_VIEW_COMMENTS")
+    await msg.reply_text("\n".join(lines))
+
+
 def build_comment_keyboard(comment_id, post_id, likes, dislikes, laughs, reply_callback,
                            is_reply=False, is_author=False, comment_type='text'):
     """Inline keyboard for a comment/reply:
-         row 1: 👍 n | 👎 n | 😂 n
+         row 1: Like n | Dislike n | Laugh n   (premium emoji icons when configured, else no emoji)
          row 2: Reply | Report            (side by side, under the emojis)
          row 3: Edit | Delete             (author only; media comments only get Delete)
     """
     kind = 'reply' if is_reply else 'comment'
     rows = [
         [
-            InlineKeyboardButton(f"\U0001F44D {likes}", callback_data=f"like{kind}_{comment_id}"),
-            InlineKeyboardButton(f"\U0001F44E {dislikes}", callback_data=f"dislike{kind}_{comment_id}"),
-            InlineKeyboardButton(f"\U0001F602 {laughs}", callback_data=f"laugh{kind}_{comment_id}"),
+            premium_button(f"Like {likes}", 'like', callback_data=f"like{kind}_{comment_id}"),
+            premium_button(f"Dislike {dislikes}", 'dislike', callback_data=f"dislike{kind}_{comment_id}"),
+            premium_button(f"Laugh {laughs}", 'laugh', callback_data=f"laugh{kind}_{comment_id}"),
         ],
         [
             InlineKeyboardButton("Reply", callback_data=reply_callback),
@@ -6628,8 +6726,8 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
 
     comment_count = (await asyncio.to_thread(count_all_comments, post_id))
     header_kb = [
-        [InlineKeyboardButton(f"View Comments ({comment_count})", callback_data=f"viewcomments_{post_id}_1")],
-        [InlineKeyboardButton("Write Comment", callback_data=f"writecomment_{post_id}")]
+        [premium_button(f"View Comments ({comment_count})", 'view_comments', callback_data=f"viewcomments_{post_id}_1")],
+        [premium_button("Write Comment", 'add_comment', callback_data=f"writecomment_{post_id}")]
     ]
     if not post.get('deleted'):
         header_kb.append([InlineKeyboardButton("Report Post", callback_data=f"report_post_{post_id}")])
@@ -7262,7 +7360,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
 
     if not comments and page == 1:
         first_comment_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Be the first to comment", callback_data=f"writecomment_{post_id}")]
+            [premium_button("Be the first to comment", 'add_comment', callback_data=f"writecomment_{post_id}")]
         ])
         await context.bot.send_message(
             chat_id,
@@ -7335,14 +7433,14 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         if page > 1: rows.append([InlineKeyboardButton("Older comments", callback_data=f"viewcomments_{post_id}_{page-1}")])
         if page < total_pages: rows.append([InlineKeyboardButton("Newer comments", callback_data=f"viewcomments_{post_id}_{page+1}")])
         if is_last_page:
-            rows.append([InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")])
+            rows.append([premium_button("Add comment", 'add_comment', callback_data=f"writecomment_{post_id}")])
         await context.bot.send_message(chat_id, f"Page {page}/{total_pages}{wide_pad}", reply_markup=InlineKeyboardMarkup(rows))
     elif is_last_page:
         # Single page — standalone add comment button
         await context.bot.send_message(
             chat_id,
             f"Add your thoughts to the conversation{wide_pad[:10]}",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Add comment", callback_data=f"writecomment_{post_id}")]])
+            reply_markup=InlineKeyboardMarkup([[premium_button("Add comment", 'add_comment', callback_data=f"writecomment_{post_id}")]])
         )
 async def send_reply_message(context, chat_id, reply, post_author_id, post_id, reply_to_message_id, pre_fetched_data=None, rating_override=None, show_aura=None):
     """Send a single reply message with proper formatting using pre-fetched user data if available"""
@@ -8131,7 +8229,7 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
     # (We've already verified above that post['author_id'] == user_id, so every
     # button below - including Edit Post - is implicitly author-only.)
     keyboard = [
-        [InlineKeyboardButton("View Comments", callback_data=f"viewcomments_{post_id}_1")],
+        [premium_button("View Comments", 'view_comments', callback_data=f"viewcomments_{post_id}_1")],
         [InlineKeyboardButton("Continue Thread", callback_data=f"continue_post_{post_id}")],
     ]
 
@@ -12692,6 +12790,8 @@ def main():
     app = Application.builder().token(TOKEN).concurrent_updates(True).post_init(set_bot_commands).build()
     
     # Add your handlers
+    # Admin helper: send a premium emoji to the bot to get its custom_emoji_id (own group, never blocks others)
+    app.add_handler(MessageHandler(filters.Entity("custom_emoji"), emoji_id_helper), group=-5)
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("webapp", mini_app_command))
