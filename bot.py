@@ -1373,15 +1373,15 @@ def reaction_group(rtype):
 #   PREMIUM_EMOJIS=1|0   PREMIUM_EMOJI_LIKE  PREMIUM_EMOJI_DISLIKE  PREMIUM_EMOJI_LAUGH
 #   PREMIUM_EMOJI_ADD_COMMENT  PREMIUM_EMOJI_VIEW_COMMENTS  PREMIUM_EMOJI_REPORT  PREMIUM_EMOJI_REPLY
 PREMIUM_EMOJIS_ON = os.getenv('PREMIUM_EMOJIS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
-# Brand defaults. Env vars PREMIUM_EMOJI_<NAME> override them; set one to "0" to drop that icon.
+# Defaults: calm, single-tone icons so the buttons don't pull the eye. Env vars PREMIUM_EMOJI_<NAME> override them; set one to "0" to drop that icon.
 PREMIUM_EMOJI_DEFAULTS = {
-    'like': '5377653178940535039',          # 👍 orange thumbs up
-    'dislike': '5377310028233453408',       # 👎 orange thumbs down
-    'laugh': '5377779249115582197',         # 😂 laughing face
-    'add_comment': '5336952651504436902',   # ➕ plus
-    'view_comments': '5202126386768140453', # 👀 eyes
-    'report': '5390921002932786864',        # 🤨 suspicious face (report)
-    'reply': '5370933273109221746',         # 💡 idea / your answer (reply)
+    'like': '5992199545151295755',          # 👍 thumbs up
+    'dislike': '5994368422031397063',       # 👎 thumbs down
+    'laugh': '5926873642334951560',         # 😄 laugh
+    'add_comment': '5879841310902324730',   # ✏️ write a comment
+    'view_comments': '5886666250158870040', # 💬 comments
+    'report': '5881702736843511327',        # ⚠️ report
+    'reply': '5875082500023258804',         # ⬅️ reply
 }
 PREMIUM_EMOJI_IDS = {}
 for _key, _default in PREMIUM_EMOJI_DEFAULTS.items():
