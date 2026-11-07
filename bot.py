@@ -1373,15 +1373,15 @@ def reaction_group(rtype):
 #   PREMIUM_EMOJIS=1|0   PREMIUM_EMOJI_LIKE  PREMIUM_EMOJI_DISLIKE  PREMIUM_EMOJI_LAUGH
 #   PREMIUM_EMOJI_ADD_COMMENT  PREMIUM_EMOJI_VIEW_COMMENTS  PREMIUM_EMOJI_REPORT  PREMIUM_EMOJI_REPLY
 PREMIUM_EMOJIS_ON = os.getenv('PREMIUM_EMOJIS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
-# Brand defaults (orange set). Env vars PREMIUM_EMOJI_<NAME> override them; set one to "0" to drop that icon.
+# Brand defaults. Env vars PREMIUM_EMOJI_<NAME> override them; set one to "0" to drop that icon.
 PREMIUM_EMOJI_DEFAULTS = {
     'like': '5377653178940535039',          # 👍 orange thumbs up
     'dislike': '5377310028233453408',       # 👎 orange thumbs down
     'laugh': '5377779249115582197',         # 😂 laughing face
     'add_comment': '5336952651504436902',   # ➕ plus
     'view_comments': '5202126386768140453', # 👀 eyes
-    'report': '5384240748239533494',        # 🔥 orange fire (report)
-    'reply': '5384201114281326926',         # 🤝 orange handshake (reply)
+    'report': '5390921002932786864',        # 🤨 suspicious face (report)
+    'reply': '5370933273109221746',         # 💡 idea / your answer (reply)
 }
 PREMIUM_EMOJI_IDS = {}
 for _key, _default in PREMIUM_EMOJI_DEFAULTS.items():
