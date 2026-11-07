@@ -7379,8 +7379,8 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         return
     chat_id = update.effective_chat.id
 
-    # Show typing animation
-    await typing_animation(context, chat_id, 0.5)
+    # No "typing..." status while comments load: Telegram shows it for ~5s after it is sent,
+    # which made loading look slow even when it wasn't.
 
     user_id = str(update.effective_user.id)
     per_page = 10
@@ -8230,8 +8230,7 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
     
     chat_id = update.effective_chat.id
     
-    # Show typing animation
-    await typing_animation(context, chat_id, 0.3)
+    # (no typing status here either - see show_comments_page)
     
     # Show animated loading
     loading_msg = await query.message.edit_text("Loading post details...")
@@ -10124,7 +10123,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data.startswith("viewpost_"):
             await query.answer("Loading vent...", show_alert=False)
-            await typing_animation(context, query.message.chat_id, 0.3)
             try:
                 parts = query.data.split('_')
                 if len(parts) >= 3:
