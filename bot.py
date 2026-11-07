@@ -1371,16 +1371,17 @@ def reaction_group(rtype):
 # Configure the IDs through env vars (get an ID by sending the bot, as ADMIN_ID, a message that
 # contains the premium emoji - the bot replies with its ID, see emoji_id_helper):
 #   PREMIUM_EMOJIS=1|0   PREMIUM_EMOJI_LIKE  PREMIUM_EMOJI_DISLIKE  PREMIUM_EMOJI_LAUGH
-#   PREMIUM_EMOJI_ADD_COMMENT  PREMIUM_EMOJI_VIEW_COMMENTS  PREMIUM_EMOJI_REPORT
+#   PREMIUM_EMOJI_ADD_COMMENT  PREMIUM_EMOJI_VIEW_COMMENTS  PREMIUM_EMOJI_REPORT  PREMIUM_EMOJI_REPLY
 PREMIUM_EMOJIS_ON = os.getenv('PREMIUM_EMOJIS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
-# Brand defaults (orange set). Env vars PREMIUM_EMOJI_<NAME> override them; set one to "0" to drop that icon.
+# Brand defaults. Env vars PREMIUM_EMOJI_<NAME> override them; set one to "0" to drop that icon.
 PREMIUM_EMOJI_DEFAULTS = {
     'like': '5377653178940535039',          # 👍 orange thumbs up
     'dislike': '5377310028233453408',       # 👎 orange thumbs down
     'laugh': '5377779249115582197',         # 😂 laughing face
     'add_comment': '5336952651504436902',   # ➕ plus
     'view_comments': '5202126386768140453', # 👀 eyes
-    'report': '5337035205070833952',        # ⚖️ report
+    'report': '5390921002932786864',        # 🤨 suspicious face (report)
+    'reply': '5370933273109221746',         # 💡 idea / your answer (reply)
 }
 PREMIUM_EMOJI_IDS = {}
 for _key, _default in PREMIUM_EMOJI_DEFAULTS.items():
@@ -1467,6 +1468,48 @@ async def emoji_id_helper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_text("\n".join(lines))
 
 
+# ---- Premium avatars ------------------------------------------------------------------
+# Users still store a normal emoji in users.avatar_emoji (so the mini app, plain-text fallbacks
+# and every other place keep working). Where the bot writes MarkdownV2 (comment / reply author
+# lines) an avatar that has a premium twin below is sent as a custom emoji instead. If Telegram
+# can't show it, the normal emoji inside the tag is displayed - nothing breaks.
+# Env: PREMIUM_AVATARS=0 turns this off.
+PREMIUM_AVATARS_ON = os.getenv('PREMIUM_AVATARS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+PREMIUM_AVATAR_IDS = {
+    '\U0001F525': '5384240748239533494',  # 🔥 orange
+    '\u26A1': '5384261089204648073',      # ⚡ orange
+    '\U0001F9E1': '5384182306619535120',  # 🧡
+    '\U0001F607': '5386460159704847400',  # 😇
+    '\U0001F4A5': '5435926844241107200',  # 💥
+    '\U0001F31F': '5382311255656648590',  # 🌟
+    '\U0001F4BB': '5337246689260488963',  # 💻
+    '\U0001F64F': '5321469556395355066',  # 🙏
+    '\U0001F614': '5201957835071578006',  # 😔
+    '\U0001F634': '5388886524169312432',  # 😴
+    '\U0001F603': '5375093189453568473',  # 😃
+    '\U0001F602': '5377779249115582197',  # 😂
+    '\U0001F970': '5433940662384875553',  # 🥰
+    '\U0001F60E': '5312445301825493054',  # 😎
+    '\U0001F973': '5458824569026532353',  # 🥳
+    '\U0001F62D': '5434147714168280615',  # 😭
+    '\U0001F621': '5391222552586639388',  # 😡
+    '\U0001F921': '5452110014724462629',  # 🤡
+    '\U0001F608': '5384065397609747221',  # 😈
+    '\U0001F383': '5199613659101289564',  # 🎃
+    '\U0001F9E0': '5377510010500699911',  # 🧠
+    '\U0001F4A1': '5370933273109221746',  # 💡
+    '\u2764': '5377435419803668072',      # ❤
+}
+
+
+def avatar_md(avatar):
+    """Avatar for MarkdownV2 text: premium custom emoji when this avatar has one, else as-is."""
+    if not avatar or not PREMIUM_AVATARS_ON:
+        return avatar
+    emoji_id = PREMIUM_AVATAR_IDS.get(str(avatar).replace('\ufe0f', ''))
+    return f"![{avatar}](tg://emoji?id={emoji_id})" if emoji_id else avatar
+
+
 def build_comment_keyboard(comment_id, post_id, likes, dislikes, laughs, reply_callback,
                            is_reply=False, is_author=False, comment_type='text'):
     """Inline keyboard for a comment/reply:
@@ -1482,7 +1525,7 @@ def build_comment_keyboard(comment_id, post_id, likes, dislikes, laughs, reply_c
             premium_button(f"Laugh {laughs}", 'laugh', icon_text=str(laughs), callback_data=f"laugh{kind}_{comment_id}"),
         ],
         [
-            InlineKeyboardButton("Reply", callback_data=reply_callback),
+            premium_button("Reply", 'reply', callback_data=reply_callback),
             premium_button("Report", 'report', callback_data=f"report_comment_{comment_id}"),
         ],
     ]
@@ -6836,7 +6879,8 @@ def _author_text_to_plain(author_text):
     if not author_text:
         return ""
     try:
-        text = re.sub(r'\[_(.*?)_\]\(https?://[^)\s]*\)', r'\1', author_text)
+        text = re.sub(r'!\[([^\]]*)\]\(tg://emoji\?id=\d+\)', r'\1', author_text)
+        text = re.sub(r'\[_(.*?)_\]\(https?://[^)\s]*\)', r'\1', text)
         text = re.sub(r'(?<![\w\\])_Aura_', 'Aura', text)
         text = re.sub(r'\\(.)', r'\1', text)
         return text
@@ -7404,7 +7448,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         else:
             # Normal user: show full display (sex + custom avatar + name + aura)
             sex_emoji = comment.get('sex') or '👤'
-            avatar_emoji = comment.get('avatar_emoji')
+            avatar_emoji = avatar_md(comment.get('avatar_emoji'))
             if sex_emoji in ('👨', '👩'):
                 author_avatar = f"{sex_emoji} {avatar_emoji}" if avatar_emoji else sex_emoji
             else:
@@ -7488,6 +7532,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
         # Normal user
         author_sex = display_sex or '👤'
         author_label = f"[_{escape_markdown(display_name, version=2)}_]({reply_profile_link})"
+        avatar_emoji = avatar_md(avatar_emoji)
         if author_sex in ('👨', '👩'):
             author_avatar = f"{author_sex} {avatar_emoji}" if avatar_emoji else author_sex
         else:
@@ -7850,6 +7895,8 @@ AVATAR_EMOJIS = [
     "🐢", "🦌", "🐝", "🌊", "🌻",
     # Misc
     "🔑",
+    # Premium-style avatars (shown as animated premium emoji in comments)
+    "🧡", "😃", "😂", "🥰", "😎", "🥳", "😭", "😡", "🤡", "😈", "🎃", "🧠", "💡", "❤️",
 ]
 
 AVATAR_PAGE_SIZE = 20  # 4 rows x 5 columns
