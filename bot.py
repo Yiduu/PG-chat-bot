@@ -1371,7 +1371,7 @@ def reaction_group(rtype):
 # Configure the IDs through env vars (get an ID by sending the bot, as ADMIN_ID, a message that
 # contains the premium emoji - the bot replies with its ID, see emoji_id_helper):
 #   PREMIUM_EMOJIS=1|0   PREMIUM_EMOJI_LIKE  PREMIUM_EMOJI_DISLIKE  PREMIUM_EMOJI_LAUGH
-#   PREMIUM_EMOJI_ADD_COMMENT  PREMIUM_EMOJI_VIEW_COMMENTS
+#   PREMIUM_EMOJI_ADD_COMMENT  PREMIUM_EMOJI_VIEW_COMMENTS  PREMIUM_EMOJI_REPORT
 PREMIUM_EMOJIS_ON = os.getenv('PREMIUM_EMOJIS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
 # Brand defaults (orange set). Env vars PREMIUM_EMOJI_<NAME> override them; set one to "0" to drop that icon.
 PREMIUM_EMOJI_DEFAULTS = {
@@ -1380,6 +1380,7 @@ PREMIUM_EMOJI_DEFAULTS = {
     'laugh': '5377779249115582197',         # 😂 laughing face
     'add_comment': '5336952651504436902',   # ➕ plus
     'view_comments': '5202126386768140453', # 👀 eyes
+    'report': '5337035205070833952',        # ⚖️ report
 }
 PREMIUM_EMOJI_IDS = {}
 for _key, _default in PREMIUM_EMOJI_DEFAULTS.items():
@@ -1388,11 +1389,14 @@ for _key, _default in PREMIUM_EMOJI_DEFAULTS.items():
 _ICON_FIELD = 'icon_custom_emoji_id'
 
 
-def premium_button(text, key, **kwargs):
+def premium_button(text, key, icon_text=None, **kwargs):
     """InlineKeyboardButton that carries the premium emoji `key` when one is configured and
-    enabled; otherwise a plain text button with no emoji."""
+    enabled; otherwise a plain text button with no emoji. `icon_text`, if given, replaces `text`
+    when the icon is shown (e.g. just the count, since the icon already says what the button is)."""
     emoji_id = PREMIUM_EMOJI_IDS.get(key) if PREMIUM_EMOJIS_ON else None
     if emoji_id:
+        if icon_text is not None:
+            text = icon_text
         api_kwargs = dict(kwargs.pop('api_kwargs', None) or {})
         api_kwargs[_ICON_FIELD] = emoji_id
         return InlineKeyboardButton(text, api_kwargs=api_kwargs, **kwargs)
@@ -1473,13 +1477,13 @@ def build_comment_keyboard(comment_id, post_id, likes, dislikes, laughs, reply_c
     kind = 'reply' if is_reply else 'comment'
     rows = [
         [
-            premium_button(f"Like {likes}", 'like', callback_data=f"like{kind}_{comment_id}"),
-            premium_button(f"Dislike {dislikes}", 'dislike', callback_data=f"dislike{kind}_{comment_id}"),
-            premium_button(f"Laugh {laughs}", 'laugh', callback_data=f"laugh{kind}_{comment_id}"),
+            premium_button(f"Like {likes}", 'like', icon_text=str(likes), callback_data=f"like{kind}_{comment_id}"),
+            premium_button(f"Dislike {dislikes}", 'dislike', icon_text=str(dislikes), callback_data=f"dislike{kind}_{comment_id}"),
+            premium_button(f"Laugh {laughs}", 'laugh', icon_text=str(laughs), callback_data=f"laugh{kind}_{comment_id}"),
         ],
         [
             InlineKeyboardButton("Reply", callback_data=reply_callback),
-            InlineKeyboardButton("Report", callback_data=f"report_comment_{comment_id}"),
+            premium_button("Report", 'report', callback_data=f"report_comment_{comment_id}"),
         ],
     ]
     if is_author:
@@ -6738,7 +6742,7 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
         [premium_button("Write Comment", 'add_comment', callback_data=f"writecomment_{post_id}")]
     ]
     if not post.get('deleted'):
-        header_kb.append([InlineKeyboardButton("Report Post", callback_data=f"report_post_{post_id}")])
+        header_kb.append([premium_button("Report Post", 'report', callback_data=f"report_post_{post_id}")])
 
     media_type = post.get('media_type') or 'text'
     media_id = post.get('media_id')
