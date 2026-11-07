@@ -13435,6 +13435,13 @@ body.light .back-btn svg{stroke:var(--gold-dark,#8a6d1f)}
   font-size:13px;font-weight:600;color:var(--text3);font-family:'Inter',sans-serif;
   -webkit-tap-highlight-color:transparent;padding:0}
 .ca-btn:hover{color:var(--gold)}
+.cmt-edit textarea{width:100%;min-height:72px;resize:vertical;background:var(--bg3);color:var(--text);
+  border:1px solid rgba(var(--gold-rgb),0.35);border-radius:12px;padding:10px 12px;font:inherit;font-size:14px;outline:none}
+.cmt-edit-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+.cmt-edit-row button{padding:7px 16px;font-size:13px}
+.new-pill{position:fixed;top:calc(var(--safe-top,0px) + 62px);left:50%;transform:translateX(-50%);z-index:60;
+  background:var(--gold);color:#1a1814;border:none;border-radius:999px;padding:8px 16px;font:600 13px 'Inter',sans-serif;
+  box-shadow:0 6px 20px rgba(0,0,0,0.4);cursor:pointer}
 /* Fixed comment input bar above nav */
 .comment-input-bar{
   position:fixed;bottom:var(--nav-h);left:0;right:0;
@@ -15055,7 +15062,7 @@ function renderFeedCats(){
 }
 function setFeedCat(c){
   if(feedLoading){setTimeout(()=>setFeedCat(c),150);return}
-  feedCat=c||'';feedPage=1;renderFeedCats();loadFeed();
+  feedCat=c||'';feedPage=1;livePending=[];liveHidePill();renderFeedCats();loadFeed();
 }
 
 // ---- follow / unfollow ----
@@ -15428,6 +15435,7 @@ async function openPost(id, reveal){
       document.getElementById('detail-post').innerHTML=`
         <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
           <div style="font-size:16px;line-height:1.65;color:var(--text3);font-style:italic;padding:16px;display:flex;align-items:center;gap:8px;"><span style="width:18px;height:18px;flex-shrink:0;display:inline-flex">${ICONS.alert}</span> ${esc(delNote(p,'post'))}</div>
+          ${p.deleted_by==='author'&&String(p.author_id)===String(UID)?`<div style="padding:0 16px 16px"><button class="btn-ghost" onclick="restoreVent(${p.id})">Restore vent</button></div>`:''}
         </div>`;
       await fetchAndRenderComments(id,null,revealParam);
       return;
@@ -15469,7 +15477,7 @@ async function openPost(id, reveal){
         ${p.media_id?renderMedia(p.media_type,p.media_id):''}
         <div>
           ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
-          ${String(p.author_id)===String(UID)?'':`<button class="ca-btn" style="margin-top:6px" onclick="openReport('post',${p.id})">${ICONS.alert} Report</button>`}
+          ${String(p.author_id)===String(UID)?`<button class="ca-btn" style="margin-top:6px" onclick="delVent(${p.id})">Delete vent</button>`:`<button class="ca-btn" style="margin-top:6px" onclick="openReport('post',${p.id})">${ICONS.alert} Report</button>`}
         </div>
       </div>`;
     await fetchAndRenderComments(id,p.author_id,revealParam);
@@ -15524,7 +15532,7 @@ function renderComments(comments,postAuthorId){
     }
     return `<div class="comment-item" id="cmt-${c.id}"><div class="ava" style="width:30px;height:30px;font-size:14px">${avaHtml(c.author?.sex)}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${nameBadge}${esc(name)} <span style="font-size:11px;color:var(--text3)">${esc(c.time_ago||'')}</span></div>${cmtQuoteHtml(c.reply_to)}<div class="comment-text">${esc(c.content)}</div>${c.media_id?renderMedia(c.media_type,c.media_id):''}
       ${renderReactionButtons(c.id, 'comment', c.reactions?.counts || {}, c.reactions?.user_reaction)}
-      <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:`<button class="ca-btn" onclick="openReport('comment',${c.id})">${ICONS.alert} Report</button>`}</div></div></div>`;
+      <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`${c.media_id?'':`<button class="ca-btn" onclick="editComment(${c.id})">Edit</button>`}<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:`<button class="ca-btn" onclick="openReport('comment',${c.id})">${ICONS.alert} Report</button>`}</div></div></div>`;
   };
   const olderBtn=cmtHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderComments()">Load older responses</button></div>':'';
   box.innerHTML=olderBtn+roots.map(c=>rr(c,0)).join('')+vrPendHtmlFor('comment');
@@ -15640,6 +15648,135 @@ async function postComment(){
     await fetchAndRenderComments(currentPostId,currentPostAuthorId);
   }catch(e){toast(e.message)}finally{btn.disabled=false}
 }
+
+// ---- Edit your own response ----
+let cmtEditing=0;
+function editComment(id){
+  const c=cmtAll.find(x=>x.id===id);if(!c)return;
+  const item=document.getElementById('cmt-'+id);if(!item)return;
+  const box=item.querySelector('.comment-text');if(!box)return;
+  cmtEditing=id;
+  box.outerHTML='<div class="cmt-edit"><textarea id="cmt-edit-txt" maxlength="4000"></textarea><div class="cmt-edit-row"><button class="btn-ghost" onclick="cancelEditComment()">Cancel</button><button class="btn-gold" onclick="saveEditComment('+id+')">Save</button></div></div>';
+  const ta=document.getElementById('cmt-edit-txt');ta.value=c.content||'';ta.focus();
+}
+function cancelEditComment(){cmtEditing=0;renderComments(cmtAll,currentPostAuthorId)}
+async function saveEditComment(id){
+  const c=cmtAll.find(x=>x.id===id);const ta=document.getElementById('cmt-edit-txt');
+  if(!c||!ta)return;
+  const v=ta.value.trim();
+  if(!v)return toast('Write something first');
+  if(v===(c.content||'').trim())return cancelEditComment();
+  try{
+    await api('/api/mini-app/comment/'+id,{method:'PUT',body:JSON.stringify({user_id:UID,content:v})});
+    c.content=v;cmtEditing=0;toast('Saved');renderComments(cmtAll,currentPostAuthorId);
+  }catch(e){toast(e.message)}
+}
+
+// ---- Vent author: delete / restore ----
+async function delVent(id){
+  if(!confirm('Delete this vent? A notice that you deleted it stays in its place, and you can restore it for 24 hours.'))return;
+  try{
+    await api('/api/mini-app/post/'+id,{method:'DELETE',body:JSON.stringify({user_id:UID})});
+    toast('Vent deleted');
+    await openPost(id);
+  }catch(e){toast(e.message)}
+}
+async function restoreVent(id){
+  try{
+    await api('/api/mini-app/post/'+id+'/restore',{method:'POST',body:JSON.stringify({user_id:UID})});
+    toast('Vent restored');
+    await openPost(id);
+  }catch(e){toast(e.message)}
+}
+
+// ---- Live updates: new vents, comment counts and responses appear without reloading ----
+let liveBusy=false, livePending=[];
+function liveScroller(){return document.getElementById('pages')}
+function liveHidePill(){const p=document.getElementById('new-pill');if(p)p.remove()}
+function liveShowPill(){
+  let p=document.getElementById('new-pill');
+  if(!p){p=document.createElement('button');p.id='new-pill';p.className='new-pill';p.onclick=liveFlushPending;document.body.appendChild(p)}
+  p.textContent=livePending.length+(livePending.length===1?' new vent':' new vents')+' - tap to see';
+}
+function liveInsertAtTop(arr){
+  const list=document.getElementById('feed-list');if(!list||!arr.length)return;
+  const firstDiv=list.querySelector('.day-div span');
+  const existing=firstDiv?firstDiv.textContent:'';
+  let html='',last='',skipFirstDiv=false;
+  arr.forEach((p,i)=>{
+    if(p.day_label&&p.day_label!==last){
+      last=p.day_label;
+      if(i===0&&p.day_label===existing)skipFirstDiv=true;
+      else html+='<div class="day-div"><span>'+esc(p.day_label)+'</span><i></i></div>';
+    }
+    html+=renderPost(p);
+  });
+  if(skipFirstDiv)firstDiv.parentElement.insertAdjacentHTML('afterend',html);
+  else list.insertAdjacentHTML('afterbegin',html);
+}
+function liveFlushPending(){
+  if(!livePending.length)return;
+  const arr=livePending;livePending=[];liveHidePill();
+  liveInsertAtTop(arr);
+  const sc=liveScroller();if(sc)sc.scrollTo({top:0,behavior:'smooth'});
+}
+function applyFeedUpdate(posts){
+  const list=document.getElementById('feed-list');if(!list)return;
+  const fresh=[];
+  posts.forEach(p=>{
+    const card=list.querySelector('.post-card[data-pid="'+p.id+'"]');
+    if(!card){
+      if(!livePending.some(x=>x.id===p.id))fresh.push(p);
+      return;
+    }
+    const cc=card.querySelector('.cc');
+    if(cc&&cc.textContent!==String(p.comments||0))cc.textContent=p.comments||0;
+    if(p.deleted&&!card.classList.contains('post-deleted'))card.outerHTML=renderDeletedPost(p);
+  });
+  if(!fresh.length)return;
+  const sc=liveScroller();
+  if(!sc||sc.scrollTop<120&&!livePending.length){liveInsertAtTop(fresh);return}
+  livePending=fresh.concat(livePending);
+  liveShowPill();
+}
+function cmtSig(a){return a.map(c=>c.id+':'+(c.content||'')+':'+JSON.stringify((c.reactions&&c.reactions.counts)||{})+':'+((c.reactions&&c.reactions.user_reaction)||'')).join('|')}
+async function pollDetail(){
+  const pid=currentPostId;
+  if(!pid||cmtEditing||cmtLoadingOlder||document.querySelector('.rx-dock'))return;
+  const cd=await api('/api/mini-app/post/'+pid+'/comments?viewer_id='+UID+cmtReveal+'&limit=100');
+  if(pid!==currentPostId||cmtEditing)return;
+  const fresh=cd.data||[];
+  let merged=fresh,hasMore=!!cd.has_more;
+  if(cd.has_more&&fresh.length){
+    const kept=cmtAll.filter(c=>c.id<fresh[0].id);
+    merged=kept.concat(fresh);
+    if(kept.length)hasMore=cmtHasMore;
+  }
+  if(cmtSig(merged)===cmtSig(cmtAll)&&hasMore===cmtHasMore)return;
+  const grew=merged.length>cmtAll.length;
+  cmtAll=merged;cmtHasMore=hasMore;
+  const sc=liveScroller();const top=sc?sc.scrollTop:0;
+  renderComments(cmtAll,currentPostAuthorId);
+  if(sc)sc.scrollTop=top;
+  if(grew)toast('New response');
+}
+async function livePoll(){
+  if(liveBusy||document.hidden)return;
+  const pg=document.querySelector('.page.active');if(!pg)return;
+  liveBusy=true;
+  try{
+    if(pg.id==='page-feed'){
+      if(searchQ||feedLoading||!document.querySelector('#feed-list .post-card'))return;
+      const d=await api('/api/mini-app/get-posts?page=1&user_id='+UID+'&category='+encodeURIComponent(feedCat));
+      if(pg.classList.contains('active')&&!searchQ)applyFeedUpdate(d.data||[]);
+    }else if(pg.id==='page-detail'){
+      await pollDetail();
+    }
+  }catch(e){}finally{liveBusy=false}
+}
+setInterval(livePoll,6000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)livePoll()});
+
 async function delComment(id){
   if(!confirm('Delete this response?'))return;
   try{await api(`/api/mini-app/comment/${id}`,{method:'DELETE',body:JSON.stringify({user_id:UID})});
@@ -19704,23 +19841,82 @@ def mini_app_update_profile(user_id):
         logger.error(f"Profile update error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@flask_app.route('/api/mini-app/post/<int:post_id>', methods=['DELETE'])
+def mini_app_delete_post(post_id):
+    """A vent author deletes their own vent. Same rules as the bot: a 'deleted by the author'
+    notice stays in its place (comments are kept) and the author can restore it for
+    RESTORE_WINDOW_HOURS."""
+    try:
+        data = request.get_json(silent=True) or {}
+        user_id = request.args.get('user_id') or data.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+        if not post or str(post['author_id']) != str(user_id):
+            return jsonify({'success': False, 'error': 'You can only delete your own vents'}), 403
+        if post.get('deleted'):
+            return jsonify({'success': False, 'error': 'This vent is already deleted'}), 409
+
+        if post.get('channel_message_id'):
+            try:
+                _run_with_bot(lambda ctx: channel_show_placeholder(ctx, post, False))
+            except Exception as e:
+                logger.error(f"Mini app: could not update the channel message for vent {post_id}: {e}")
+        if not soft_delete_post(post_id, 'author'):
+            return jsonify({'success': False, 'error': 'This vent is already deleted'}), 409
+        calculate_user_rating.cache_clear()
+        _leaderboard_cache_bust()
+        return jsonify({'success': True, 'message': 'Vent deleted', 'restore_hours': RESTORE_WINDOW_HOURS})
+    except Exception as e:
+        logger.error(f"Mini app delete vent error: {e}")
+        return jsonify({'success': False, 'error': 'Could not delete the vent'}), 500
+
+
+@flask_app.route('/api/mini-app/post/<int:post_id>/restore', methods=['POST'])
+def mini_app_restore_post(post_id):
+    """Undo an author's deletion inside the restore window."""
+    try:
+        data = request.get_json(silent=True) or {}
+        user_id = data.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+        row = restore_deleted_post(post_id, user_id)
+        if not row:
+            return jsonify({'success': False, 'error': (
+                f"This vent can't be restored: the {RESTORE_WINDOW_HOURS} hours are over, "
+                "an admin removed it, or it isn't yours.")}), 409
+        try:
+            _run_with_bot(lambda ctx: channel_restore_post(ctx, row))
+        except Exception as e:
+            logger.error(f"Mini app: could not restore the channel message for vent {post_id}: {e}")
+        calculate_user_rating.cache_clear()
+        _leaderboard_cache_bust()
+        return jsonify({'success': True, 'message': 'Vent restored'})
+    except Exception as e:
+        logger.error(f"Mini app restore vent error: {e}")
+        return jsonify({'success': False, 'error': 'Could not restore the vent'}), 500
+
+
 @flask_app.route('/api/mini-app/comment/<int:comment_id>', methods=['PUT'])
 def mini_app_update_comment(comment_id):
     """API endpoint for editing a comment"""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         user_id = data.get('user_id')
-        content = data.get('content', '').strip()
+        content = (data.get('content') or '').strip()
         
         if not content:
             return jsonify({'success': False, 'error': 'Content required'}), 400
             
+        if len(content) > 4000:
+            return jsonify({'success': False, 'error': 'Too long (4000 characters max)'}), 400
+
         comment = db_fetch_one("SELECT author_id FROM comments WHERE comment_id = %s", (comment_id,))
         if not comment or str(comment['author_id']) != str(user_id):
             return jsonify({'success': False, 'error': 'Unauthorized'}), 403
             
         db_execute("UPDATE comments SET content = %s WHERE comment_id = %s", (content, comment_id))
-        return jsonify({'success': True, 'message': 'Comment updated'})
+        return jsonify({'success': True, 'message': 'Comment updated', 'content': content})
     except Exception as e:
         logger.error(f"Comment update error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
