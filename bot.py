@@ -1398,6 +1398,38 @@ PREMIUM_EMOJI_DEFAULTS = {
     'act_delete': '5879896690210639947',    # 🗑 Delete
     'act_edit': '5839380464116175529',      # ✏️ Edit
     'admin_panel': '5926783847453692661',   # 🛡 Admin Panel
+    # Everything else, matched by label (see PREMIUM_LABEL_RULES)
+    'ic_block': '5872829476143894491',      # 🚫 block / ban
+    'ic_unblock': '5886505193180239900',    # 🔓 unblock / unban
+    'ic_warn': '5881702736843511327',       # ⚠️ warn / report
+    'ic_ok': '5920052658743283381',         # ✅ accept / approve / save / keep
+    'ic_skip': '6028482475385164542',       # ⏩ skip
+    'ic_view': '5960714428394507968',       # 👁 view / open
+    'ic_chat': '5886666250158870040',       # 💬 chat / comments
+    'ic_mail': '5985817223749439505',       # ✉️ send message
+    'ic_inbox': '5877307202888273539',      # 📥 inbox
+    'ic_globe': '5879585266426973039',      # 🌐 open in browser
+    'ic_leader': '5961051261204696786',     # 🥇 leaderboard / winners
+    'ic_users': '5915556996215476302',      # 👥 users / followers
+    'ic_stats': '5877485980901971030',      # 📊 statistics
+    'ic_broadcast': '5771695636411847302',  # 📢 broadcast
+    'ic_tools': '5988023995125993550',      # 🛠 tools
+    'ic_refresh': '5839200986022812209',    # 🔄 refresh / restore
+    'ic_posts': '5886330010054168711',      # 📝 posts / bio / text
+    'ic_thread': '5877465816030515018',     # 🔗 thread
+    'ic_share': '5908864771448376860',      # 🗣 share my thoughts
+    'ic_media': '5888799736508454231',      # 🖼 media
+    'ic_attach': '5877495434124988415',     # 📎 other media
+    'ic_category': '5875462364110787088',   # 🗂 category
+    'ic_user': '5771887475421090729',       # 👤 profile / name / sex
+    'ic_lock': '5832546462478635761',       # 🔒 privacy
+    'ic_bell': '5909201569898827582',       # 🔔 notifications
+    'ic_star': '5958376256788502078',       # ⭐️ aura & points
+    'ic_down': '5886451926995833684',       # ⬇️ show more
+    'ic_history': '5877597667231534929',    # 🗒 warning history
+    'ic_live': '5967333011652350314',       # 🔴 live
+    'ic_avatar': '5891093751555694829',     # 🎭 avatar
+    'ic_next': '5877468380125990242',       # ➡️ newer
     # Category picker
     'cat_done': '5920052658743283381',      # ✅ Done
     'cat_selected': '5920052658743283381',  # ✅ a category that is selected
@@ -1428,16 +1460,55 @@ _ICON_FIELD = 'icon_custom_emoji_id'
 
 # Inline buttons that are built all over the bot with a plain label get their icon from here, in one
 # place, right before a message is sent (see _post_with_fallback). Exact label -> icon key.
-PREMIUM_LABEL_KEYS = {
-    'Main Menu': 'nav_home', 'Menu': 'nav_home',
-    'Back': 'nav_back', 'Back to Settings': 'nav_back', 'Back to Profile': 'nav_back',
-    'Back to My Content': 'nav_back', 'Back to Preview': 'nav_back', 'Back to Inbox': 'nav_back',
-    'Prev': 'nav_back', 'Previous': 'nav_back', 'Next': 'nav_next',
-    'Cancel': 'nav_cancel', 'No, Cancel': 'nav_cancel', 'Done': 'cat_done', 'Reset': 'cat_reset',
-    'Delete': 'act_delete', 'Edit': 'act_edit',
-    'Settings': 'menu_settings', 'Profile': 'menu_profile', 'My Profile': 'menu_profile',
-    'View Profile': 'menu_profile', 'My Posts': 'menu_posts', 'Admin Panel': 'admin_panel',
-}
+# (regex searched in the label once its leading emoji is removed, icon key) - first match wins
+PREMIUM_LABEL_RULES = [(re.compile(p, re.I), k) for p, k in [
+    (r'^(main menu|menu)$', 'nav_home'),
+    (r'^(« )?(back|prev|previous|older|« admin panel|« moderation)\b', 'nav_back'),
+    (r'^(next|newer)\b', 'ic_next'),
+    (r'^(cancel|no, cancel|dismiss|ignore|reject)\b', 'nav_cancel'),
+    (r'^skip\b', 'ic_skip'),
+    (r'^unblock|^unban|^unmark', 'ic_unblock'),
+    (r'^(block|yes, block|ban|banned users)\b', 'ic_block'),
+    (r'^yes, report|^report|^warn|^review reports|^pending reports|^back to reports', 'ic_warn'),
+    (r'^warning history', 'ic_history'),
+    (r'^(delete|yes, delete|remove|recently deleted)', 'act_delete'),
+    (r'^restore', 'ic_refresh'),
+    (r'^(edit|type reason)', 'act_edit'),
+    (r'^(done|submit|save|keep|approve|accept\b(?!.*requests)|mark all read|send another)', 'ic_ok'),
+    (r'^reset|^refresh', 'ic_refresh'),
+    (r'^(↩ )?reply', 'reply'),
+    (r'^(chat now|chat list|monitor chats|back to conversation)', 'ic_chat'),
+    (r'^(send message|accept chat requests)', 'ic_mail'),
+    (r'^inbox', 'ic_inbox'),
+    (r'^(view post & comments|add/view comments|older comments|newer comments|my comments|view in post)', 'ic_chat'),
+    (r'^(view leaderboard|view last winners)', 'ic_leader'),
+    (r'^(open in browser|open in bot|open christian vent app)', 'ic_globe'),
+    (r'^(view\b.*profile|my profile|profile)$', 'menu_profile'),
+    (r'^view', 'ic_view'),
+    (r'^(settings)$', 'menu_settings'),
+    (r'^(admin panel|moderat|back to admin panel)', 'admin_panel'),
+    (r'^(my posts|pending posts|bio|text only|text broadcast|simple broadcast)', 'ic_posts'),
+    (r'^(send broadcast|photo broadcast|voice broadcast)', 'ic_broadcast'),
+    (r'^statistics|^users:', 'ic_stats'),
+    (r'^(all users|active users|followers|following|follow|unfollow|follower count|specific user)', 'ic_users'),
+    (r'^(weekly tools|fix weekly|force weekly|test weekly|view job)', 'ic_tools'),
+    (r'^(change thread|continue thread|remove thread|no thread|thread to)', 'ic_thread'),
+    (r'^share my thoughts', 'ic_share'),
+    (r'^(with media)', 'ic_media'),
+    (r'^other media', 'ic_attach'),
+    (r'^(by category|content|privacy controls)', 'ic_category'),
+    (r'^(privacy)', 'ic_lock'),
+    (r'^notifications', 'ic_bell'),
+    (r'^(aura|role)', 'ic_star'),
+    (r'^(name|sex|posting as|remove/hide sex)', 'ic_user'),
+    (r'^avatar', 'ic_avatar'),
+    (r'^show even more', 'ic_down'),
+    (r'^stop live', 'ic_live'),
+]]
+
+# Leading emoji / arrow symbols (not the plain check mark used for a selected category).
+_LEADING_EMOJI_RE = re.compile('^[\u00ab\u2190-\u21ff\u2600-\u2712\u2714-\u27bf\u2b00-\u2bff'
+                               '\U0001f000-\U0001faff\ufe0f\u200d\\s]+')
 
 
 def premium_kb_button(text, key, **kwargs):
@@ -1452,20 +1523,35 @@ def premium_kb_button(text, key, **kwargs):
 
 
 def _with_label_icons(markup):
-    """Copy of an inline keyboard with an icon added to every plain-labelled button that has none,
-    or None when nothing needed one."""
-    if not PREMIUM_EMOJIS_ON or not hasattr(markup, 'inline_keyboard'):
+    """Copy of an inline keyboard in which every button without an icon gets the premium icon its
+    label calls for (PREMIUM_LABEL_RULES), and loses the plain emoji at the start of its label.
+    With premium icons off, the leading emoji of every label is removed instead (no premium = no
+    emoji). None when nothing changed. Only for chats where icons are allowed (not channels)."""
+    if not hasattr(markup, 'inline_keyboard'):
         return None
+    on = PREMIUM_EMOJIS_ON
     rows, changed = [], False
     for row in markup.inline_keyboard or []:
         new_row = []
         for btn in row:
             d = btn.to_dict()
-            key = PREMIUM_LABEL_KEYS.get(d.get('text'))
-            emoji_id = PREMIUM_EMOJI_IDS.get(key) if key else None
-            if emoji_id and _ICON_FIELD not in d:
-                d[_ICON_FIELD] = emoji_id
-                changed = True
+            text = d.get('text') or ''
+            clean = _LEADING_EMOJI_RE.sub('', text) or text
+            if _ICON_FIELD not in d:
+                key = None
+                if on and '\u25c0' not in clean and '\u25b6' not in clean:  # "Next \u25b6" already has its arrow
+                    for pattern, k in PREMIUM_LABEL_RULES:
+                        if pattern.search(clean):
+                            key = k
+                            break
+                emoji_id = PREMIUM_EMOJI_IDS.get(key) if key else None
+                if emoji_id:
+                    d[_ICON_FIELD] = emoji_id
+                    d['text'] = clean
+                    changed = True
+                elif not on and clean != text:
+                    d['text'] = clean
+                    changed = True
             new_row.append(d)
         rows.append(new_row)
     return InlineKeyboardMarkup.de_json({'inline_keyboard': rows}, None) if changed else None
@@ -1529,7 +1615,7 @@ def _install_premium_emoji_fallback():
 
     async def _post_with_fallback(self, endpoint, data=None, *args, **kwargs):
         global PREMIUM_EMOJIS_ON
-        if PREMIUM_EMOJIS_ON and data and data.get('reply_markup') is not None:
+        if data and data.get('reply_markup') is not None and str(data.get('chat_id')) != str(CHANNEL_ID):
             decorated = _with_label_icons(data['reply_markup'])
             if decorated is not None:
                 data = {**data, 'reply_markup': decorated}
