@@ -887,7 +887,10 @@ try:
                 # concurrently instead of one-at-a-time on the event loop
         dsn=DATABASE_URL,
         cursor_factory=RealDictCursor,
-        connect_timeout=5
+        connect_timeout=5,
+        # TCP keepalives: managed Postgres / proxies silently drop idle connections, and the first
+        # query on such a dead connection used to hang or fail. Keepalives notice it early.
+        keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5,
     )
     logging.info("Database connection pool created successfully")
 except Exception as e:
@@ -913,22 +916,42 @@ def db_execute(query, params=(), fetch=False, fetchone=False):
     conn = None
     _acquire_db_slot()
     try:
-        conn = db_pool.getconn()
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            if fetch:
-                result = cur.fetchall()
-            elif fetchone:
-                result = cur.fetchone()
-            else:
-                result = True
-            conn.commit()
-            return result
-    except Exception as e:
+        for attempt in (1, 2):
+            conn = db_pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    if fetch:
+                        result = cur.fetchall()
+                    elif fetchone:
+                        result = cur.fetchone()
+                    else:
+                        result = True
+                    conn.commit()
+                    return result
+            except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+                # Retry only when the connection itself is dead (the server dropped it while it sat
+                # idle in the pool): the statement never ran, so running it again is safe. Any other
+                # error (deadlock, timeout...) falls through to the normal handling below.
+                msg = str(e).lower()
+                dead = bool(conn.closed) or any(t in msg for t in (
+                    "server closed the connection", "connection already closed", "ssl syscall",
+                    "terminating connection", "could not receive data", "connection reset"))
+                if not dead or attempt == 2:
+                    raise
+                db_pool.putconn(conn, close=True)
+                conn = None
+                logging.warning(f"Dropped a dead database connection and retrying: {e}")
+    except psycopg2.Error as e:
         logging.error(f"Database error: {e}")
         if conn:
             conn.rollback()
         raise   # <-- IMPORTANT: re-raise so caller knows it failed
+    except Exception as e:
+        logging.error(f"Database error: {e}")
+        if conn:
+            conn.rollback()
+        raise
     finally:
         if conn:
             db_pool.putconn(conn)
@@ -6891,26 +6914,35 @@ async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, page
         if hasattr(update, 'message') and update.message:
             await update.message.reply_text("Error loading messages. Please try again.")
 
+def _fetch_menu_data(post_id, viewer_id):
+    """Synchronous, run via to_thread: (post with its categories, viewer's is_admin row, comment
+    count) fetched in parallel."""
+    return db_parallel(
+        lambda: db_fetch_one("""
+            SELECT p.*, STRING_AGG(pc.category_code, ', ') as categories
+            FROM posts p
+            LEFT JOIN post_categories pc ON p.post_id = pc.post_id
+            WHERE p.post_id = %s
+            GROUP BY p.post_id
+        """, (post_id,)),
+        lambda: (db_fetch_one("SELECT is_admin FROM users WHERE user_id = %s", (viewer_id,)) if viewer_id else None),
+        lambda: count_all_comments(post_id),
+    )
+
+
 async def show_comments_menu(update, context, post_id, page=1, force_reveal=False, auto_show_comments=False):
     """Entry point for viewing a post: shows the post content (or an explicit-content
     warning) with "View Comments" / "Write Comment" buttons. Comments are only loaded
     once the user taps "View Comments" (or immediately if auto_show_comments=True,
     which is used right after a user posts a new comment so they can see it land)."""
-    post = (await db_fetch_one_async("""
-        SELECT p.*, STRING_AGG(pc.category_code, ', ') as categories
-        FROM posts p
-        LEFT JOIN post_categories pc ON p.post_id = pc.post_id
-        WHERE p.post_id = %s
-        GROUP BY p.post_id
-    """, (post_id,)))
+    viewer_id = str(update.effective_user.id) if update.effective_user else None
+    # The post, the viewer's admin flag and the comment count do not depend on each other, so they
+    # are fetched together (one wait) instead of three queries one after another.
+    post, viewer_row, comment_count = await asyncio.to_thread(_fetch_menu_data, post_id, viewer_id)
     if not post:
         if hasattr(update, 'message') and update.message:
-            viewer_id = str(update.effective_user.id) if update.effective_user else None
             await update.message.reply_text("Post not found.", reply_markup=get_main_menu(viewer_id) if viewer_id else None)
         return
-
-    viewer_id = str(update.effective_user.id) if update.effective_user else None
-    viewer_row = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (viewer_id,))) if viewer_id else None
     is_admin_viewer = bool(viewer_row and viewer_row.get('is_admin'))
     is_owner = viewer_id is not None and str(post['author_id']) == viewer_id
 
@@ -6923,7 +6955,6 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
     # Explicit-content gate: authors and admins see it directly; everyone else must
     # tap through a warning first. Deleted posts skip the gate (nothing to reveal).
     if post.get('explicit') and not post.get('deleted') and not is_owner and not is_admin_viewer and not force_reveal:
-        comment_count = (await asyncio.to_thread(count_all_comments, post_id))
         reveal_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("View Post & Comments", callback_data=f"revealexplicit_{post_id}_{page}")]
         ])
@@ -6969,7 +7000,6 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
         f"{escaped_text}"
     )
 
-    comment_count = (await asyncio.to_thread(count_all_comments, post_id))
     header_kb = [
         [premium_button(f"View Comments ({comment_count})", 'view_comments', callback_data=f"viewcomments_{post_id}_1")],
         [premium_button("Write Comment", 'add_comment', callback_data=f"writecomment_{post_id}")]
@@ -15933,8 +15963,11 @@ function cmtSig(a){return a.map(c=>c.id+':'+(c.content||'')+':'+JSON.stringify((
 async function pollDetail(){
   const pid=currentPostId;
   if(!pid||cmtEditing||cmtLoadingOlder||document.querySelector('.rx-dock'))return;
+  const nv=await liveCheck('p'+pid,'/api/mini-app/live-version?post_id='+pid);
+  if(!nv)return;
   const cd=await api('/api/mini-app/post/'+pid+'/comments?viewer_id='+UID+cmtReveal+'&limit=100');
   if(pid!==currentPostId||cmtEditing)return;
+  liveVer['p'+pid]=nv;
   const fresh=cd.data||[];
   let merged=fresh,hasMore=!!cd.has_more;
   if(cd.has_more&&fresh.length){
@@ -15950,6 +15983,13 @@ async function pollDetail(){
   if(sc)sc.scrollTop=top;
   if(grew)toast('New response');
 }
+let liveVer={};
+// Ask the cheap shared check first; only download when something changed. Returns the new version
+// string if there is something to load, or '' when nothing changed (the caller stores it on success).
+async function liveCheck(key,url){
+  const d=await api(url);
+  return d.version&&d.version!==liveVer[key]?d.version:'';
+}
 async function livePoll(){
   if(liveBusy||document.hidden)return;
   const pg=document.querySelector('.page.active');if(!pg)return;
@@ -15957,8 +15997,10 @@ async function livePoll(){
   try{
     if(pg.id==='page-feed'){
       if(searchQ||feedLoading||!document.querySelector('#feed-list .post-card'))return;
+      const nv=await liveCheck('feed','/api/mini-app/live-version');
+      if(!nv)return;
       const d=await api('/api/mini-app/get-posts?page=1&user_id='+UID+'&category='+encodeURIComponent(feedCat));
-      if(pg.classList.contains('active')&&!searchQ)applyFeedUpdate(d.data||[]);
+      if(pg.classList.contains('active')&&!searchQ){applyFeedUpdate(d.data||[]);liveVer.feed=nv}
     }else if(pg.id==='page-detail'){
       await pollDetail();
     }
@@ -20030,6 +20072,67 @@ def mini_app_update_profile(user_id):
     except Exception as e:
         logger.error(f"Profile update error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+# ---- Cheap "did anything change?" check for the mini app's live updates ----
+# Every open mini app asks this every few seconds. The answer is the same for everyone, so it is
+# computed at most once per _LIVE_TTL seconds per feed / per post, no matter how many people ask.
+# The app only downloads the real feed / comments when the answer changed.
+_LIVE_TTL = 3.0
+_live_cache = {}
+_live_lock = threading.Lock()
+
+
+def _live_cached(key, fn):
+    now = time.monotonic()
+    with _live_lock:
+        hit = _live_cache.get(key)
+        if hit and now - hit[0] < _LIVE_TTL:
+            return hit[1]
+    value = fn()
+    with _live_lock:
+        if len(_live_cache) > 2000:
+            _live_cache.clear()
+        _live_cache[key] = (now, value)
+    return value
+
+
+@flask_app.route('/api/mini-app/live-version', methods=['GET'])
+def mini_app_live_version():
+    """?post_id=N -> a fingerprint of that vent's responses (ids, text, reactions);
+    no post_id -> a fingerprint of the feed (newest vent, approvals, deletions, comment counts)."""
+    try:
+        post_id = _parse_positive_int(request.args.get('post_id'))
+        if post_id:
+            def _post_version():
+                row = db_fetch_one("""
+                    SELECT
+                      (SELECT COUNT(*)::text || ':' || COALESCE(MAX(comment_id), 0)::text || ':' ||
+                              md5(COALESCE(string_agg(comment_id::text || ':' || COALESCE(content, ''), '|'
+                                                      ORDER BY comment_id), ''))
+                       FROM comments WHERE post_id = %s) AS c,
+                      (SELECT md5(COALESCE(string_agg(r.comment_id::text || ':' || r.type || ':' || r.user_id::text, ',' 
+                                                      ORDER BY r.comment_id, r.user_id::text, r.type), ''))
+                       FROM reactions r JOIN comments cc ON cc.comment_id = r.comment_id
+                       WHERE cc.post_id = %s) AS r
+                """, (post_id, post_id))
+                return f"{row['c']}|{row['r']}" if row else ''
+            version = _live_cached(('post', post_id), _post_version)
+        else:
+            def _feed_version():
+                row = db_fetch_one("""
+                    SELECT COALESCE(MAX(post_id), 0)::text || ':' ||
+                           (COUNT(*) FILTER (WHERE approved))::text || ':' ||
+                           (COUNT(*) FILTER (WHERE deleted))::text || ':' ||
+                           COALESCE(SUM(comment_count), 0)::text AS v
+                    FROM posts
+                """)
+                return row['v'] if row else ''
+            version = _live_cached(('feed',), _feed_version)
+        return jsonify({'success': True, 'version': version})
+    except Exception as e:
+        logger.error(f"Mini app live-version error: {e}")
+        return jsonify({'success': False, 'error': 'Could not check for updates'}), 500
+
 
 @flask_app.route('/api/mini-app/post/<int:post_id>', methods=['DELETE'])
 def mini_app_delete_post(post_id):
