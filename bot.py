@@ -572,6 +572,22 @@ def init_db():
                 ''')
                 c.execute("CREATE INDEX IF NOT EXISTS idx_admin_messages_user ON admin_messages (user_id, created_at DESC)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users (is_banned) WHERE is_banned = TRUE")
+                # Broadcasts sent from the mini app: runs in a background thread, the app polls this row for
+                # progress. Doubles as an audit log of what admins sent.
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS admin_broadcast_jobs (
+                        job_id SERIAL PRIMARY KEY,
+                        admin_id TEXT NOT NULL,
+                        body TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'running',
+                        total INTEGER DEFAULT 0,
+                        sent INTEGER DEFAULT 0,
+                        failed INTEGER DEFAULT 0,
+                        blocked INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        finished_at TIMESTAMP
+                    )
+                ''')
 
                 # Check for 'thread_context_post_id' column in users
                 if ('users', 'thread_context_post_id') not in existing_columns:
@@ -13372,6 +13388,50 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .rp-tabs{display:flex;gap:8px;padding:0 16px 12px}
 .rp-tabs .btn-ghost{flex:1}
 .rp-tabs .btn-ghost.on{background:rgba(var(--gold-rgb),0.12);border-color:var(--gold);color:var(--gold2)}
+.rp-tabs{overflow-x:auto;scrollbar-width:none}
+.rp-tabs::-webkit-scrollbar{display:none}
+.rp-tabs .btn-ghost{flex:1 0 auto;white-space:nowrap;padding:10px 12px}
+/* Me sub-screens (My Posts, My Comments, Followers, Winners, Help) and the admin Users / Broadcast tabs */
+.modal-btn.x-danger{background:#e05252;color:#fff}
+.x-head{padding:6px 20px 10px}
+.x-head h1{font-size:26px;font-weight:700;letter-spacing:-.5px;color:var(--text)}
+.x-sub{font-size:14px;color:var(--text3);margin-top:2px}
+.x-list{padding:6px 16px 24px}
+.x-empty{text-align:center;padding:48px 24px;color:var(--text3);font-size:14px;line-height:1.55}
+.x-more{padding:4px 16px 24px;text-align:center}
+.x-chip{display:inline-block;padding:2px 9px;margin-right:6px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid var(--border);color:var(--text3)}
+.x-chip.pending{border-color:var(--gold);color:var(--gold2)}
+.x-chip.deleted,.x-chip.banned{border-color:#e05252;color:#e05252}
+.x-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px 0;margin-top:10px;font-size:12px;color:var(--text3)}
+.x-quote{margin-top:8px;padding:6px 10px;border-left:2px solid var(--border2);font-size:13px;line-height:1.45;color:var(--text3);word-break:break-word}
+.x-row{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--border)}
+.x-row .x-main{flex:1;min-width:0;cursor:pointer}
+.x-name{font-size:15px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.x-small{font-size:12px;color:var(--text3);margin-top:2px}
+.x-sbtn{padding:7px 14px;font-size:12px;white-space:nowrap}
+.x-week{padding:18px 4px 8px;font-size:13px;font-weight:600;color:var(--text3)}
+.x-win{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:8px;border:1px solid var(--border);border-radius:16px;background:var(--glass)}
+.x-win.me{border-color:var(--gold)}
+.x-win .x-badge{width:30px;text-align:center;font-size:22px;flex-shrink:0}
+.x-win .x-main{flex:1;min-width:0;cursor:pointer}
+.x-pts{font-size:15px;font-weight:800;color:var(--gold);font-variant-numeric:tabular-nums;text-align:right}
+.x-pts small{display:block;font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px}
+.x-card{margin:0 16px 12px;padding:16px;border:1px solid var(--border);border-radius:18px;background:var(--glass)}
+.x-card h3{font-size:15px;font-weight:700;color:var(--gold2);margin-bottom:6px}
+.x-card p,.x-card li{font-size:14px;line-height:1.6;color:var(--text2)}
+.x-card ul{margin:6px 0 0 18px}
+.x-card li{margin-top:4px}
+.x-card b{color:var(--text)}
+.x-field{margin:0 16px 12px}
+.x-bar{height:8px;margin:12px 0 8px;border-radius:6px;background:var(--glass2);overflow:hidden}
+.x-bar i{display:block;height:100%;width:0;background:var(--gold);transition:width .4s}
+.x-stats{display:flex;gap:18px;margin-top:12px}
+.x-stats div{font-size:18px;font-weight:700;color:var(--text)}
+.x-stats small{display:block;font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px}
+.x-kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:14px}
+.x-kv:last-child{border-bottom:none}
+.x-kv span:first-child{color:var(--text3)}
+.x-kv span:last-child{color:var(--text);text-align:right;word-break:break-word}
 .rep-card{margin:0 16px 12px;padding:14px;border:1px solid var(--border);border-radius:18px;background:var(--glass)}
 .rep-meta{font-size:12px;color:var(--text3);margin-bottom:6px}
 .rep-reason{font-size:14px;font-weight:700;color:var(--gold);margin-bottom:6px}
@@ -14265,7 +14325,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       <div id="feed-list"></div><div id="feed-more" style="padding:16px;text-align:center;display:none"><button class="btn-ghost" id="load-more-btn">Load more</button></div>
     </div>
     <div class="page" id="page-detail">
-      <button class="back-btn" onclick="gotoFeed()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Back</button>
+      <button class="back-btn" onclick="detailBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Back</button>
       <div id="detail-post"></div>
       <div class="section-label">Responses</div>
       <div id="detail-comments" style="padding:0 16px 80px"></div>
@@ -14302,6 +14362,14 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       <div id="me-hero"></div>
       <div id="me-recent"></div>
 
+      <div class="me-label">My activity</div>
+      <div class="me-group">
+        <div class="me-row tap" onclick="go('my-posts')"><div class="me-text"><div class="me-title">My Posts</div><div class="me-sub">Your vents, including ones waiting for approval</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="me-row tap" onclick="go('my-comments')"><div class="me-text"><div class="me-title">My Comments</div><div class="me-sub">Responses you have written</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="me-row tap" onclick="go('follows')"><div class="me-text"><div class="me-title">Followers &amp; Following</div><div class="me-sub">Who follows you and who you follow</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="me-row tap" onclick="go('winners')"><div class="me-text"><div class="me-title">Winners</div><div class="me-sub">Top contributors of recent weeks</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+      </div>
+
       <div class="me-label">Preferences</div>
       <div class="me-group">
         <div class="me-row"><div class="me-text"><div class="me-title">Theme</div></div><div class="seg" id="seg-theme" role="group" aria-label="Theme"><button type="button" data-v="auto" onclick="setTheme('auto')">Auto</button><button type="button" data-v="light" onclick="setTheme('light')">Light</button><button type="button" data-v="dark" onclick="setTheme('dark')">Dark</button></div></div>
@@ -14324,6 +14392,55 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       <div class="me-group">
         <div class="me-row tap" onclick="inviteFriends()"><div class="me-text"><div class="me-title">Invite friends</div><div class="me-sub">Share the bot link in Telegram</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
         <div class="me-row tap" onclick="openSupport()"><div class="me-text"><div class="me-title">Contact support</div><div class="me-sub">Report a problem or ask a question</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="me-row tap" onclick="go('help')"><div class="me-text"><div class="me-title">Help &amp; About</div><div class="me-sub">How the app works</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+      </div>
+      <div class="me-foot">Christian Vent · Built by <a href="https://t.me/YIDIDIYATAMIRUU">@YIDIDIYATAMIRUU</a></div>
+    </div>
+    <div class="page" id="page-my-posts">
+      <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
+      <div class="x-head"><h1>My Posts</h1><div class="x-sub" id="mp-sub">Your vents</div></div>
+      <div class="x-list" id="mp-list"></div>
+      <div class="x-more" id="mp-more" style="display:none"><button class="btn-ghost" onclick="loadMyPosts(false)">Load more</button></div>
+    </div>
+    <div class="page" id="page-my-comments">
+      <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
+      <div class="x-head"><h1>My Comments</h1><div class="x-sub" id="mc-sub">Your responses</div></div>
+      <div class="x-list" id="mc-list"></div>
+      <div class="x-more" id="mc-more" style="display:none"><button class="btn-ghost" onclick="loadMyComments(false)">Load more</button></div>
+    </div>
+    <div class="page" id="page-follows">
+      <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
+      <div class="x-head"><h1>Followers &amp; Following</h1><div class="x-sub">Only you can see these lists</div></div>
+      <div class="rp-tabs" style="padding-top:6px">
+        <button class="btn-ghost on" id="fl-tab-followers" onclick="setFollowTab('followers')">Followers</button>
+        <button class="btn-ghost" id="fl-tab-following" onclick="setFollowTab('following')">Following</button>
+      </div>
+      <div class="x-list" id="fl-list"></div>
+      <div class="x-more" id="fl-more" style="display:none"><button class="btn-ghost" onclick="loadFollows(false)">Load more</button></div>
+    </div>
+    <div class="page" id="page-winners">
+      <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
+      <div class="x-head"><h1>Winners</h1><div class="x-sub">Top contributors of recent weeks</div></div>
+      <div class="x-list" id="wn-list"></div>
+    </div>
+    <div class="page" id="page-help">
+      <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
+      <div class="x-head"><h1>Help &amp; About</h1><div class="x-sub">How Christian Vent works</div></div>
+      <div class="x-card"><h3>About</h3><p>A safe space to share what is on your mind anonymously, connect with others, and support one another. Your identity stays private unless you choose to reveal it. Vents and responses appear under an anonymous name and avatar.</p></div>
+      <div class="x-card"><h3>Using the app</h3><ul>
+        <li><b>Vent</b>: share a vent anonymously. Pick one or more categories. New vents are reviewed by an admin before they appear.</li>
+        <li><b>Feed</b>: read vents, respond, search, and filter by category.</li>
+        <li><b>Chats</b>: ask someone to chat privately. They can accept or decline, and you can block anyone.</li>
+        <li><b>Rankings</b>: the leaderboard, for this week or all time.</li>
+        <li><b>Me</b>: your profile, activity, and privacy settings.</li>
+      </ul></div>
+      <div class="x-card"><h3>Aura</h3><p>Aura grows with your points and shows as a level next to your name. You can hide it in Privacy.</p><div id="help-aura" class="x-meta" style="margin-top:10px"></div></div>
+      <div class="x-card"><h3>Weekly winners</h3><p>Each week the top contributors are announced and earn a badge that shows next to their name. See past weeks under Me, Winners.</p></div>
+      <div class="x-card"><h3>Your vents</h3><p>You can delete your own vent from its page. A notice stays in its place, and you can restore it for 24 hours.</p></div>
+      <div class="x-card"><h3>Reports and warnings</h3><p>Use Report on any vent or response that does not belong. The reasons are Spam, Harassment or bullying, Inappropriate or explicit content, Someone may be in danger, and Other. Admins review reports. Three warnings lead to a ban.</p></div>
+      <div class="x-card"><h3>Need a hand?</h3><p>Questions, problems, or feedback are welcome.</p>
+        <button type="button" class="modal-btn modal-btn-secondary" onclick="openSupport()">Contact support</button>
+        <button type="button" class="modal-btn modal-btn-secondary" onclick="inviteFriends()">Invite friends</button>
       </div>
       <div class="me-foot">Christian Vent · Built by <a href="https://t.me/YIDIDIYATAMIRUU">@YIDIDIYATAMIRUU</a></div>
     </div>
@@ -15230,9 +15347,21 @@ async function toggleReaction(btn, itemType, itemId, emoji) {
 }
 
 const ink=document.getElementById('nav-ink');
+// Screens opened from the Me tab; the Me tab stays highlighted while they are open.
+const ME_SUBPAGES=['my-posts','my-comments','follows','winners','help'];
+// Where Back goes from a vent that was opened from My Posts / My Comments (null = the feed).
+let detailReturn=null;
+let myPostsStale=false;   // set when a vent is deleted or restored, so My Posts reloads on return
+function openPostFrom(page,id){detailReturn=page;openPost(id)}
+function detailBack(){
+  const r=detailReturn;detailReturn=null;
+  if(r){go(r,document.querySelector('.nav-item[data-page="settings"]'));return}
+  gotoFeed();
+}
 function go(name,btn){
   if(name==='profile')name='settings';
-  if(!btn&&(name==='settings'||name==='edit'))btn=document.querySelector('.nav-item[data-page="settings"]');
+  if(name!=='detail')detailReturn=null;
+  if(!btn&&(name==='settings'||name==='edit'||ME_SUBPAGES.indexOf(name)!==-1))btn=document.querySelector('.nav-item[data-page="settings"]');
   const pagesEl=document.getElementById('pages');
   const prevPage=document.querySelector('.page.active');
   const prevName=prevPage?prevPage.id.replace('page-',''):'';
@@ -15258,6 +15387,12 @@ function go(name,btn){
   if(name==='feed'&&feedPage===1&&!resumeFeed)loadFeed();
   if(name==='leaderboard')loadLB();
   if(name==='settings')loadMe();
+  // Coming back from a vent keeps the list as it was, unless the vent was deleted or restored meanwhile.
+  if(name==='my-posts'&&(prevName!=='detail'||myPostsStale))loadMyPosts(true);
+  if(name==='my-comments'&&prevName!=='detail')loadMyComments(true);
+  if(name==='follows')loadFollows(true);
+  if(name==='winners')loadWinners();
+  if(name==='help')renderHelpAura();
   if(name==='chats')loadChats();
   if(name==='admin-monitor')loadAdminChats();
   if(resumeFeed){
@@ -15897,6 +16032,7 @@ async function delVent(id){
   if(!confirm('Delete this vent? A notice that you deleted it stays in its place, and you can restore it for 24 hours.'))return;
   try{
     await api('/api/mini-app/post/'+id,{method:'DELETE',body:JSON.stringify({user_id:UID})});
+    myPostsStale=true;
     toast('Vent deleted');
     await openPost(id);
   }catch(e){toast(e.message)}
@@ -15904,6 +16040,7 @@ async function delVent(id){
 async function restoreVent(id){
   try{
     await api('/api/mini-app/post/'+id+'/restore',{method:'POST',body:JSON.stringify({user_id:UID})});
+    myPostsStale=true;
     toast('Vent restored');
     await openPost(id);
   }catch(e){toast(e.message)}
@@ -16223,6 +16360,409 @@ function inviteFriends(){
 function openSupport(){openTg('https://t.me/YIDIDIYATAMIRUU')}
 function meBack(){go('settings',document.querySelector('.nav-item[data-page="settings"]'))}
 
+// ===== Me sub-screens: My Posts, My Comments, Followers & Following, Winners, Help =====
+// These calls prove who the caller is with Telegram's signed initData; the server ignores any user id we send.
+async function secureApi(path,opts={}){
+  const tg=window.Telegram&&window.Telegram.WebApp;
+  const initData=(tg&&tg.initData)||'';
+  if(!initData)throw new Error('Open the app from Telegram to use this.');
+  return api(path,{...opts,headers:{'Content-Type':'application/json','X-Telegram-Init-Data':initData}});
+}
+function nid(v){return String(v).replace(/[^0-9]/g,'')}
+function catLabel(code){const c=CATS.find(x=>x[0]===code);return c?c[2]:code}
+function ventNo(n){return n?('Vent - '+String(n).padStart(3,'0')):'Vent'}
+// A profile opened from a list must not be masked as "Vent author" because of a vent viewed earlier.
+function openProfileFromList(id){currentPostAuthorId=null;showUserProfile(id)}
+function moreBtn(id,show){const m=document.getElementById(id);if(m)m.style.display=show?'block':'none'}
+
+// ---- My Posts ----
+let mpPage=0,mpLoading=false,mpReq=0;
+function myPostCard(p){
+  const id=Number(p.id);
+  const chip=p.status==='pending'?'<span class="x-chip pending">Waiting for approval</span>'
+    :p.status==='deleted'?'<span class="x-chip deleted">'+(p.deleted_by==='admin'?'Removed by admin':'Deleted')+'</span>':'';
+  const cats=(p.categories||[]).map(c=>'<span class="pill pill-sm">'+esc(catLabel(c))+'</span>').join('');
+  const attrs=p.status==='pending'?' style="margin:0 0 10px;cursor:default"':` style="margin:0 0 10px" onclick="openPostFrom('my-posts',${id})"`;
+  const restore=p.restorable?`<button type="button" class="btn-ghost x-sbtn" style="margin-left:auto" onclick="event.stopPropagation();restoreFromList(${id})">Restore</button>`:'';
+  const n=Number(p.comments)||0;
+  return `<div class="post-card"${attrs}>
+    <div class="x-meta" style="margin:0 0 8px"><span style="font-weight:600;color:var(--text2);margin-right:8px">${esc(ventNo(p.vent_number))}</span>${chip}${p.explicit?'<span class="x-chip">18+</span>':''}</div>
+    <div class="post-body" style="-webkit-line-clamp:4">${esc(p.preview)}</div>
+    ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:10px">${cats}</div>`:''}
+    <div class="x-meta"><span>${esc(p.time_ago)}</span><span style="margin:0 8px">·</span><span>${n} ${n===1?'response':'responses'}</span>${restore}</div>
+  </div>`;
+}
+async function loadMyPosts(reset){
+  const list=document.getElementById('mp-list');
+  if(!reset&&mpLoading)return;
+  const req=++mpReq;mpLoading=true;myPostsStale=false;
+  if(reset){mpPage=0;moreBtn('mp-more',false);list.innerHTML=skelPosts(2)}
+  try{
+    const d=await secureApi('/api/mini-app/my-posts?page='+(mpPage+1));
+    if(req!==mpReq)return;
+    mpPage=d.page;
+    const rows=d.data||[];
+    if(reset){
+      list.innerHTML='';
+      document.getElementById('mp-sub').textContent=d.total?(d.total+(d.total===1?' vent':' vents')):'Your vents';
+      if(!rows.length){list.innerHTML='<div class="x-empty">You have not shared a vent yet.<br>Tap Vent to share your first one.</div>';return}
+    }
+    list.insertAdjacentHTML('beforeend',rows.map(myPostCard).join(''));
+    moreBtn('mp-more',!!d.has_more);
+  }catch(e){
+    if(req!==mpReq)return;
+    if(reset)list.innerHTML='<div class="x-empty">'+esc(e.message||'Could not load your vents')+'</div>';
+    else toast(e.message||'Could not load more');
+  }finally{if(req===mpReq)mpLoading=false}
+}
+async function restoreFromList(id){
+  try{
+    await api('/api/mini-app/post/'+id+'/restore',{method:'POST',body:JSON.stringify({user_id:UID})});
+    hap('success');toast('Vent restored');loadMyPosts(true);
+  }catch(e){toast(e.message||'Could not restore the vent')}
+}
+
+// ---- My Comments ----
+let mcPage=0,mcLoading=false,mcReq=0;
+function myCommentCard(c){
+  const id=Number(c.post_id);
+  return `<div class="post-card" style="margin:0 0 10px" onclick="openPostFrom('my-comments',${id})">
+    <div class="post-body" style="-webkit-line-clamp:4;color:var(--text)">${esc(c.content)}</div>
+    <div class="x-quote">On ${esc(ventNo(c.vent_number))}: ${esc(c.vent_preview)}</div>
+    <div class="x-meta"><span>${esc(c.time_ago)}</span></div>
+  </div>`;
+}
+async function loadMyComments(reset){
+  const list=document.getElementById('mc-list');
+  if(!reset&&mcLoading)return;
+  const req=++mcReq;mcLoading=true;
+  if(reset){mcPage=0;moreBtn('mc-more',false);list.innerHTML=skelPosts(2)}
+  try{
+    const d=await secureApi('/api/mini-app/my-comments?page='+(mcPage+1));
+    if(req!==mcReq)return;
+    mcPage=d.page;
+    const rows=d.data||[];
+    if(reset){
+      list.innerHTML='';
+      document.getElementById('mc-sub').textContent=d.total?(d.total+(d.total===1?' response':' responses')):'Your responses';
+      if(!rows.length){list.innerHTML='<div class="x-empty">You have not responded to a vent yet.<br>Open the Feed to find one.</div>';return}
+    }
+    list.insertAdjacentHTML('beforeend',rows.map(myCommentCard).join(''));
+    moreBtn('mc-more',!!d.has_more);
+  }catch(e){
+    if(req!==mcReq)return;
+    if(reset)list.innerHTML='<div class="x-empty">'+esc(e.message||'Could not load your responses')+'</div>';
+    else toast(e.message||'Could not load more');
+  }finally{if(req===mcReq)mcLoading=false}
+}
+
+// ---- Followers & Following ----
+let flType='followers',flPage=0,flLoading=false,flReq=0,flCounts={followers:0,following:0,loaded:false};
+function syncFollowTabs(){
+  ['followers','following'].forEach(t=>{
+    const b=document.getElementById('fl-tab-'+t);if(!b)return;
+    b.classList.toggle('on',t===flType);
+    b.textContent=(t==='followers'?'Followers':'Following')+(flCounts.loaded?' · '+flCounts[t]:'');
+  });
+}
+function setFollowTab(t){if(t===flType)return;flType=t;syncFollowTabs();loadFollows(true)}
+function followRow(u){
+  const id=nid(u.id);
+  return `<div class="x-row">
+    <div class="ava" style="width:42px;height:42px;cursor:pointer" onclick="openProfileFromList('${id}')">${avaHtml(u.avatar||u.sex)}</div>
+    <div class="x-main" onclick="openProfileFromList('${id}')"><div class="x-name">${u.weekly_badge?esc(u.weekly_badge)+' ':''}${sexTag(u.sex)}${esc(u.name)}</div></div>
+    <button type="button" class="btn-ghost x-sbtn" id="flb-${id}" onclick="flToggle('${id}',${u.i_follow?'false':'true'})">${u.i_follow?'Following':'Follow'}</button>
+  </div>`;
+}
+async function flToggle(id,want){
+  const b=document.getElementById('flb-'+id);if(b)b.disabled=true;
+  try{
+    await api('/api/mini-app/follow',{method:'POST',body:JSON.stringify({user_id:UID,target_id:id,follow:want})});
+    hap('select');
+    if(b){b.textContent=want?'Following':'Follow';b.setAttribute('onclick',"flToggle('"+id+"',"+(want?'false':'true')+")")}
+    if(flCounts.loaded){flCounts.following=Math.max(0,flCounts.following+(want?1:-1));syncFollowTabs()}
+  }catch(e){toast(e.message||'Could not update follow')}
+  finally{if(b)b.disabled=false}
+}
+async function loadFollows(reset){
+  const list=document.getElementById('fl-list');
+  if(!reset&&flLoading)return;
+  const req=++flReq;flLoading=true;
+  if(reset){flPage=0;moreBtn('fl-more',false);list.innerHTML=skelChats();syncFollowTabs()}
+  try{
+    const d=await secureApi('/api/mini-app/follows?type='+flType+'&page='+(flPage+1));
+    if(req!==flReq)return;
+    flPage=d.page;
+    if(d.counts){flCounts={followers:d.counts.followers,following:d.counts.following,loaded:true};syncFollowTabs()}
+    const rows=d.data||[];
+    if(reset){
+      list.innerHTML='';
+      if(!rows.length){
+        list.innerHTML='<div class="x-empty">'+(flType==='followers'
+          ?'No followers yet.<br>Share a vent or respond to someone and people will find you.'
+          :'You are not following anyone yet.<br>Open someone’s profile from Rankings and tap Follow.')+'</div>';
+        return;
+      }
+    }
+    list.insertAdjacentHTML('beforeend',rows.map(followRow).join(''));
+    moreBtn('fl-more',!!d.has_more);
+  }catch(e){
+    if(req!==flReq)return;
+    if(reset)list.innerHTML='<div class="x-empty">'+esc(e.message||'Could not load the list')+'</div>';
+    else toast(e.message||'Could not load more');
+  }finally{if(req===flReq)flLoading=false}
+}
+
+// ---- Winners ----
+function winRow(w){
+  const id=nid(w.id);
+  const hidden=typeof w.points!=='number';
+  return `<div class="x-win${w.is_me?' me':''}">
+    <div class="x-badge">${esc(w.badge||String(w.rank))}</div>
+    <div class="ava" style="width:38px;height:38px">${avaHtml(w.avatar||w.sex)}</div>
+    <div class="x-main" onclick="openProfileFromList('${id}')"><div class="x-name">${sexTag(w.sex)}${esc(w.name)}${w.is_me?' (you)':''}</div></div>
+    <div class="x-pts">${hidden?'Hidden':esc(String(w.points))}<small>POINTS</small></div>
+  </div>`;
+}
+async function loadWinners(){
+  const box=document.getElementById('wn-list');
+  box.innerHTML=skelLB();
+  try{
+    // Signed initData is optional here: with it, your own hidden points show to you.
+    const signed=!!(window.Telegram&&window.Telegram.WebApp&&window.Telegram.WebApp.initData);
+    const d=signed?await secureApi('/api/mini-app/winners'):await api('/api/mini-app/winners');
+    const weeks=d.data||[];
+    if(!weeks.length){box.innerHTML='<div class="x-empty"><b>No winners yet</b><br>Winners are recorded at the end of each week.</div>';return}
+    box.innerHTML=weeks.map((w,i)=>'<div class="x-week">'+esc(w.label)+(i===0?' · latest':'')+'</div>'+w.winners.map(winRow).join('')).join('');
+  }catch(e){box.innerHTML='<div class="x-empty">'+esc(e.message||'Could not load the winners')+'</div>'}
+}
+
+// ---- Help & About ----
+function renderHelpAura(){
+  const el=document.getElementById('help-aura');if(!el)return;
+  el.innerHTML=AURA_TIERS.map(t=>'<span class="x-chip">'+esc(t[1])+' · '+t[0]+'+ pts</span>').join('');
+}
+
+// ===== Admin: Users (lookup, warn, ban, message) and Broadcast =====
+// Every call here is signed with initData; the server checks the admin flag itself.
+let auFilter='',auQuery='',auPage=0,auLoading=false,auReq=0,auCurrent=null,auUser=null;
+function initAdminUsers(){
+  const inp=document.getElementById('admin-user-inp');
+  if(inp&&!inp.dataset.wired){
+    inp.dataset.wired='1';
+    let st;
+    inp.addEventListener('input',e=>{clearTimeout(st);st=setTimeout(()=>{auQuery=e.target.value.trim();loadAdminUsers(true)},400)});
+  }
+  const list=document.getElementById('admin-users-list');
+  if(list&&!list.innerHTML)loadAdminUsers(true);
+}
+function adminUsersFilter(f){
+  auFilter=f;
+  document.getElementById('au-f-all').classList.toggle('on',f==='');
+  document.getElementById('au-f-banned').classList.toggle('on',f==='banned');
+  loadAdminUsers(true);
+}
+function adminUserRow(u){
+  const id=nid(u.id);
+  const chips=(u.is_admin?'<span class="x-chip">Admin</span>':'')
+    +(u.is_banned?'<span class="x-chip banned">Banned</span>':'')
+    +(u.warnings?'<span class="x-chip pending">'+u.warnings+(u.warnings===1?' warning':' warnings')+'</span>':'');
+  return `<div class="x-row">
+    <div class="ava" style="width:42px;height:42px">${avaHtml(u.avatar||u.sex)}</div>
+    <div class="x-main" onclick="adminOpenUser('${id}')"><div class="x-name">${sexTag(u.sex)}${esc(u.name)}</div><div class="x-small">ID ${id}</div>${chips?`<div style="margin-top:6px">${chips}</div>`:''}</div>
+    <svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+  </div>`;
+}
+async function loadAdminUsers(reset){
+  const list=document.getElementById('admin-users-list');if(!list)return;
+  if(!reset&&auLoading)return;
+  const req=++auReq;
+  if(reset){auPage=0;moreBtn('admin-users-more',false)}
+  if(!auQuery&&!auFilter){
+    list.innerHTML='<div class="x-empty">Search by name or Telegram ID, or tap Banned to see banned users.</div>';
+    auLoading=false;return;
+  }
+  auLoading=true;
+  if(reset)list.innerHTML='<div class="x-empty">Searching…</div>';
+  try{
+    const d=await secureApi('/api/mini-app/admin/users?q='+encodeURIComponent(auQuery)+(auFilter?'&filter='+auFilter:'')+'&page='+(auPage+1));
+    if(req!==auReq)return;
+    auPage=d.page;
+    const rows=d.data||[];
+    if(reset){
+      list.innerHTML='';
+      if(!rows.length){list.innerHTML='<div class="x-empty">No users found.</div>';return}
+    }
+    list.insertAdjacentHTML('beforeend',rows.map(adminUserRow).join(''));
+    moreBtn('admin-users-more',!!d.has_more);
+  }catch(e){
+    if(req!==auReq)return;
+    if(reset)list.innerHTML='<div class="x-empty">'+esc(e.message||'Could not search')+'</div>';
+    else toast(e.message||'Could not load more');
+  }finally{if(req===auReq)auLoading=false}
+}
+const AU_BACK='<button class="back-btn" onclick="adminCloseUser()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Users</button>';
+async function adminOpenUser(id){
+  id=nid(id);auCurrent=id;
+  const box=document.getElementById('admin-user-detail');
+  document.getElementById('admin-users-browse').style.display='none';
+  box.style.display='';
+  if(!box.innerHTML)box.innerHTML=AU_BACK+'<div class="x-empty">Loading…</div>';
+  document.getElementById('pages').scrollTop=0;
+  try{
+    const d=await secureApi('/api/mini-app/admin/user/'+id);
+    if(auCurrent!==id)return;
+    auUser=d.data;
+    renderAdminUser(d.data);
+  }catch(e){
+    if(auCurrent===id)box.innerHTML=AU_BACK+'<div class="x-empty">'+esc(e.message||'Could not load the user')+'</div>';
+  }
+}
+function adminCloseUser(){
+  auCurrent=null;auUser=null;
+  const box=document.getElementById('admin-user-detail');
+  box.style.display='none';box.innerHTML='';
+  document.getElementById('admin-users-browse').style.display='';
+  loadAdminUsers(true);
+}
+function renderAdminUser(u){
+  const box=document.getElementById('admin-user-detail');
+  const id=nid(u.id);
+  const status=u.is_admin?'Administrator':(u.is_banned?'Banned':'Active');
+  const warns=u.max_warnings?(u.warnings+' of '+u.max_warnings):String(u.warnings);
+  const hist=(u.history||[]).length
+    ?u.history.map(h=>`<div class="x-kv"><span>${esc(h.date)}</span><span>${esc(h.reason)}</span></div>`).join('')
+    :'<div class="x-small">No warnings on record.</div>';
+  let actions='';
+  if(!u.is_admin){
+    actions='<div class="x-field">'
+      +(u.is_banned?'':'<button type="button" class="modal-btn modal-btn-secondary" onclick="adminWarn()">Warn</button>')
+      +(u.is_banned
+        ?'<button type="button" class="modal-btn modal-btn-secondary" onclick="adminUnban()">Unban</button>'
+        :'<button type="button" class="modal-btn x-danger" onclick="adminBan()">Ban</button>')
+      +'<button type="button" class="modal-btn modal-btn-secondary" onclick="adminMessage()">Send message</button></div>';
+  }
+  box.innerHTML=AU_BACK+`
+    <div class="x-card">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="ava" style="width:48px;height:48px">${avaHtml(u.avatar||u.sex)}</div>
+        <div style="min-width:0"><div class="x-name" style="font-size:17px">${sexTag(u.sex)}${esc(u.name)}</div><div class="x-small">ID ${id}</div></div>
+      </div>
+      ${u.bio?`<div class="x-quote">${esc(u.bio)}</div>`:''}
+      <div style="margin-top:12px">
+        <div class="x-kv"><span>Status</span><span>${esc(status)}</span></div>
+        <div class="x-kv"><span>Warnings</span><span>${esc(warns)}</span></div>
+        ${u.is_banned?`<div class="x-kv"><span>Ban reason</span><span>${esc(u.ban_reason||'None given')}</span></div>`:''}
+        ${u.is_banned&&u.banned_at?`<div class="x-kv"><span>Banned on</span><span>${esc(u.banned_at)}</span></div>`:''}
+        <div class="x-kv"><span>Vents</span><span>${Number(u.stats.posts)}</span></div>
+        <div class="x-kv"><span>Responses</span><span>${Number(u.stats.comments)}</span></div>
+        <div class="x-kv"><span>Followers</span><span>${Number(u.stats.followers)}</span></div>
+      </div>
+    </div>
+    ${actions}
+    <div class="x-card"><h3>Warning history</h3>${hist}</div>`;
+}
+// One sheet for every admin action: optional text box, confirm button, errors keep the sheet open.
+function adminPrompt(o){
+  crOpenSheet('<h3>'+esc(o.title)+'</h3><p>'+esc(o.text||'')+'</p>'
+    +(o.input?'<textarea id="adm-ptxt" class="ed-input" rows="4" maxlength="'+(o.max||300)+'" placeholder="'+esc(o.placeholder||'')+'" style="resize:none"></textarea>':'')
+    +'<button type="button" class="modal-btn '+(o.danger?'solid-danger':'modal-btn-primary')+'" id="adm-pok">'+esc(o.ok)+'</button>'
+    +'<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
+  const ok=document.getElementById('adm-pok');
+  ok.onclick=async()=>{
+    const v=o.input?document.getElementById('adm-ptxt').value.trim():'';
+    if(o.required&&!v){toast(o.requiredMsg||'Please fill this in');return}
+    ok.disabled=true;
+    try{await o.run(v);crCloseSheet()}
+    catch(e){ok.disabled=false;toast(e.message||'That did not work')}
+  };
+}
+async function adminDo(action,text){
+  const id=auCurrent;
+  const d=await secureApi('/api/mini-app/admin/user/'+id+'/'+action,{method:'POST',body:JSON.stringify({text:text||''})});
+  hap('success');toast(d.message||'Done');
+  adminOpenUser(id);
+}
+function adminWarn(){
+  const lim=auUser&&auUser.max_warnings?(' '+auUser.max_warnings+' warnings lead to an automatic ban.'):'';
+  adminPrompt({title:'Warn this user?',text:'They get a warning message from the bot.'+lim,input:true,required:true,
+    requiredMsg:'Add a reason for the warning',placeholder:'Reason (the user will see it)',max:300,ok:'Send warning',run:t=>adminDo('warn',t)});
+}
+function adminBan(){
+  adminPrompt({title:'Ban this user?',text:'They lose access to the bot and the app. A reason is optional, and the user will see it.',input:true,
+    placeholder:'Reason (optional)',max:300,ok:'Ban user',danger:true,run:t=>adminDo('ban',t)});
+}
+function adminUnban(){
+  adminPrompt({title:'Unban this user?',text:'They can use the bot and the app again.',ok:'Unban',run:()=>adminDo('unban','')});
+}
+function adminMessage(){
+  adminPrompt({title:'Message this user',text:'Sent by the bot as a message from the admins.',input:true,required:true,
+    requiredMsg:'Write a message first',placeholder:'Your message',max:3500,ok:'Send message',run:t=>adminDo('message',t)});
+}
+
+// ---- Broadcast ----
+let bcPoll=null,bcJob=null,bcRecipients=0;
+function stopBroadcastPoll(){if(bcPoll){clearInterval(bcPoll);bcPoll=null}}
+function bcCount(){const t=document.getElementById('bc-text'),c=document.getElementById('bc-count');if(t&&c)c.textContent=t.value.length+'/3500'}
+function renderBroadcastStatus(j){
+  const box=document.getElementById('bc-status');if(!box)return;
+  const btn=document.getElementById('bc-send');
+  if(!j){box.innerHTML='';if(btn)btn.disabled=false;return}
+  const pct=j.total?Math.min(100,Math.round(j.done/j.total*100)):0;
+  const label={running:'Sending…',done:'Finished',failed:'Stopped by an error',interrupted:'Interrupted'}[j.status]||j.status;
+  box.innerHTML=`<div class="x-card"><h3>${esc(label)}</h3><div class="x-small">${esc(j.created)}</div>
+    <div class="x-quote">${esc(j.preview)}</div>
+    <div class="x-bar"><i style="width:${pct}%"></i></div>
+    <div class="x-stats"><div>${Number(j.sent)}<small>SENT</small></div><div>${Number(j.blocked)}<small>BLOCKED</small></div><div>${Number(j.failed)}<small>FAILED</small></div><div>${Number(j.total)}<small>TOTAL</small></div></div></div>`;
+  if(btn)btn.disabled=(j.status==='running');
+}
+async function bcTick(){
+  try{
+    const d=await secureApi('/api/mini-app/admin/broadcast'+(bcJob?'?job_id='+bcJob:''));
+    bcRecipients=d.recipients||0;
+    renderBroadcastStatus(d.job);
+    if(d.job&&d.job.status==='running'){
+      if(!bcPoll)bcPoll=setInterval(()=>{if(!document.hidden)bcTick()},2000);
+    }else stopBroadcastPoll();
+  }catch(e){
+    const s=document.getElementById('bc-status');
+    if(s&&!s.innerHTML)s.innerHTML='<div class="x-empty">'+esc(e.message||'Could not load the status')+'</div>';
+  }
+}
+async function loadAdminBroadcast(){
+  const box=document.getElementById('admin-broadcast-pane');if(!box)return;
+  if(!box.dataset.built){
+    box.dataset.built='1';
+    box.innerHTML=`<div class="x-card"><h3>Send a broadcast</h3>
+      <p>Sends a text message from the bot to every user except banned users and you. Plain text only. It goes out right away.</p>
+      <textarea id="bc-text" class="ed-input" rows="6" maxlength="3500" placeholder="Write your message…" style="resize:none;margin-top:12px" oninput="bcCount()"></textarea>
+      <div class="ed-hint" id="bc-count">0/3500</div>
+      <button type="button" class="btn-gold" id="bc-send" style="margin-top:14px" onclick="bcReview()">Review and send</button></div>
+      <div id="bc-status"></div>`;
+  }
+  await bcTick();
+}
+function bcReview(){
+  const t=document.getElementById('bc-text').value.trim();
+  if(!t){toast('Write a message first');return}
+  if(!bcRecipients){toast('There are no users to send to');return}
+  crOpenSheet('<h3>Send to '+bcRecipients+(bcRecipients===1?' person?':' people?')+'</h3><p>This cannot be undone. Preview:</p>'
+    +'<div class="x-quote" style="white-space:pre-wrap;max-height:30vh;overflow:auto">'+esc(t)+'</div>'
+    +'<button type="button" class="modal-btn solid-danger" id="bc-go">Send now</button>'
+    +'<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
+  document.getElementById('bc-go').onclick=()=>bcSend(t);
+}
+async function bcSend(text){
+  const b=document.getElementById('bc-go');if(b)b.disabled=true;
+  try{
+    const d=await secureApi('/api/mini-app/admin/broadcast',{method:'POST',body:JSON.stringify({text:text})});
+    crCloseSheet();hap('success');toast('Broadcast started');
+    bcJob=d.job_id;
+    const t=document.getElementById('bc-text');if(t){t.value='';bcCount()}
+    await bcTick();
+  }catch(e){if(b)b.disabled=false;toast(e.message||'Could not start the broadcast')}
+}
+
 // ---- edit profile ----
 function setupEdit(){
   const p=profileCache;if(!p)return;
@@ -16302,6 +16842,8 @@ async function checkAdminStatus(){
         <div class="rp-tabs">
           <button class="btn-ghost on" id="admin-tab-chats" onclick="adminTab('chats')">Chats</button>
           <button class="btn-ghost" id="admin-tab-reports" onclick="adminTab('reports')">Reports</button>
+          <button class="btn-ghost" id="admin-tab-users" onclick="adminTab('users')">Users</button>
+          <button class="btn-ghost" id="admin-tab-broadcast" onclick="adminTab('broadcast')">Broadcast</button>
         </div>
         <div class="search-wrap" id="admin-chats-search">
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
@@ -16309,6 +16851,22 @@ async function checkAdminStatus(){
         </div>
         <div id="admin-chats-list"></div>
         <div id="admin-reports-list" style="display:none"></div>
+        <div id="admin-users-pane" style="display:none">
+          <div id="admin-users-browse">
+            <div class="search-wrap">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
+              <input id="admin-user-inp" type="text" placeholder="Name or Telegram ID…" autocomplete="off">
+            </div>
+            <div class="rp-tabs" style="padding-top:4px">
+              <button class="btn-ghost on" id="au-f-all" onclick="adminUsersFilter('')">Search</button>
+              <button class="btn-ghost" id="au-f-banned" onclick="adminUsersFilter('banned')">Banned</button>
+            </div>
+            <div class="x-list" id="admin-users-list" style="padding-top:0"></div>
+            <div class="x-more" id="admin-users-more" style="display:none"><button class="btn-ghost" onclick="loadAdminUsers(false)">Load more</button></div>
+          </div>
+          <div id="admin-user-detail" style="display:none"></div>
+        </div>
+        <div id="admin-broadcast-pane" style="display:none"></div>
       </div>`);
 
     let st;
@@ -16321,13 +16879,17 @@ async function checkAdminStatus(){
 
 let adminReportsPage = 1;
 function adminTab(which){
-  const rep = which==='reports';
-  document.getElementById('admin-chats-search').style.display = rep ? 'none' : '';
-  document.getElementById('admin-chats-list').style.display = rep ? 'none' : '';
+  const chats = which==='chats', rep = which==='reports', users = which==='users', bc = which==='broadcast';
+  document.getElementById('admin-chats-search').style.display = chats ? '' : 'none';
+  document.getElementById('admin-chats-list').style.display = chats ? '' : 'none';
   document.getElementById('admin-reports-list').style.display = rep ? '' : 'none';
-  document.getElementById('admin-tab-chats').classList.toggle('on', !rep);
-  document.getElementById('admin-tab-reports').classList.toggle('on', rep);
+  document.getElementById('admin-users-pane').style.display = users ? '' : 'none';
+  document.getElementById('admin-broadcast-pane').style.display = bc ? '' : 'none';
+  ['chats','reports','users','broadcast'].forEach(t=>document.getElementById('admin-tab-'+t).classList.toggle('on', t===which));
+  if(!bc) stopBroadcastPoll();
   if(rep) loadAdminReports(1);
+  if(users) initAdminUsers();
+  if(bc) loadAdminBroadcast();
 }
 async function loadAdminReports(page){
   adminReportsPage = page || 1;
@@ -20380,7 +20942,514 @@ def mini_app_update_settings(user_id):
         logger.error(f"Error updating settings: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-if __name__ == "__main__": 
+
+# ==================== MINI APP: MEMBER SCREENS + ADMIN TOOLS ====================
+# Everything below returns one person's anonymous activity or lets an admin act on users, so unlike the
+# older routes above it does NOT trust a user_id / admin_id sent by the client (anyone could send
+# someone else's). The caller is identified from Telegram's signed initData, which the mini app sends
+# in the X-Telegram-Init-Data header (see secureApi() in the page script).
+
+MINI_PAGE_SIZE = 15
+_MEDIA_LABELS = {'voice': 'Voice message', 'audio': 'Audio', 'photo': 'Photo', 'video': 'Video',
+                 'document': 'File', 'gif': 'GIF', 'sticker': 'Sticker'}
+
+
+def _verified_user(require_admin=False):
+    """Identify the caller from Telegram's signed initData.
+    Returns (user_id, None) on success, or (None, (response, status)) for the route to return as is."""
+    tg_user = _verify_tg_init_data(request.headers.get('X-Telegram-Init-Data', ''))
+    uid = str((tg_user or {}).get('id') or '')
+    if not uid.isdigit():
+        return None, (jsonify({'success': False, 'error': 'Open the app from Telegram to use this.'}), 401)
+    row = get_user_cached(uid)
+    if not row:
+        return None, (jsonify({'success': False, 'error': 'User not found'}), 404)
+    if row.get('is_banned') and not row.get('is_admin'):
+        return None, (jsonify({'success': False, 'error': '🚫 Your account has been banned.', 'banned': True}), 403)
+    if require_admin and not _require_admin(uid):   # fresh DB read, not the cache: this gates admin actions
+        return None, (jsonify({'success': False, 'error': 'Unauthorized'}), 403)
+    return uid, None
+
+
+def _mod_plain(msg):
+    """The moderation helpers answer in Telegram HTML; the mini app wants plain text."""
+    return html.unescape(re.sub(r'<[^>]+>', '', msg or '')).strip()
+
+
+def _like_escape(text):
+    return text.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+
+
+# ---------- member: My Posts ----------
+
+@flask_app.route('/api/mini-app/my-posts', methods=['GET'])
+def mini_app_my_posts():
+    """The caller's own vents, newest first, including ones still waiting for approval and ones they
+    deleted. A deleted vent never sends its text back (same rule as the feed)."""
+    try:
+        uid, err = _verified_user()
+        if err:
+            return err
+        page = _clamp_int(request.args.get('page'), 1, 100000, 1)
+        rows = db_fetch_all('''
+            SELECT p.post_id, p.vent_number, p.content, p.timestamp, p.approved_at, p.media_type,
+                   COALESCE(p.approved, FALSE) AS approved,
+                   COALESCE(p.deleted, FALSE) AS deleted, p.deleted_reason,
+                   COALESCE(p.comment_count, 0) AS comment_count,
+                   COALESCE(p.explicit, FALSE) AS explicit,
+                   (SELECT STRING_AGG(pc.category_code, ',') FROM post_categories pc
+                     WHERE pc.post_id = p.post_id) AS categories,
+                   (COALESCE(p.deleted, FALSE) AND p.deleted_reason = 'author' AND p.deleted_at IS NOT NULL
+                    AND p.deleted_at > LOCALTIMESTAMP - make_interval(hours => %s)) AS restorable,
+                   COUNT(*) OVER () AS total_count
+            FROM posts p
+            WHERE p.author_id = %s
+            ORDER BY p.timestamp DESC, p.post_id DESC
+            LIMIT %s OFFSET %s
+        ''', (RESTORE_WINDOW_HOURS, uid, MINI_PAGE_SIZE, (page - 1) * MINI_PAGE_SIZE)) or []
+
+        data = []
+        for r in rows:
+            if r['deleted']:
+                status = 'deleted'
+                preview = deleted_notice(r.get('deleted_reason'), "vent")
+            else:
+                status = 'published' if r['approved'] else 'pending'
+                text = (r['content'] or '').strip()
+                preview = text if len(text) <= 180 else text[:177] + '...'
+                if not preview and r.get('media_type') and r['media_type'] != 'text':
+                    preview = f"[{_MEDIA_LABELS.get(r['media_type'], r['media_type'])}]"
+            data.append({
+                'id': r['post_id'],
+                'vent_number': r.get('vent_number'),
+                'preview': preview,
+                'categories': r['categories'].split(',') if r.get('categories') else [],
+                'time_ago': _feed_time_ago(r.get('approved_at') or r['timestamp']),
+                'comments': int(r['comment_count']),
+                'status': status,
+                'deleted_by': _deleted_by(r),
+                'restorable': bool(r.get('restorable')),
+                'explicit': bool(r['explicit']),
+            })
+        total = int(rows[0]['total_count']) if rows else 0
+        return jsonify({'success': True, 'data': data, 'page': page, 'total': total,
+                        'has_more': page * MINI_PAGE_SIZE < total})
+    except Exception as e:
+        logger.error(f"Mini-app my-posts error: {e}")
+        return jsonify({'success': False, 'error': 'Could not load your vents'}), 500
+
+
+# ---------- member: My Comments ----------
+
+@flask_app.route('/api/mini-app/my-comments', methods=['GET'])
+def mini_app_my_comments():
+    """The caller's own responses, newest first, each with a short preview of the vent it answered.
+    The preview is withheld for deleted vents and for sensitive vents the caller didn't write."""
+    try:
+        uid, err = _verified_user()
+        if err:
+            return err
+        page = _clamp_int(request.args.get('page'), 1, 100000, 1)
+        rows = db_fetch_all('''
+            SELECT c.comment_id, c.post_id, c.content, c.type AS media_type, c.timestamp,
+                   p.content AS post_content, p.vent_number, p.author_id AS post_author_id,
+                   COALESCE(p.deleted, FALSE) AS post_deleted, p.deleted_reason,
+                   COALESCE(p.explicit, FALSE) AS post_explicit,
+                   COUNT(*) OVER () AS total_count
+            FROM comments c
+            JOIN posts p ON p.post_id = c.post_id
+            WHERE c.author_id = %s
+            ORDER BY c.timestamp DESC, c.comment_id DESC
+            LIMIT %s OFFSET %s
+        ''', (uid, MINI_PAGE_SIZE, (page - 1) * MINI_PAGE_SIZE)) or []
+
+        data = []
+        for r in rows:
+            text = (r['content'] or '').strip()
+            if not text and r.get('media_type') and r['media_type'] != 'text':
+                text = f"[{_MEDIA_LABELS.get(r['media_type'], r['media_type'])}]"
+            if len(text) > 220:
+                text = text[:217] + '...'
+            if r['post_deleted']:
+                vent = deleted_notice(r.get('deleted_reason'), "vent")
+            elif r['post_explicit'] and str(r['post_author_id']) != uid:
+                vent = "Sensitive vent"
+            else:
+                vent = (r['post_content'] or '').strip()
+                vent = vent if len(vent) <= 90 else vent[:87] + '...'
+            data.append({
+                'id': r['comment_id'],
+                'post_id': r['post_id'],
+                'content': text,
+                'time_ago': _feed_time_ago(r['timestamp']),
+                'vent_number': r.get('vent_number'),
+                'vent_preview': vent,
+                'vent_deleted': bool(r['post_deleted']),
+            })
+        total = int(rows[0]['total_count']) if rows else 0
+        return jsonify({'success': True, 'data': data, 'page': page, 'total': total,
+                        'has_more': page * MINI_PAGE_SIZE < total})
+    except Exception as e:
+        logger.error(f"Mini-app my-comments error: {e}")
+        return jsonify({'success': False, 'error': 'Could not load your responses'}), 500
+
+
+# ---------- member: Followers & Following ----------
+
+@flask_app.route('/api/mini-app/follows', methods=['GET'])
+def mini_app_follows():
+    """The caller's own followers or following list (?type=followers|following). Own lists only: who
+    follows whom is not shown to other people. Follow / unfollow reuses POST /api/mini-app/follow."""
+    try:
+        uid, err = _verified_user()
+        if err:
+            return err
+        kind = 'following' if request.args.get('type') == 'following' else 'followers'
+        page = _clamp_int(request.args.get('page'), 1, 100000, 1)
+        # Column names are fixed internal strings, never request input.
+        other_col, my_col = ('f.follower_id', 'f.followed_id') if kind == 'followers' else ('f.followed_id', 'f.follower_id')
+        rows = db_fetch_all(f'''
+            SELECT u.user_id, u.anonymous_name, u.sex, u.avatar_emoji, u.weekly_badge,
+                   EXISTS (SELECT 1 FROM followers f2
+                            WHERE f2.follower_id = %s AND f2.followed_id = u.user_id) AS i_follow,
+                   COUNT(*) OVER () AS total_count
+            FROM followers f
+            JOIN users u ON u.user_id = {other_col}
+            WHERE {my_col} = %s AND COALESCE(u.is_banned, FALSE) = FALSE
+            ORDER BY LOWER(COALESCE(u.anonymous_name, '')), u.user_id
+            LIMIT %s OFFSET %s
+        ''', (uid, uid, MINI_PAGE_SIZE, (page - 1) * MINI_PAGE_SIZE)) or []
+        counts = db_fetch_one(
+            "SELECT (SELECT COUNT(*) FROM followers WHERE followed_id = %s) AS followers, "
+            "(SELECT COUNT(*) FROM followers WHERE follower_id = %s) AS following", (uid, uid)) or {}
+        data = [{
+            'id': str(r['user_id']),
+            'name': r['anonymous_name'] or 'Anonymous',
+            'sex': r['sex'],
+            'avatar': r['avatar_emoji'] or '',
+            'weekly_badge': r['weekly_badge'] or '',
+            'i_follow': bool(r['i_follow']),
+        } for r in rows]
+        total = int(rows[0]['total_count']) if rows else 0
+        return jsonify({'success': True, 'type': kind, 'data': data, 'page': page,
+                        'has_more': page * MINI_PAGE_SIZE < total,
+                        'counts': {'followers': int(counts.get('followers') or 0),
+                                   'following': int(counts.get('following') or 0)}})
+    except Exception as e:
+        logger.error(f"Mini-app follows error: {e}")
+        return jsonify({'success': False, 'error': 'Could not load the list'}), 500
+
+
+# ---------- member: Winners ----------
+
+@flask_app.route('/api/mini-app/winners', methods=['GET'])
+def mini_app_winners():
+    """Weekly winners for the last 4 recorded weeks (the same rows the bot's 'View Last Winners' reads).
+    Public, like the channel announcement. Points of people who hide them show as Hidden unless the
+    viewer is that person or an admin; the viewer is only trusted when initData verifies."""
+    try:
+        tg_user = _verify_tg_init_data(request.headers.get('X-Telegram-Init-Data', ''))
+        viewer_id = str((tg_user or {}).get('id') or '') or None
+        viewer_is_admin = bool(viewer_id and _require_admin(viewer_id))
+
+        weeks = db_fetch_all("SELECT DISTINCT week_start FROM weekly_rankings ORDER BY week_start DESC LIMIT 4") or []
+        if not weeks:
+            return jsonify({'success': True, 'data': []})
+        starts = [w['week_start'] for w in weeks]
+        rows = db_fetch_all('''
+            SELECT r.week_start, r.rank, r.points_earned, r.badge_emoji,
+                   u.user_id, u.anonymous_name, u.sex, u.avatar_emoji,
+                   COALESCE(u.hide_aura, FALSE) AS hide_aura
+            FROM weekly_rankings r
+            JOIN users u ON u.user_id = r.user_id
+            WHERE r.week_start = ANY(%s)
+            ORDER BY r.week_start DESC, r.rank ASC
+        ''', (starts,)) or []
+
+        by_week = {}
+        for r in rows:
+            can_see = (not r['hide_aura']) or viewer_is_admin or (viewer_id == str(r['user_id']))
+            by_week.setdefault(r['week_start'], []).append({
+                'rank': r['rank'],
+                'id': str(r['user_id']),
+                'name': r['anonymous_name'] or 'Anonymous',
+                'sex': r['sex'],
+                'avatar': r['avatar_emoji'] or '',
+                'badge': r['badge_emoji'] or '',
+                'points': r['points_earned'] if can_see else 'Hidden',
+                'is_me': viewer_id == str(r['user_id']),
+            })
+        data = [{
+            'week_start': ws.isoformat(),
+            'label': 'Week of ' + ws.strftime('%b %d, %Y').replace(' 0', ' '),
+            'winners': by_week.get(ws, []),
+        } for ws in starts]
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f"Mini-app winners error: {e}")
+        return jsonify({'success': False, 'error': 'Could not load the winners'}), 500
+
+
+# ---------- admin: user lookup ----------
+
+@flask_app.route('/api/mini-app/admin/users', methods=['GET'])
+def mini_app_admin_users():
+    """Find users by name or Telegram ID (?q=), or list banned users (?filter=banned)."""
+    try:
+        admin_id, err = _verified_user(require_admin=True)
+        if err:
+            return err
+        q = (request.args.get('q') or '').strip()[:60]
+        only_banned = request.args.get('filter') == 'banned'
+        page = _clamp_int(request.args.get('page'), 1, 100000, 1)
+        if not q and not only_banned:
+            return jsonify({'success': True, 'data': [], 'page': 1, 'has_more': False})
+
+        where, params = [], []
+        if only_banned:
+            where.append("COALESCE(is_banned, FALSE) = TRUE")
+        if q:
+            like = '%' + _like_escape(q) + '%'
+            if q.isdigit():
+                where.append("(user_id = %s OR anonymous_name ILIKE %s)")
+                params += [q, like]
+            else:
+                where.append("anonymous_name ILIKE %s")
+                params.append(like)
+        # Fragments above are fixed strings; every value goes through %s parameters.
+        rows = db_fetch_all(f'''
+            SELECT user_id, anonymous_name, sex, avatar_emoji,
+                   COALESCE(is_admin, FALSE) AS is_admin,
+                   COALESCE(is_banned, FALSE) AS is_banned,
+                   COALESCE(warning_count, 0) AS warning_count,
+                   COUNT(*) OVER () AS total_count
+            FROM users
+            WHERE {' AND '.join(where)}
+            ORDER BY LOWER(COALESCE(anonymous_name, '')), user_id
+            LIMIT %s OFFSET %s
+        ''', tuple(params) + (MINI_PAGE_SIZE, (page - 1) * MINI_PAGE_SIZE)) or []
+        data = [{
+            'id': str(r['user_id']),
+            'name': r['anonymous_name'] or 'Anonymous',
+            'sex': r['sex'],
+            'avatar': r['avatar_emoji'] or '',
+            'is_admin': bool(r['is_admin']),
+            'is_banned': bool(r['is_banned']),
+            'warnings': int(r['warning_count']),
+        } for r in rows]
+        total = int(rows[0]['total_count']) if rows else 0
+        return jsonify({'success': True, 'data': data, 'page': page, 'total': total,
+                        'has_more': page * MINI_PAGE_SIZE < total})
+    except Exception as e:
+        logger.error(f"Mini-app admin users error: {e}")
+        return jsonify({'success': False, 'error': 'Could not search users'}), 500
+
+
+@flask_app.route('/api/mini-app/admin/user/<target_id>', methods=['GET'])
+def mini_app_admin_user_detail(target_id):
+    """Moderation card for one user: status, warnings (with history), ban details, activity counts."""
+    try:
+        admin_id, err = _verified_user(require_admin=True)
+        if err:
+            return err
+        if not str(target_id).isdigit():
+            return jsonify({'success': False, 'error': 'Invalid user ID'}), 400
+        t = db_fetch_one('''
+            SELECT user_id, anonymous_name, sex, avatar_emoji, bio,
+                   COALESCE(is_admin, FALSE) AS is_admin, COALESCE(is_banned, FALSE) AS is_banned,
+                   ban_reason, banned_at, COALESCE(warning_count, 0) AS warning_count
+            FROM users WHERE user_id = %s
+        ''', (str(target_id),))
+        if not t:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        tid = str(t['user_id'])
+        stats = db_fetch_one('''
+            SELECT (SELECT COUNT(*) FROM posts WHERE author_id = %s AND approved = TRUE) AS posts,
+                   (SELECT COUNT(*) FROM comments WHERE author_id = %s) AS comments,
+                   (SELECT COUNT(*) FROM followers WHERE followed_id = %s) AS followers
+        ''', (tid, tid, tid)) or {}
+        history = db_fetch_all(
+            "SELECT reason, created_at FROM user_warnings WHERE user_id = %s ORDER BY created_at DESC LIMIT 10",
+            (tid,)) or []
+        return jsonify({'success': True, 'data': {
+            'id': tid,
+            'name': t['anonymous_name'] or 'Anonymous',
+            'sex': t['sex'],
+            'avatar': t['avatar_emoji'] or '',
+            'bio': (t.get('bio') or '').strip(),
+            'is_admin': bool(t['is_admin']),
+            'is_banned': bool(t['is_banned']),
+            'ban_reason': t.get('ban_reason') or '',
+            'banned_at': _mod_fmt_dt(t['banned_at']) if t.get('banned_at') else '',
+            'warnings': int(t['warning_count']),
+            'max_warnings': MAX_WARNINGS_BEFORE_BAN,
+            'stats': {'posts': int(stats.get('posts') or 0), 'comments': int(stats.get('comments') or 0),
+                      'followers': int(stats.get('followers') or 0)},
+            'history': [{'reason': h['reason'], 'date': _mod_fmt_dt(h['created_at'])} for h in history],
+        }})
+    except Exception as e:
+        logger.error(f"Mini-app admin user detail error: {e}")
+        return jsonify({'success': False, 'error': 'Could not load the user'}), 500
+
+
+@flask_app.route('/api/mini-app/admin/user/<target_id>/<action>', methods=['POST'])
+def mini_app_admin_user_action(target_id, action):
+    """ban / unban / warn / message. Runs the bot's own moderation helpers, so the rules are identical:
+    admins can't be banned or warned, 3 warnings auto-ban, the user gets a Telegram notice, and a ban
+    resolves that user's pending reports."""
+    try:
+        admin_id, err = _verified_user(require_admin=True)
+        if err:
+            return err
+        if action not in ('ban', 'unban', 'warn', 'message'):
+            return jsonify({'success': False, 'error': 'Unknown action'}), 404
+        target_id = str(target_id)
+        if not target_id.isdigit():
+            return jsonify({'success': False, 'error': 'Invalid user ID'}), 400
+        text = ((request.get_json(silent=True) or {}).get('text') or '').strip()
+        if action == 'warn' and not text:
+            return jsonify({'success': False, 'error': 'A reason is required for a warning.'}), 400
+        if action == 'message' and not text:
+            return jsonify({'success': False, 'error': "The message can't be empty."}), 400
+
+        if action == 'ban':
+            ok, msg = _run_with_bot(lambda ctx: mod_ban_user(ctx, target_id, admin_id, text))
+        elif action == 'unban':
+            ok, msg = _run_with_bot(lambda ctx: mod_unban_user(ctx, target_id, admin_id))
+        elif action == 'warn':
+            ok, msg = _run_with_bot(lambda ctx: mod_warn_user(ctx, target_id, admin_id, text))
+        else:
+            ok, msg = _run_with_bot(lambda ctx: mod_message_user(ctx, target_id, admin_id, text))
+        plain = _mod_plain(msg)
+        if not ok:
+            return jsonify({'success': False, 'error': plain or 'That did not work'}), 400
+        return jsonify({'success': True, 'message': plain})
+    except Exception as e:
+        logger.error(f"Mini-app admin user action error: {e}")
+        return jsonify({'success': False, 'error': 'Could not complete that action'}), 500
+
+
+# ---------- admin: broadcast ----------
+
+def _run_broadcast_job(job_id, user_ids, body):
+    """Runs in a background thread. Plain text (no parse mode, so a stray * or _ can't break a send),
+    about 20 messages a second, one retry after a Telegram 429."""
+    sent = failed = blocked = 0
+
+    def _save(status=None):
+        try:
+            if status:
+                db_execute("UPDATE admin_broadcast_jobs SET sent = %s, failed = %s, blocked = %s, status = %s, "
+                           "finished_at = CURRENT_TIMESTAMP WHERE job_id = %s", (sent, failed, blocked, status, job_id))
+            else:
+                db_execute("UPDATE admin_broadcast_jobs SET sent = %s, failed = %s, blocked = %s WHERE job_id = %s",
+                           (sent, failed, blocked, job_id))
+        except Exception as e:
+            logger.error(f"Broadcast {job_id}: could not save progress: {e}")
+
+    try:
+        for i, uid in enumerate(user_ids, 1):
+            resp = send_telegram_message_sync(uid, body, parse_mode=None)
+            if resp and not resp.get('ok') and resp.get('error_code') == 429:
+                wait = int((resp.get('parameters') or {}).get('retry_after') or 1)
+                time.sleep(min(wait, 30) + 1)
+                resp = send_telegram_message_sync(uid, body, parse_mode=None)
+            code = (resp or {}).get('error_code')
+            desc = ((resp or {}).get('description') or '').lower()
+            if resp and resp.get('ok'):
+                sent += 1
+            elif code == 403 or (code == 400 and ('chat not found' in desc or 'deactivated' in desc)):
+                blocked += 1          # blocked the bot, deactivated, or never started it
+            else:
+                failed += 1
+            if i % 25 == 0:
+                _save()
+            time.sleep(0.05)
+        _save('done')
+        logger.info(f"Broadcast {job_id} finished: sent={sent} failed={failed} blocked={blocked}")
+    except Exception as e:
+        logger.error(f"Broadcast {job_id} crashed: {e}")
+        _save('failed')
+
+
+def _broadcast_recipients(admin_id):
+    rows = db_fetch_all("SELECT user_id FROM users WHERE user_id <> %s AND COALESCE(is_banned, FALSE) = FALSE",
+                        (str(admin_id),)) or []
+    return [r['user_id'] for r in rows]
+
+
+@flask_app.route('/api/mini-app/admin/broadcast', methods=['GET'])
+def mini_app_admin_broadcast_status():
+    """How many people a broadcast would reach, plus one job's progress (?job_id=) or the latest job."""
+    try:
+        admin_id, err = _verified_user(require_admin=True)
+        if err:
+            return err
+        job_id = _parse_positive_int(request.args.get('job_id'))
+        cols = ("job_id, body, total, sent, failed, blocked, created_at, "
+                "CASE WHEN status = 'running' AND created_at <= LOCALTIMESTAMP - INTERVAL '2 hours' "
+                "THEN 'interrupted' ELSE status END AS status")
+        if job_id:
+            job = db_fetch_one(f"SELECT {cols} FROM admin_broadcast_jobs WHERE job_id = %s", (job_id,))
+        else:
+            job = db_fetch_one(f"SELECT {cols} FROM admin_broadcast_jobs ORDER BY job_id DESC LIMIT 1")
+        count = db_fetch_one("SELECT COUNT(*) AS n FROM users WHERE user_id <> %s AND COALESCE(is_banned, FALSE) = FALSE",
+                             (str(admin_id),))
+        out = None
+        if job:
+            body = job['body'] or ''
+            out = {
+                'id': job['job_id'], 'status': job['status'], 'total': job['total'],
+                'sent': job['sent'], 'failed': job['failed'], 'blocked': job['blocked'],
+                'done': int(job['sent'] or 0) + int(job['failed'] or 0) + int(job['blocked'] or 0),
+                'created': job['created_at'].strftime('%b %d, %H:%M') if job.get('created_at') else '',
+                'preview': body if len(body) <= 120 else body[:117] + '...',
+            }
+        return jsonify({'success': True, 'recipients': int(count['n']) if count else 0, 'job': out})
+    except Exception as e:
+        logger.error(f"Mini-app broadcast status error: {e}")
+        return jsonify({'success': False, 'error': 'Could not load the broadcast status'}), 500
+
+
+@flask_app.route('/api/mini-app/admin/broadcast', methods=['POST'])
+def mini_app_admin_broadcast_start():
+    """Send a text message to every user except the sender and banned users. Returns at once; the send
+    runs in the background and the app polls GET /admin/broadcast?job_id=. One broadcast at a time."""
+    try:
+        admin_id, err = _verified_user(require_admin=True)
+        if err:
+            return err
+        body = ((request.get_json(silent=True) or {}).get('text') or '').strip()
+        if not body:
+            return jsonify({'success': False, 'error': 'Write a message first.'}), 400
+        if len(body) > MOD_MESSAGE_MAX_LEN:
+            return jsonify({'success': False,
+                            'error': f'That message is too long ({len(body)} characters, the limit is {MOD_MESSAGE_MAX_LEN}).'}), 400
+        recipients = _broadcast_recipients(admin_id)
+        if not recipients:
+            return jsonify({'success': False, 'error': 'There are no users to send to.'}), 400
+
+        # Claim the single "running" slot atomically so a double tap can't start two sends.
+        job = db_fetch_one('''
+            INSERT INTO admin_broadcast_jobs (admin_id, body, total)
+            SELECT %s, %s, %s
+            WHERE NOT EXISTS (SELECT 1 FROM admin_broadcast_jobs
+                               WHERE status = 'running' AND created_at > LOCALTIMESTAMP - INTERVAL '2 hours')
+            RETURNING job_id
+        ''', (admin_id, body, len(recipients)))
+        if not job:
+            return jsonify({'success': False, 'error': 'Another broadcast is still sending. Wait for it to finish.'}), 409
+
+        threading.Thread(target=_run_broadcast_job, args=(job['job_id'], recipients, body),
+                         daemon=True, name=f"broadcast-{job['job_id']}").start()
+        logger.info(f"Admin {admin_id} started broadcast {job['job_id']} to {len(recipients)} users")
+        return jsonify({'success': True, 'job_id': job['job_id'], 'total': len(recipients)})
+    except Exception as e:
+        logger.error(f"Mini-app broadcast start error: {e}")
+        return jsonify({'success': False, 'error': 'Could not start the broadcast'}), 500
+
+
+if __name__ == "__main__":
     # The main() function already handles initializing the DB, 
     # starting the Flask server, and running the bot polling.
     main()
