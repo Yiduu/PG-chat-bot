@@ -1398,6 +1398,26 @@ PREMIUM_EMOJI_DEFAULTS = {
     'act_delete': '5879896690210639947',    # 🗑 Delete
     'act_edit': '5839380464116175529',      # ✏️ Edit
     'admin_panel': '5926783847453692661',   # 🛡 Admin Panel
+    # Category picker
+    'cat_done': '5920052658743283381',      # ✅ Done
+    'cat_selected': '5920052658743283381',  # ✅ a category that is selected
+    'cat_reset': '5839200986022812209',     # 🔄 Reset
+    'cat_StoryTime': '5897850551156084824',          # 📖
+    'cat_PrayForMe': '5906995262378741881',          # 🙋
+    'cat_Bible': '5778184941154078090',              # 📖
+    'cat_WorkLife': '5967389567781703494',           # 💼
+    'cat_SpiritualLife': '5931621672846103580',      # 💫
+    'cat_ChristianChallenges': '5843553939672274145',# ⚡️
+    'cat_Relationship': '5992453811510186287',       # ❤️
+    'cat_Marriage': '5967688845397855939',           # 🥂
+    'cat_Youth': '5992157823838984339',              # 🎓
+    'cat_Finance': '5811989245761426317',            # 💰
+    'cat_Other': '5875462364110787088',              # 🗂
+    'cat_WorshipMusic': '5891249688933305846',       # 🎵
+    'cat_Family': '6010362983320916413',             # 🏡
+    'cat_Testimony': '5897554554894946515',          # 🎤
+    'cat_AddictionRecovery': '5926783847453692661',  # 🛡
+    'cat_BibleQuestion': '5873121512445187130',      # ❓
 }
 PREMIUM_EMOJI_IDS = {}
 for _key, _default in PREMIUM_EMOJI_DEFAULTS.items():
@@ -1413,7 +1433,7 @@ PREMIUM_LABEL_KEYS = {
     'Back': 'nav_back', 'Back to Settings': 'nav_back', 'Back to Profile': 'nav_back',
     'Back to My Content': 'nav_back', 'Back to Preview': 'nav_back', 'Back to Inbox': 'nav_back',
     'Prev': 'nav_back', 'Previous': 'nav_back', 'Next': 'nav_next',
-    'Cancel': 'nav_cancel', 'No, Cancel': 'nav_cancel',
+    'Cancel': 'nav_cancel', 'No, Cancel': 'nav_cancel', 'Done': 'cat_done', 'Reset': 'cat_reset',
     'Delete': 'act_delete', 'Edit': 'act_edit',
     'Settings': 'menu_settings', 'Profile': 'menu_profile', 'My Profile': 'menu_profile',
     'View Profile': 'menu_profile', 'My Posts': 'menu_posts', 'Admin Panel': 'admin_panel',
@@ -2385,7 +2405,7 @@ def build_category_buttons():
         for j in range(2):
             if i + j < len(CATEGORIES):
                 name, code = CATEGORIES[i + j]
-                row.append(InlineKeyboardButton(name, callback_data=f'category_{code}'))
+                row.append(premium_button(name, f'cat_{code}', callback_data=f'category_{code}'))
         buttons.append(row)
     return InlineKeyboardMarkup(buttons) 
 
@@ -2394,12 +2414,13 @@ def build_multi_category_keyboard(selected_codes):
     keyboard = []
     row = []
     for display, code in CATEGORIES:
+        # Selected: premium check icon, or a plain check mark when there is no icon. Not selected:
+        # the category's own icon, or just its name.
         if code in selected_codes:
-            button_text = f"✅ {display}"
+            row.append(premium_button(f"✓ {display}", 'cat_selected', icon_text=display,
+                                      callback_data=f"cat_toggle_{code}"))
         else:
-            button_text = display
-            
-        row.append(InlineKeyboardButton(button_text, callback_data=f"cat_toggle_{code}"))
+            row.append(premium_button(display, f'cat_{code}', callback_data=f"cat_toggle_{code}"))
         if len(row) == 2:
             keyboard.append(row)
             row = []
@@ -2408,11 +2429,11 @@ def build_multi_category_keyboard(selected_codes):
     
     # Action row
     keyboard.append([
-        InlineKeyboardButton("✅ Done", callback_data="cat_done"),
-        InlineKeyboardButton("🔄 Reset", callback_data="cat_reset")
+        InlineKeyboardButton("Done", callback_data="cat_done"),
+        InlineKeyboardButton("Reset", callback_data="cat_reset")
     ])
     keyboard.append([
-        InlineKeyboardButton("❌ Cancel", callback_data="cancel_input")
+        InlineKeyboardButton("Cancel", callback_data="cancel_input")
     ])
     return InlineKeyboardMarkup(keyboard)
 
@@ -2887,7 +2908,7 @@ main_menu = ReplyKeyboardMarkup(
 # Cancel-only menu for input states
 cancel_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("❌ Cancel")]
+        [premium_kb_button("Cancel", 'nav_cancel')]
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
@@ -3170,7 +3191,7 @@ def get_cancel_reply_keyboard():
     """Create cancel button for reply keyboard (text) - ONLY for input states"""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("❌ Cancel")]
+            [premium_kb_button("Cancel", 'nav_cancel')]
         ],
         resize_keyboard=True,
         one_time_keyboard=True,  # Set to True so it disappears after use
@@ -3647,7 +3668,7 @@ async def send_post_confirmation(update: Update, context: ContextTypes.DEFAULT_T
         ])
 
     keyboard.append([
-        InlineKeyboardButton("❌ Cancel", callback_data='cancel_post'),
+        InlineKeyboardButton("Cancel", callback_data='cancel_post'),
         InlineKeyboardButton("✅ Submit", callback_data='confirm_post')
     ])
     
@@ -5532,7 +5553,7 @@ ONBOARDING_SEX_CHOICES = {
 }
 # Reply-keyboard buttons: typing one of these while the nickname question is open means the user
 # moved on, not that they want it as their nickname.
-_MENU_BUTTON_TEXTS = {"Share", "Chat Requests", "Profile", "Posts", "Top", "Settings", "Open App", "❌ Cancel"}
+_MENU_BUTTON_TEXTS = {"Share", "Chat Requests", "Profile", "Posts", "Top", "Settings", "Open App", "❌ Cancel", "Cancel"}
 
 
 async def _is_admin_user(user_id):
@@ -11470,7 +11491,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
 
     # Handle cancel command or main menu buttons while in an input state
-    main_menu_buttons = ["Share", "Chat Requests", "Profile", "Posts", "Top", "Settings", "Open App", "❌ Cancel", "/cancel"]
+    main_menu_buttons = ["Share", "Chat Requests", "Profile", "Posts", "Top", "Settings", "Open App", "❌ Cancel", "Cancel", "/cancel"]
     
     if text in main_menu_buttons or text.lower() in ("cancel", "❌ cancel"):
         # UNCONDITIONALLY reset all waiting states when a menu button is pressed
@@ -12301,7 +12322,7 @@ MOD_REASON_MAX_LEN = 300
 MOD_PENDING_TIMEOUT_SECONDS = 300  # how long the bot waits for a typed reason
 MOD_MESSAGE_MAX_LEN = 3500         # Telegram caps a message at 4096 chars; leave room for the header
 _MOD_MENU_BUTTONS = {"Share", "Chat Requests", "Profile", "Posts", "Top", "Settings",
-                     "Open App", "❌ Cancel", "/cancel"}
+                     "Open App", "❌ Cancel", "Cancel", "/cancel"}
 
 
 def _mod_clean_reason(text):
