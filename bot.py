@@ -1382,12 +1382,73 @@ PREMIUM_EMOJI_DEFAULTS = {
     'view_comments': '5886666250158870040', # 💬 comments
     'report': '5881702736843511327',        # ⚠️ report
     'reply': '5875082500023258804',         # ⬅️ reply
+    # Main menu (reply keyboard)
+    'menu_share': '5884343982816759327',    # ↗️ Share
+    'menu_requests': '5985817223749439505', # ✉️ Chat Requests
+    'menu_profile': '5771887475421090729',  # 👤 Profile
+    'menu_posts': '5886330010054168711',    # 📝 Posts
+    'menu_top': '5961051261204696786',      # 🥇 Top
+    'menu_settings': '5877260593903177342', # ⚙ Settings
+    'menu_app': '5985833664884250583',      # 📱 Open App
+    # Other inline buttons, matched by their exact label (see PREMIUM_LABEL_KEYS)
+    'nav_home': '5967822972931542886',      # 🏠 Main Menu
+    'nav_back': '5877536313623711363',      # ⬅️ Back
+    'nav_cancel': '5967355281057779430',    # ❌ Cancel
+    'nav_next': '5877468380125990242',      # ➡️ Next
+    'act_delete': '5879896690210639947',    # 🗑 Delete
+    'act_edit': '5839380464116175529',      # ✏️ Edit
+    'admin_panel': '5926783847453692661',   # 🛡 Admin Panel
 }
 PREMIUM_EMOJI_IDS = {}
 for _key, _default in PREMIUM_EMOJI_DEFAULTS.items():
     _val = (os.getenv(f'PREMIUM_EMOJI_{_key.upper()}') or _default).strip()
     PREMIUM_EMOJI_IDS[_key] = '' if _val == '0' else _val
 _ICON_FIELD = 'icon_custom_emoji_id'
+
+
+# Inline buttons that are built all over the bot with a plain label get their icon from here, in one
+# place, right before a message is sent (see _post_with_fallback). Exact label -> icon key.
+PREMIUM_LABEL_KEYS = {
+    'Main Menu': 'nav_home', 'Menu': 'nav_home',
+    'Back': 'nav_back', 'Back to Settings': 'nav_back', 'Back to Profile': 'nav_back',
+    'Back to My Content': 'nav_back', 'Back to Preview': 'nav_back', 'Back to Inbox': 'nav_back',
+    'Prev': 'nav_back', 'Previous': 'nav_back', 'Next': 'nav_next',
+    'Cancel': 'nav_cancel', 'No, Cancel': 'nav_cancel',
+    'Delete': 'act_delete', 'Edit': 'act_edit',
+    'Settings': 'menu_settings', 'Profile': 'menu_profile', 'My Profile': 'menu_profile',
+    'View Profile': 'menu_profile', 'My Posts': 'menu_posts', 'Admin Panel': 'admin_panel',
+}
+
+
+def premium_kb_button(text, key, **kwargs):
+    """KeyboardButton (reply keyboard) with the premium icon `key`; plain text button without one.
+    The text stays exactly the same, so the handlers that match on it keep working."""
+    emoji_id = PREMIUM_EMOJI_IDS.get(key) if PREMIUM_EMOJIS_ON else None
+    if emoji_id:
+        api_kwargs = dict(kwargs.pop('api_kwargs', None) or {})
+        api_kwargs[_ICON_FIELD] = emoji_id
+        return KeyboardButton(text, api_kwargs=api_kwargs, **kwargs)
+    return KeyboardButton(text, **kwargs)
+
+
+def _with_label_icons(markup):
+    """Copy of an inline keyboard with an icon added to every plain-labelled button that has none,
+    or None when nothing needed one."""
+    if not PREMIUM_EMOJIS_ON or not hasattr(markup, 'inline_keyboard'):
+        return None
+    rows, changed = [], False
+    for row in markup.inline_keyboard or []:
+        new_row = []
+        for btn in row:
+            d = btn.to_dict()
+            key = PREMIUM_LABEL_KEYS.get(d.get('text'))
+            emoji_id = PREMIUM_EMOJI_IDS.get(key) if key else None
+            if emoji_id and _ICON_FIELD not in d:
+                d[_ICON_FIELD] = emoji_id
+                changed = True
+            new_row.append(d)
+        rows.append(new_row)
+    return InlineKeyboardMarkup.de_json({'inline_keyboard': rows}, None) if changed else None
 
 
 def premium_button(text, key, icon_text=None, **kwargs):
@@ -1407,6 +1468,24 @@ def premium_button(text, key, icon_text=None, **kwargs):
 def _without_premium_icons(markup):
     """Copy of `markup` with icon_custom_emoji_id removed from every button, or None when it had
     none (buttons are immutable in PTB 20, so a new markup is built)."""
+    if hasattr(markup, 'keyboard'):  # reply keyboard (main menu)
+        rows, removed = [], False
+        for row in markup.keyboard or []:
+            new_row = []
+            for btn in row:
+                if hasattr(btn, 'to_dict') and getattr(btn, 'api_kwargs', None) and _ICON_FIELD in btn.api_kwargs:
+                    d = btn.to_dict()
+                    d.pop(_ICON_FIELD, None)
+                    btn = KeyboardButton.de_json(d, None)
+                    removed = True
+                new_row.append(btn)
+            rows.append(new_row)
+        if not removed:
+            return None
+        return ReplyKeyboardMarkup(
+            rows, resize_keyboard=markup.resize_keyboard, one_time_keyboard=markup.one_time_keyboard,
+            selective=markup.selective, input_field_placeholder=markup.input_field_placeholder,
+            is_persistent=markup.is_persistent)
     if not hasattr(markup, 'inline_keyboard'):
         return None
     rows, removed = [], False
@@ -1430,6 +1509,10 @@ def _install_premium_emoji_fallback():
 
     async def _post_with_fallback(self, endpoint, data=None, *args, **kwargs):
         global PREMIUM_EMOJIS_ON
+        if PREMIUM_EMOJIS_ON and data and data.get('reply_markup') is not None:
+            decorated = _with_label_icons(data['reply_markup'])
+            if decorated is not None:
+                data = {**data, 'reply_markup': decorated}
         try:
             return await original_post(self, endpoint, data, *args, **kwargs)
         except BadRequest as exc:
@@ -2762,10 +2845,10 @@ def get_main_menu(user_id: str):
         
         return ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton("Share"), KeyboardButton("Chat Requests")],
-                [KeyboardButton("Profile"), KeyboardButton("Posts")],
-                [KeyboardButton("Top"), KeyboardButton("Settings")],
-                [KeyboardButton("Open App", web_app=WebAppInfo(url=mini_app_url))]
+                [premium_kb_button("Share", 'menu_share'), premium_kb_button("Chat Requests", 'menu_requests')],
+                [premium_kb_button("Profile", 'menu_profile'), premium_kb_button("Posts", 'menu_posts')],
+                [premium_kb_button("Top", 'menu_top'), premium_kb_button("Settings", 'menu_settings')],
+                [premium_kb_button("Open App", 'menu_app', web_app=WebAppInfo(url=mini_app_url))]
             ],
             resize_keyboard=True,
             one_time_keyboard=False,
@@ -2777,9 +2860,9 @@ def get_main_menu(user_id: str):
         # Fallback to menu without Web App button if something fails
         return ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton("Share"), KeyboardButton("Chat Requests")],
-                [KeyboardButton("Profile"), KeyboardButton("Posts")],
-                [KeyboardButton("Top"), KeyboardButton("Settings")]
+                [premium_kb_button("Share", 'menu_share'), premium_kb_button("Chat Requests", 'menu_requests')],
+                [premium_kb_button("Profile", 'menu_profile'), premium_kb_button("Posts", 'menu_posts')],
+                [premium_kb_button("Top", 'menu_top'), premium_kb_button("Settings", 'menu_settings')]
             ],
             resize_keyboard=True,
             one_time_keyboard=False,
@@ -2790,9 +2873,9 @@ def get_main_menu(user_id: str):
 # Fallback for static contexts if needed (can be removed later)
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("Share"), KeyboardButton("Chat Requests")],
-        [KeyboardButton("Profile"), KeyboardButton("Posts")],
-        [KeyboardButton("Top"), KeyboardButton("Settings")]
+        [premium_kb_button("Share", 'menu_share'), premium_kb_button("Chat Requests", 'menu_requests')],
+        [premium_kb_button("Profile", 'menu_profile'), premium_kb_button("Posts", 'menu_posts')],
+        [premium_kb_button("Top", 'menu_top'), premium_kb_button("Settings", 'menu_settings')]
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
