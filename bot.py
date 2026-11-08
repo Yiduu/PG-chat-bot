@@ -13616,6 +13616,10 @@ body.light svg.av-svg{color:var(--gold-dark,#8a6d1f)}
 .me-row{display:flex;align-items:center;gap:16px;min-height:54px;padding:10px 0;border-bottom:1px solid var(--border)}
 .me-row.tap{cursor:pointer;-webkit-tap-highlight-color:transparent}
 .me-row.tap:active{background:var(--glass2)}
+.me-fold-body{display:none}
+.me-fold-body.open{display:block}
+.me-fold-h .me-chev{transition:transform .2s}
+.me-fold-h.open .me-chev{transform:rotate(90deg)}
 .me-text{flex:1;min-width:0}
 .me-title{font-size:16px;font-weight:500;color:var(--text)}
 .me-sub{font-size:13px;color:var(--text3);margin-top:2px;line-height:1.4}
@@ -14370,14 +14374,15 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
         <div class="me-row tap" onclick="go('winners')"><div class="me-text"><div class="me-title">Winners</div><div class="me-sub">Top contributors of recent weeks</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
       </div>
 
-      <div class="me-label">Preferences</div>
+      <div class="me-label">Settings</div>
       <div class="me-group">
+        <div class="me-row tap me-fold-h" id="fold-pref-h" role="button" aria-expanded="false" onclick="toggleFold('pref')"><div class="me-text"><div class="me-title">Preferences</div><div class="me-sub">Theme and notifications</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="me-fold-body" id="fold-pref">
         <div class="me-row"><div class="me-text"><div class="me-title">Theme</div></div><div class="seg" id="seg-theme" role="group" aria-label="Theme"><button type="button" data-v="auto" onclick="setTheme('auto')">Auto</button><button type="button" data-v="light" onclick="setTheme('light')">Light</button><button type="button" data-v="dark" onclick="setTheme('dark')">Dark</button></div></div>
         <div class="me-row"><div class="me-text"><div class="me-title">Reply notifications</div><div class="me-sub">The bot messages you when someone responds</div></div><label class="toggle"><input type="checkbox" id="set-notif" onchange="saveSetting('notifications',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-      </div>
-
-      <div class="me-label">Privacy</div>
-      <div class="me-group">
+        </div>
+        <div class="me-row tap me-fold-h" id="fold-priv-h" role="button" aria-expanded="false" onclick="toggleFold('priv')"><div class="me-text"><div class="me-title">Privacy</div><div class="me-sub">Profile, chats, aura and username</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+        <div class="me-fold-body" id="fold-priv">
         <div class="me-row"><div class="me-text"><div class="me-title">Public profile</div><div class="me-sub">Let others see your profile stats</div></div><label class="toggle"><input type="checkbox" id="set-priv" onchange="saveSetting('privacy_public',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row"><div class="me-text"><div class="me-title">Accept chat requests</div><div class="me-sub">Off: nobody can send you new requests. Existing chats stay open</div></div><label class="toggle"><input type="checkbox" id="set-accept-requests" onchange="saveSetting('accept_chat_requests',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row"><div class="me-text"><div class="me-title">Hide aura and points</div><div class="me-sub">Others see Hidden instead</div></div><label class="toggle"><input type="checkbox" id="set-hide-aura" onchange="saveSetting('hide_aura',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
@@ -14385,10 +14390,11 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
         <div class="me-row"><div class="me-text"><div class="me-title">Hide bio</div></div><label class="toggle"><input type="checkbox" id="set-hide-bio" onchange="saveSetting('hide_bio',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row"><div class="me-text"><div class="me-title">Hide follower count</div></div><label class="toggle"><input type="checkbox" id="set-hide-followers" onchange="saveSetting('hide_follower_count',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
         <div class="me-row" id="row-hide-role" style="display:none"><div class="me-text"><div class="me-title">Hide role</div><div class="me-sub">Don't show that you're an administrator</div></div><label class="toggle"><input type="checkbox" id="set-hide-role" onchange="saveSetting('hide_role',this)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+        <div class="me-note">You and administrators always see your full profile. Changes save as soon as you toggle them.</div>
+        </div>
       </div>
-      <div class="me-note">You and administrators always see your full profile. Changes save as soon as you toggle them.</div>
 
-      <div class="me-label">Community</div>
+      <div class="me-label">Help</div>
       <div class="me-group">
         <div class="me-row tap" onclick="inviteFriends()"><div class="me-text"><div class="me-title">Invite friends</div><div class="me-sub">Share the bot link in Telegram</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
         <div class="me-row tap" onclick="openSupport()"><div class="me-text"><div class="me-title">Contact support</div><div class="me-sub">Report a problem or ask a question</div></div><svg class="me-chev" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
@@ -16358,6 +16364,13 @@ function inviteFriends(){
   openTg('https://t.me/share/url?url='+encodeURIComponent(botLink)+'&text='+encodeURIComponent('Come join me on Christian Vent.'));
 }
 function openSupport(){openTg('https://t.me/YIDIDIYATAMIRUU')}
+function toggleFold(k){
+  const b=document.getElementById('fold-'+k),h=document.getElementById('fold-'+k+'-h');
+  if(!b||!h)return;
+  const o=!b.classList.contains('open');
+  b.classList.toggle('open',o);h.classList.toggle('open',o);h.setAttribute('aria-expanded',o?'true':'false');
+  hap('select');
+}
 function meBack(){go('settings',document.querySelector('.nav-item[data-page="settings"]'))}
 
 // ===== Me sub-screens: My Posts, My Comments, Followers & Following, Winners, Help =====
