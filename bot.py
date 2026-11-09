@@ -13755,7 +13755,10 @@ body.light svg.av-svg{color:var(--gold-dark,#8a6d1f)}
 .char-count{font-size:12px;color:var(--text3);text-align:right;margin:6px 0 12px}
 .vent-label{margin:2px 0 10px}
 .vent-num{font-size:12px;font-weight:600;color:var(--text3);letter-spacing:0.3px}
-.vent-sex{font-size:16px;line-height:1.25;margin-top:2px}
+.vent-sex{display:inline-flex;align-items:center;justify-content:center;font-size:22px;line-height:1;margin-top:4px;padding:4px 8px;border-radius:12px;background:rgba(var(--gold-rgb),.14);border:1.5px solid rgba(var(--gold-rgb),.5)}
+.sx{display:inline-flex;align-items:center;justify-content:center;font-size:1.25em;line-height:1;padding:.12em .3em;margin-right:.35em;border-radius:.6em;vertical-align:-.1em;border:1.5px solid}
+.sx-m{background:rgba(91,181,240,.2);border-color:#5BB5F0}
+.sx-f{background:rgba(240,138,170,.2);border-color:#F08AAA}
 .skel{
   background:linear-gradient(90deg,var(--bg2) 25%,var(--bg3) 50%,var(--bg2) 75%);
   background-size:200% 100%;animation:shimmer 1.4s infinite;
@@ -14780,7 +14783,8 @@ function avKey(v){if(!v)return '';const cp=String(v).codePointAt(0);return cp?cp
 function avEmoji(k){return String.fromCodePoint(parseInt(k,16))+(AV[k]&&AV[k].vs?String.fromCharCode(0xFE0F):'')}
 function avSvg(k){const a=AV[k];return '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="av-svg">'+a.g+'</svg>'}
 function avaHtml(v){const k=avKey(v);if(AV[k])return avSvg(k);if(!v)return avSvg('1f464');return esc(v)}
-function sexTag(s){return (s==='👨'||s==='👩')?s+' ':''}
+function sexTag(s){return (s==='👨'||s==='👩')?'<span class="sx '+(s==='👨'?'sx-m':'sx-f')+'">'+s+'</span>':''}
+function sexPlain(s){return (s==='👨'||s==='👩')?s+' ':''}
 
 const CATS = [
   ['StoryTime',ICONS.book,'Story Time'],
@@ -17200,7 +17204,7 @@ function openCR(pid,name,ava,sex){
     ava=c?(c.partner_avatar||c.partner_sex):null;
     sex=c?c.partner_sex:null;
   }
-  document.getElementById('cr-name').textContent=sexTag(sex)+name;
+  document.getElementById('cr-name').textContent=sexPlain(sex)+name;
   document.getElementById('cr-ava').innerHTML=avaHtml(ava);
   document.getElementById('chat-room').classList.add('open');
   document.getElementById('cr-txt').value='';
