@@ -1561,6 +1561,17 @@ def premium_kb_button(text, key, **kwargs):
     return KeyboardButton(text, **kwargs)
 
 
+def _label_icon_id(clean):
+    """Premium emoji id for a button label (leading emoji already removed), or None when no rule
+    matches. First matching PREMIUM_LABEL_RULES entry wins."""
+    if '◀' in clean or '▶' in clean:  # "Next ▶" already has its arrow
+        return None
+    for pattern, k in PREMIUM_LABEL_RULES:
+        if pattern.search(clean):
+            return PREMIUM_EMOJI_IDS.get(k) or None
+    return None
+
+
 def _with_label_icons(markup):
     """Copy of an inline keyboard in which every button without an icon gets the premium icon its
     label calls for (PREMIUM_LABEL_RULES), and loses the plain emoji at the start of its label.
@@ -1577,13 +1588,7 @@ def _with_label_icons(markup):
             text = d.get('text') or ''
             clean = _LEADING_EMOJI_RE.sub('', text) or text
             if _ICON_FIELD not in d:
-                key = None
-                if on and '\u25c0' not in clean and '\u25b6' not in clean:  # "Next \u25b6" already has its arrow
-                    for pattern, k in PREMIUM_LABEL_RULES:
-                        if pattern.search(clean):
-                            key = k
-                            break
-                emoji_id = PREMIUM_EMOJI_IDS.get(key) if key else None
+                emoji_id = _label_icon_id(clean) if on else None
                 if emoji_id:
                     d[_ICON_FIELD] = emoji_id
                     d['text'] = clean
@@ -1643,6 +1648,69 @@ def _without_premium_icons(markup):
             new_row.append(d)
         rows.append(new_row)
     return InlineKeyboardMarkup.de_json({'inline_keyboard': rows}, None) if removed else None
+
+
+def _with_label_icons_json(markup):
+    """_with_label_icons for a keyboard written as Bot API JSON ({"inline_keyboard": [[{...}]]}).
+    Several notifications (private messages, post approval, comment replies, chat requests) are sent
+    straight to the Bot API over HTTP, so they never pass through Bot._post and would otherwise go
+    out without icons. Returns a decorated copy, or None when nothing changed."""
+    if not isinstance(markup, dict) or not isinstance(markup.get('inline_keyboard'), list):
+        return None
+    on = PREMIUM_EMOJIS_ON
+    rows, changed = [], False
+    for row in markup['inline_keyboard']:
+        new_row = []
+        for btn in row:
+            d = dict(btn) if isinstance(btn, dict) else btn
+            if isinstance(d, dict) and _ICON_FIELD not in d:
+                text = d.get('text') or ''
+                clean = _LEADING_EMOJI_RE.sub('', text) or text
+                emoji_id = _label_icon_id(clean) if on else None
+                if emoji_id:
+                    d[_ICON_FIELD] = emoji_id
+                    d['text'] = clean
+                    changed = True
+                elif not on and clean != text:
+                    d['text'] = clean
+                    changed = True
+            new_row.append(d)
+        rows.append(new_row)
+    return {**markup, 'inline_keyboard': rows} if changed else None
+
+
+def _without_premium_icons_json(markup):
+    """Copy of a JSON inline keyboard with every icon_custom_emoji_id removed."""
+    rows = [[{k: v for k, v in b.items() if k != _ICON_FIELD} if isinstance(b, dict) else b for b in row]
+            for row in markup['inline_keyboard']]
+    return {**markup, 'inline_keyboard': rows}
+
+
+def _tg_post_json(url, payload, timeout):
+    """_tg_session.post(url, json=payload) for sends that carry a JSON inline keyboard: the buttons get
+    the same label icons as every other keyboard (not in the channel, where icons don't work). If
+    Telegram rejects the message and it had icons, it is resent once without them, so a bad icon
+    setup can never swallow a notification. Returns the requests response either way."""
+    global PREMIUM_EMOJIS_ON
+    decorated = None
+    markup = payload.get('reply_markup')
+    if isinstance(markup, dict) and str(payload.get('chat_id')) != str(CHANNEL_ID):
+        decorated = _with_label_icons_json(markup)
+        if decorated is not None:
+            payload = {**payload, 'reply_markup': decorated}
+    resp = _tg_session.post(url, json=payload, timeout=timeout)
+    if decorated is not None and resp.status_code == 400 and PREMIUM_EMOJIS_ON:
+        retry = {**payload, 'reply_markup': _without_premium_icons_json(decorated)}
+        logger.warning(f"Telegram rejected a keyboard with icons ({resp.text[:160]}); retrying without icons")
+        retry_resp = _tg_session.post(url, json=retry, timeout=timeout)
+        try:
+            if retry_resp.json().get('ok'):
+                PREMIUM_EMOJIS_ON = False   # a plain keyboard worked, so the icon setup is what is wrong
+                logger.warning("Premium emoji buttons disabled for this run (set PREMIUM_EMOJIS=0 or fix the IDs)")
+        except Exception:
+            pass
+        return retry_resp
+    return resp
 
 
 def _install_premium_emoji_fallback():
