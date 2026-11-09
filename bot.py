@@ -1504,11 +1504,12 @@ PREMIUM_LABEL_RULES = [(re.compile(p, re.I), k) for p, k in [
     (r'^(main menu|menu)$', 'nav_home'),
     (r'^(« )?(back|prev|previous|older|« admin panel|« moderation)\b', 'nav_back'),
     (r'^(next|newer)\b', 'ic_next'),
-    (r'^(cancel|no, cancel|dismiss|ignore|reject)\b', 'nav_cancel'),
+    (r'^(cancel|no, cancel|dismiss|ignore|reject|decline)\b', 'nav_cancel'),
     (r'^skip\b', 'ic_skip'),
     (r'^unblock|^unban|^unmark', 'ic_unblock'),
-    (r'^(block|yes, block|ban|banned users)\b', 'ic_block'),
+    (r'^(block|yes, block|ban|banned users|blocked users)\b', 'ic_block'),
     (r'^yes, report|^report|^warn|^review reports|^pending reports|^back to reports', 'ic_warn'),
+    (r'^mark explicit', 'ic_warn'),
     (r'^warning history', 'ic_history'),
     (r'^(delete|yes, delete|remove|recently deleted)', 'act_delete'),
     (r'^restore', 'ic_refresh'),
@@ -1517,7 +1518,9 @@ PREMIUM_LABEL_RULES = [(re.compile(p, re.I), k) for p, k in [
     (r'^reset|^refresh', 'ic_refresh'),
     (r'^(↩ )?reply', 'reply'),
     (r'^(chat now|chat list|monitor chats|back to conversation)', 'ic_chat'),
-    (r'^(send message|accept chat requests)', 'ic_mail'),
+    (r'^(send message|accept chat requests|request to chat)', 'ic_mail'),
+    (r'^chat requests', 'menu_requests'),
+    (r'^(chat|open chat)$', 'ic_chat'),
     (r'^inbox', 'ic_inbox'),
     (r'^(view post & comments|add/view comments|older comments|newer comments|my comments|view in post)', 'ic_chat'),
     (r'^(view leaderboard|view last winners)', 'ic_leader'),
@@ -1542,7 +1545,10 @@ PREMIUM_LABEL_RULES = [(re.compile(p, re.I), k) for p, k in [
     (r'^(name|sex|posting as|remove/hide sex)', 'ic_user'),
     (r'^avatar', 'ic_avatar'),
     (r'^show even more', 'ic_down'),
-    (r'^stop live', 'ic_live'),
+    (r'^(stop|go) live', 'ic_live'),
+    (r'^(male|female)$', 'ic_user'),
+    (r'^አዎ', 'ic_ok'),            # Amharic: Yes
+    (r'^የለውም', 'nav_cancel'),     # Amharic: No
 ]]
 
 # Leading emoji / arrow symbols (not the plain check mark used for a selected category).
@@ -1561,6 +1567,17 @@ def premium_kb_button(text, key, **kwargs):
     return KeyboardButton(text, **kwargs)
 
 
+def _label_icon_id(clean):
+    """Premium emoji id for a button label (leading emoji already removed), or None when no rule
+    matches. First matching PREMIUM_LABEL_RULES entry wins."""
+    if '◀' in clean or '▶' in clean:  # "Next ▶" already has its arrow
+        return None
+    for pattern, k in PREMIUM_LABEL_RULES:
+        if pattern.search(clean):
+            return PREMIUM_EMOJI_IDS.get(k) or None
+    return None
+
+
 def _with_label_icons(markup):
     """Copy of an inline keyboard in which every button without an icon gets the premium icon its
     label calls for (PREMIUM_LABEL_RULES), and loses the plain emoji at the start of its label.
@@ -1577,13 +1594,7 @@ def _with_label_icons(markup):
             text = d.get('text') or ''
             clean = _LEADING_EMOJI_RE.sub('', text) or text
             if _ICON_FIELD not in d:
-                key = None
-                if on and '\u25c0' not in clean and '\u25b6' not in clean:  # "Next \u25b6" already has its arrow
-                    for pattern, k in PREMIUM_LABEL_RULES:
-                        if pattern.search(clean):
-                            key = k
-                            break
-                emoji_id = PREMIUM_EMOJI_IDS.get(key) if key else None
+                emoji_id = _label_icon_id(clean) if on else None
                 if emoji_id:
                     d[_ICON_FIELD] = emoji_id
                     d['text'] = clean
@@ -1643,6 +1654,69 @@ def _without_premium_icons(markup):
             new_row.append(d)
         rows.append(new_row)
     return InlineKeyboardMarkup.de_json({'inline_keyboard': rows}, None) if removed else None
+
+
+def _with_label_icons_json(markup):
+    """_with_label_icons for a keyboard written as Bot API JSON ({"inline_keyboard": [[{...}]]}).
+    Several notifications (private messages, post approval, comment replies, chat requests) are sent
+    straight to the Bot API over HTTP, so they never pass through Bot._post and would otherwise go
+    out without icons. Returns a decorated copy, or None when nothing changed."""
+    if not isinstance(markup, dict) or not isinstance(markup.get('inline_keyboard'), list):
+        return None
+    on = PREMIUM_EMOJIS_ON
+    rows, changed = [], False
+    for row in markup['inline_keyboard']:
+        new_row = []
+        for btn in row:
+            d = dict(btn) if isinstance(btn, dict) else btn
+            if isinstance(d, dict) and _ICON_FIELD not in d:
+                text = d.get('text') or ''
+                clean = _LEADING_EMOJI_RE.sub('', text) or text
+                emoji_id = _label_icon_id(clean) if on else None
+                if emoji_id:
+                    d[_ICON_FIELD] = emoji_id
+                    d['text'] = clean
+                    changed = True
+                elif not on and clean != text:
+                    d['text'] = clean
+                    changed = True
+            new_row.append(d)
+        rows.append(new_row)
+    return {**markup, 'inline_keyboard': rows} if changed else None
+
+
+def _without_premium_icons_json(markup):
+    """Copy of a JSON inline keyboard with every icon_custom_emoji_id removed."""
+    rows = [[{k: v for k, v in b.items() if k != _ICON_FIELD} if isinstance(b, dict) else b for b in row]
+            for row in markup['inline_keyboard']]
+    return {**markup, 'inline_keyboard': rows}
+
+
+def _tg_post_json(url, payload, timeout):
+    """_tg_session.post(url, json=payload) for sends that carry a JSON inline keyboard: the buttons get
+    the same label icons as every other keyboard (not in the channel, where icons don't work). If
+    Telegram rejects the message and it had icons, it is resent once without them, so a bad icon
+    setup can never swallow a notification. Returns the requests response either way."""
+    global PREMIUM_EMOJIS_ON
+    decorated = None
+    markup = payload.get('reply_markup')
+    if isinstance(markup, dict) and str(payload.get('chat_id')) != str(CHANNEL_ID):
+        decorated = _with_label_icons_json(markup)
+        if decorated is not None:
+            payload = {**payload, 'reply_markup': decorated}
+    resp = _tg_session.post(url, json=payload, timeout=timeout)
+    if decorated is not None and resp.status_code == 400 and PREMIUM_EMOJIS_ON:
+        retry = {**payload, 'reply_markup': _without_premium_icons_json(decorated)}
+        logger.warning(f"Telegram rejected a keyboard with icons ({resp.text[:160]}); retrying without icons")
+        retry_resp = _tg_session.post(url, json=retry, timeout=timeout)
+        try:
+            if retry_resp.json().get('ok'):
+                PREMIUM_EMOJIS_ON = False   # a plain keyboard worked, so the icon setup is what is wrong
+                logger.warning("Premium emoji buttons disabled for this run (set PREMIUM_EMOJIS=0 or fix the IDs)")
+        except Exception:
+            pass
+        return retry_resp
+    return resp
 
 
 def _install_premium_emoji_fallback():
@@ -13293,6 +13367,8 @@ body.light #nav{background:rgba(245,243,240,0.92);}
 .reaction-btn .icon{width:15px;height:15px;vertical-align:-3px;margin-right:2px}
 .ca-btn .icon{width:13px;height:13px;vertical-align:-2px;margin-right:2px}
 .modal-btn .icon{width:15px;height:15px;vertical-align:-3px;margin-right:4px}
+.btn-gold .icon,.btn-ghost .icon{width:16px;height:16px;vertical-align:-3px;margin-right:6px}
+.btn-ghost.x-sbtn .icon{width:14px;height:14px;margin-right:5px}
 .nav-item.active{color:var(--gold)}
 .nav-item.active svg{transform:translateY(-1px)}
 .nav-ink{
@@ -14319,14 +14395,14 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
         <button type="button" class="media-attach-btn" id="vent-attach-btn" title="Attach a photo or file" aria-label="Attach a photo or file"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
         <input type="file" id="vent-file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.gif">
         <button type="button" class="voice-record-btn" id="vent-voice-btn" title="Press and hold to record" aria-label="Record a voice message. Press and hold."><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
-        <button class="btn-gold" id="submit-vent" style="flex:1">Post Anonymously</button>
+        <button class="btn-gold" id="submit-vent" data-ic="send" style="flex:1">Post Anonymously</button>
       </div>
     </div>
     <div class="page" id="page-feed">
       <div class="page-head-wrap"><div class="page-head" style="padding-top:24px"><div><h1>Community</h1><div class="page-head-sub">Read, reflect, respond</div></div></div></div>
       <div class="search-wrap"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><input id="search-inp" type="text" placeholder="Search vents…"></div>
       <div class="feed-cats" id="feed-cats"></div>
-      <div id="feed-list"></div><div id="feed-more" style="padding:16px;text-align:center;display:none"><button class="btn-ghost" id="load-more-btn">Load more</button></div>
+      <div id="feed-list"></div><div id="feed-more" style="padding:16px;text-align:center;display:none"><button class="btn-ghost" id="load-more-btn" data-ic="chevronDown">Load more</button></div>
     </div>
     <div class="page" id="page-detail">
       <button class="back-btn" onclick="detailBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Back</button>
@@ -14359,7 +14435,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
         <textarea id="ep-bio" class="ed-input" rows="3" maxlength="150" placeholder="A line or two about you" style="resize:none"></textarea>
         <div class="ed-hint">Your name and bio show next to your vents and replies. You can hide the bio under Privacy.</div>
       </div>
-      <div class="ed-actions"><button class="btn-gold" id="save-profile-btn" disabled>Save changes</button><button type="button" class="ed-cancel" onclick="meBack()">Cancel</button></div>
+      <div class="ed-actions"><button class="btn-gold" id="save-profile-btn" data-ic="check" disabled>Save changes</button><button type="button" class="ed-cancel" onclick="meBack()">Cancel</button></div>
     </div>
     <div class="page" id="page-settings">
       <div class="me-head"><h1>Me</h1></div>
@@ -14406,13 +14482,13 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
       <div class="x-head"><h1>My Posts</h1><div class="x-sub" id="mp-sub">Your vents</div></div>
       <div class="x-list" id="mp-list"></div>
-      <div class="x-more" id="mp-more" style="display:none"><button class="btn-ghost" onclick="loadMyPosts(false)">Load more</button></div>
+      <div class="x-more" id="mp-more" style="display:none"><button class="btn-ghost" data-ic="chevronDown" onclick="loadMyPosts(false)">Load more</button></div>
     </div>
     <div class="page" id="page-my-comments">
       <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
       <div class="x-head"><h1>My Comments</h1><div class="x-sub" id="mc-sub">Your responses</div></div>
       <div class="x-list" id="mc-list"></div>
-      <div class="x-more" id="mc-more" style="display:none"><button class="btn-ghost" onclick="loadMyComments(false)">Load more</button></div>
+      <div class="x-more" id="mc-more" style="display:none"><button class="btn-ghost" data-ic="chevronDown" onclick="loadMyComments(false)">Load more</button></div>
     </div>
     <div class="page" id="page-follows">
       <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
@@ -14422,7 +14498,7 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
         <button class="btn-ghost" id="fl-tab-following" onclick="setFollowTab('following')">Following</button>
       </div>
       <div class="x-list" id="fl-list"></div>
-      <div class="x-more" id="fl-more" style="display:none"><button class="btn-ghost" onclick="loadFollows(false)">Load more</button></div>
+      <div class="x-more" id="fl-more" style="display:none"><button class="btn-ghost" data-ic="chevronDown" onclick="loadFollows(false)">Load more</button></div>
     </div>
     <div class="page" id="page-winners">
       <button class="back-btn" onclick="meBack()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Me</button>
@@ -14445,8 +14521,8 @@ body.light{--warn:#b4532f;--warn-rgb:180,83,47}
       <div class="x-card"><h3>Your vents</h3><p>You can delete your own vent from its page. A notice stays in its place, and you can restore it for 24 hours.</p></div>
       <div class="x-card"><h3>Reports and warnings</h3><p>Use Report on any vent or response that does not belong. The reasons are Spam, Harassment or bullying, Inappropriate or explicit content, Someone may be in danger, and Other. Admins review reports. Three warnings lead to a ban.</p></div>
       <div class="x-card"><h3>Need a hand?</h3><p>Questions, problems, or feedback are welcome.</p>
-        <button type="button" class="modal-btn modal-btn-secondary" onclick="openSupport()">Contact support</button>
-        <button type="button" class="modal-btn modal-btn-secondary" onclick="inviteFriends()">Invite friends</button>
+        <button type="button" class="modal-btn modal-btn-secondary" data-ic="chat" onclick="openSupport()">Contact support</button>
+        <button type="button" class="modal-btn modal-btn-secondary" data-ic="share" onclick="inviteFriends()">Invite friends</button>
       </div>
       <div class="me-foot">Christian Vent · Built by <a href="https://t.me/YIDIDIYATAMIRUU">@YIDIDIYATAMIRUU</a></div>
     </div>
@@ -14562,8 +14638,28 @@ const ICONS = {
   close: ic('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
   reply: ic('<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>'),
   thumbsUp: ic('<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>'),
-  thumbsDown: ic('<path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/>')
+  thumbsDown: ic('<path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/>'),
+  send: ic('<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>'),
+  trash: ic('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>'),
+  pencil: ic('<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>'),
+  check: ic('<polyline points="20 6 9 17 4 12"/>'),
+  undo: ic('<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'),
+  eye: ic('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>'),
+  userPlus: ic('<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>'),
+  userCheck: ic('<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/>'),
+  ban: ic('<circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/>'),
+  unlock: ic('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>'),
+  share: ic('<path d="M4 12v7h16v-7"/><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/>'),
+  chevronDown: ic('<polyline points="6 9 12 15 18 9"/>'),
+  chevronUp: ic('<polyline points="18 15 12 9 6 15"/>')
 };
+// Static buttons carry data-ic="name"; this puts the matching ICONS icon in front of their text.
+function iconize(root){
+  (root||document).querySelectorAll('[data-ic]:not([data-ic-done])').forEach(b=>{
+    const k=b.getAttribute('data-ic');
+    if(ICONS[k]){b.insertAdjacentHTML('afterbegin',ICONS[k]);b.setAttribute('data-ic-done','1')}
+  });
+}
 // ===== Premium avatar set =====
 // Avatars are still STORED as the original emoji (the Telegram bot shows them too).
 // The mini app renders each one as a hand-drawn duotone SVG, looked up by the emoji's
@@ -14717,8 +14813,8 @@ function showSexGate(){
     m.innerHTML='<div class="cr-sheet" role="dialog" aria-modal="true" aria-labelledby="sex-gate-title">'+
       '<h3 id="sex-gate-title">Choose your sex</h3>'+
       '<p>Every vent shows its author sex under the vent number. Your name stays hidden. Pick one to continue.</p>'+
-      '<button type="button" class="modal-btn modal-btn-primary" data-sex="male">Male</button>'+
-      '<button type="button" class="modal-btn modal-btn-primary" data-sex="female">Female</button>'+
+      '<button type="button" class="modal-btn modal-btn-primary" data-sex="male">'+ICONS.man+' Male</button>'+
+      '<button type="button" class="modal-btn modal-btn-primary" data-sex="female">'+ICONS.woman+' Female</button>'+
       '<button type="button" class="modal-btn modal-btn-secondary" data-back="1">Not now, back to feed</button>'+
       '</div>';
     document.body.appendChild(m);
@@ -15604,6 +15700,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 
   const txt=document.getElementById('vent-txt');
   if(txt)txt.addEventListener('input',()=>{document.getElementById('vent-cnt').textContent=txt.value.length});
+  iconize();
   document.getElementById('submit-vent').addEventListener('click',submitVent);
   document.getElementById('load-more-btn').addEventListener('click',()=>loadFeed(true));
   document.getElementById('send-comment').addEventListener('click',postComment);
@@ -15667,7 +15764,7 @@ async function submitVent(){
     if(e.needsOnboarding){sexGateState='need';showSexGate().then(ok=>{if(ok)toast('Saved. Tap Post again.')})}
     else toast(e.message)
   }
-  finally{btn.disabled=false;btn.textContent='Post Anonymously'}
+  finally{btn.disabled=false;btn.innerHTML=ICONS.send+'Post Anonymously'}
 }
 
 async function loadFeed(append=false){
@@ -15705,7 +15802,7 @@ async function loadFeed(append=false){
   finally{
     feedLoading=false;
     const loadBtn=document.getElementById('load-more-btn');
-    loadBtn.disabled=false;loadBtn.textContent='Load more';
+    loadBtn.disabled=false;loadBtn.innerHTML=ICONS.chevronDown+'Load more';
   }
 }
 
@@ -15796,7 +15893,7 @@ async function openPost(id, reveal){
       document.getElementById('detail-post').innerHTML=`
         <div class="post-card" style="cursor:default;margin-bottom:0;border-radius:0;margin:0;border-left:none;border-right:none;border-top:none;background:var(--glass2)">
           <div style="font-size:16px;line-height:1.65;color:var(--text3);font-style:italic;padding:16px;display:flex;align-items:center;gap:8px;"><span style="width:18px;height:18px;flex-shrink:0;display:inline-flex">${ICONS.alert}</span> ${esc(delNote(p,'post'))}</div>
-          ${p.deleted_by==='author'&&String(p.author_id)===String(UID)?`<div style="padding:0 16px 16px"><button class="btn-ghost" onclick="restoreVent(${p.id})">Restore vent</button></div>`:''}
+          ${p.deleted_by==='author'&&String(p.author_id)===String(UID)?`<div style="padding:0 16px 16px"><button class="btn-ghost" onclick="restoreVent(${p.id})">${ICONS.undo} Restore vent</button></div>`:''}
         </div>`;
       await fetchAndRenderComments(id,null,revealParam);
       return;
@@ -15810,7 +15907,7 @@ async function openPost(id, reveal){
             <span class="sens-chip" style="margin-bottom:12px">18+ SENSITIVE</span>
             <div style="font-size:19px;font-weight:700;color:var(--text);margin-bottom:8px">This post may be difficult to read</div>
             <div style="font-size:14px;line-height:1.55;color:var(--text2);margin:0 auto 18px;max-width:290px">The author marked it as sensitive. It may not be suitable for all viewers, and replies stay hidden until you view it.</div>
-            <button class="btn-gold" onclick="openPost(${id},true)">View post</button>
+            <button class="btn-gold" onclick="openPost(${id},true)">${ICONS.eye} View post</button>
           </div>
         </div>`;
       document.getElementById('detail-comments').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3);font-size:14px">Comments are hidden until you view the post.</div>';
@@ -15838,7 +15935,7 @@ async function openPost(id, reveal){
         ${p.media_id?renderMedia(p.media_type,p.media_id):''}
         <div>
           ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
-          ${String(p.author_id)===String(UID)?`<button class="ca-btn" style="margin-top:6px" onclick="delVent(${p.id})">Delete vent</button>`:`<button class="ca-btn" style="margin-top:6px" onclick="openReport('post',${p.id})">${ICONS.alert} Report</button>`}
+          ${String(p.author_id)===String(UID)?`<button class="ca-btn" style="margin-top:6px" onclick="delVent(${p.id})">${ICONS.trash} Delete vent</button>`:`<button class="ca-btn" style="margin-top:6px" onclick="openReport('post',${p.id})">${ICONS.alert} Report</button>`}
         </div>
       </div>`;
     await fetchAndRenderComments(id,p.author_id,revealParam);
@@ -15893,9 +15990,9 @@ function renderComments(comments,postAuthorId){
     }
     return `<div class="comment-item" id="cmt-${c.id}"><div class="ava" style="width:30px;height:30px;font-size:14px">${avaHtml(c.author?.sex)}</div><div class="comment-body"><div class="comment-name"${c.author?.is_admin ? '' : ` onclick="showUserProfile('${c.author_id}')"`}>${nameBadge}${esc(name)} <span style="font-size:11px;color:var(--text3)">${esc(c.time_ago||'')}</span></div>${cmtQuoteHtml(c.reply_to)}<div class="comment-text">${esc(c.content)}</div>${c.media_id?renderMedia(c.media_type,c.media_id):''}
       ${renderReactionButtons(c.id, 'comment', c.reactions?.counts || {}, c.reactions?.user_reaction)}
-      <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`${c.media_id?'':`<button class="ca-btn" onclick="editComment(${c.id})">Edit</button>`}<button class="ca-btn" onclick="delComment(${c.id})">Delete</button>`:`<button class="ca-btn" onclick="openReport('comment',${c.id})">${ICONS.alert} Report</button>`}</div></div></div>`;
+      <div class="comment-actions"><button class="ca-btn" onclick="replyTo(${c.id})">${ICONS.reply} Reply</button>${mine?`${c.media_id?'':`<button class="ca-btn" onclick="editComment(${c.id})">${ICONS.pencil} Edit</button>`}<button class="ca-btn" onclick="delComment(${c.id})">${ICONS.trash} Delete</button>`:`<button class="ca-btn" onclick="openReport('comment',${c.id})">${ICONS.alert} Report</button>`}</div></div></div>`;
   };
-  const olderBtn=cmtHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderComments()">Load older responses</button></div>':'';
+  const olderBtn=cmtHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderComments()">'+ICONS.chevronUp+'Load older responses</button></div>':'';
   box.innerHTML=olderBtn+roots.map(c=>rr(c,0)).join('')+vrPendHtmlFor('comment');
 }
 
@@ -16396,7 +16493,7 @@ function myPostCard(p){
     :p.status==='deleted'?'<span class="x-chip deleted">'+(p.deleted_by==='admin'?'Removed by admin':'Deleted')+'</span>':'';
   const cats=(p.categories||[]).map(c=>'<span class="pill pill-sm">'+esc(catLabel(c))+'</span>').join('');
   const attrs=p.status==='pending'?' style="margin:0 0 10px;cursor:default"':` style="margin:0 0 10px" onclick="openPostFrom('my-posts',${id})"`;
-  const restore=p.restorable?`<button type="button" class="btn-ghost x-sbtn" style="margin-left:auto" onclick="event.stopPropagation();restoreFromList(${id})">Restore</button>`:'';
+  const restore=p.restorable?`<button type="button" class="btn-ghost x-sbtn" style="margin-left:auto" onclick="event.stopPropagation();restoreFromList(${id})">${ICONS.undo}Restore</button>`:'';
   const n=Number(p.comments)||0;
   return `<div class="post-card"${attrs}>
     <div class="x-meta" style="margin:0 0 8px"><span style="font-weight:600;color:var(--text2);margin-right:8px">${esc(ventNo(p.vent_number))}</span>${chip}${p.explicit?'<span class="x-chip">18+</span>':''}</div>
@@ -16484,7 +16581,7 @@ function followRow(u){
   return `<div class="x-row">
     <div class="ava" style="width:42px;height:42px;cursor:pointer" onclick="openProfileFromList('${id}')">${avaHtml(u.avatar||u.sex)}</div>
     <div class="x-main" onclick="openProfileFromList('${id}')"><div class="x-name">${u.weekly_badge?esc(u.weekly_badge)+' ':''}${sexTag(u.sex)}${esc(u.name)}</div></div>
-    <button type="button" class="btn-ghost x-sbtn" id="flb-${id}" onclick="flToggle('${id}',${u.i_follow?'false':'true'})">${u.i_follow?'Following':'Follow'}</button>
+    <button type="button" class="btn-ghost x-sbtn" id="flb-${id}" onclick="flToggle('${id}',${u.i_follow?'false':'true'})">${u.i_follow?ICONS.userCheck+'Following':ICONS.userPlus+'Follow'}</button>
   </div>`;
 }
 async function flToggle(id,want){
@@ -16492,7 +16589,7 @@ async function flToggle(id,want){
   try{
     await api('/api/mini-app/follow',{method:'POST',body:JSON.stringify({user_id:UID,target_id:id,follow:want})});
     hap('select');
-    if(b){b.textContent=want?'Following':'Follow';b.setAttribute('onclick',"flToggle('"+id+"',"+(want?'false':'true')+")")}
+    if(b){b.innerHTML=want?ICONS.userCheck+'Following':ICONS.userPlus+'Follow';b.setAttribute('onclick',"flToggle('"+id+"',"+(want?'false':'true')+")")}
     if(flCounts.loaded){flCounts.following=Math.max(0,flCounts.following+(want?1:-1));syncFollowTabs()}
   }catch(e){toast(e.message||'Could not update follow')}
   finally{if(b)b.disabled=false}
@@ -16649,11 +16746,11 @@ function renderAdminUser(u){
   let actions='';
   if(!u.is_admin){
     actions='<div class="x-field">'
-      +(u.is_banned?'':'<button type="button" class="modal-btn modal-btn-secondary" onclick="adminWarn()">Warn</button>')
+      +(u.is_banned?'':'<button type="button" class="modal-btn modal-btn-secondary" onclick="adminWarn()">'+ICONS.alert+' Warn</button>')
       +(u.is_banned
-        ?'<button type="button" class="modal-btn modal-btn-secondary" onclick="adminUnban()">Unban</button>'
-        :'<button type="button" class="modal-btn x-danger" onclick="adminBan()">Ban</button>')
-      +'<button type="button" class="modal-btn modal-btn-secondary" onclick="adminMessage()">Send message</button></div>';
+        ?'<button type="button" class="modal-btn modal-btn-secondary" onclick="adminUnban()">'+ICONS.unlock+' Unban</button>'
+        :'<button type="button" class="modal-btn x-danger" onclick="adminBan()">'+ICONS.ban+' Ban</button>')
+      +'<button type="button" class="modal-btn modal-btn-secondary" onclick="adminMessage()">'+ICONS.mail+' Send message</button></div>';
   }
   box.innerHTML=AU_BACK+`
     <div class="x-card">
@@ -16679,7 +16776,7 @@ function renderAdminUser(u){
 function adminPrompt(o){
   crOpenSheet('<h3>'+esc(o.title)+'</h3><p>'+esc(o.text||'')+'</p>'
     +(o.input?'<textarea id="adm-ptxt" class="ed-input" rows="4" maxlength="'+(o.max||300)+'" placeholder="'+esc(o.placeholder||'')+'" style="resize:none"></textarea>':'')
-    +'<button type="button" class="modal-btn '+(o.danger?'solid-danger':'modal-btn-primary')+'" id="adm-pok">'+esc(o.ok)+'</button>'
+    +'<button type="button" class="modal-btn '+(o.danger?'solid-danger':'modal-btn-primary')+'" id="adm-pok">'+(o.icon&&ICONS[o.icon]?ICONS[o.icon]+' ':'')+esc(o.ok)+'</button>'
     +'<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
   const ok=document.getElementById('adm-pok');
   ok.onclick=async()=>{
@@ -16699,18 +16796,18 @@ async function adminDo(action,text){
 function adminWarn(){
   const lim=auUser&&auUser.max_warnings?(' '+auUser.max_warnings+' warnings lead to an automatic ban.'):'';
   adminPrompt({title:'Warn this user?',text:'They get a warning message from the bot.'+lim,input:true,required:true,
-    requiredMsg:'Add a reason for the warning',placeholder:'Reason (the user will see it)',max:300,ok:'Send warning',run:t=>adminDo('warn',t)});
+    requiredMsg:'Add a reason for the warning',placeholder:'Reason (the user will see it)',max:300,ok:'Send warning',icon:'alert',run:t=>adminDo('warn',t)});
 }
 function adminBan(){
   adminPrompt({title:'Ban this user?',text:'They lose access to the bot and the app. A reason is optional, and the user will see it.',input:true,
-    placeholder:'Reason (optional)',max:300,ok:'Ban user',danger:true,run:t=>adminDo('ban',t)});
+    placeholder:'Reason (optional)',max:300,ok:'Ban user',icon:'ban',danger:true,run:t=>adminDo('ban',t)});
 }
 function adminUnban(){
-  adminPrompt({title:'Unban this user?',text:'They can use the bot and the app again.',ok:'Unban',run:()=>adminDo('unban','')});
+  adminPrompt({title:'Unban this user?',text:'They can use the bot and the app again.',ok:'Unban',icon:'unlock',run:()=>adminDo('unban','')});
 }
 function adminMessage(){
   adminPrompt({title:'Message this user',text:'Sent by the bot as a message from the admins.',input:true,required:true,
-    requiredMsg:'Write a message first',placeholder:'Your message',max:3500,ok:'Send message',run:t=>adminDo('message',t)});
+    requiredMsg:'Write a message first',placeholder:'Your message',max:3500,ok:'Send message',icon:'mail',run:t=>adminDo('message',t)});
 }
 
 // ---- Broadcast ----
@@ -16750,7 +16847,7 @@ async function loadAdminBroadcast(){
       <p>Sends a text message from the bot to every user except banned users and you. Plain text only. It goes out right away.</p>
       <textarea id="bc-text" class="ed-input" rows="6" maxlength="3500" placeholder="Write your message…" style="resize:none;margin-top:12px" oninput="bcCount()"></textarea>
       <div class="ed-hint" id="bc-count">0/3500</div>
-      <button type="button" class="btn-gold" id="bc-send" style="margin-top:14px" onclick="bcReview()">Review and send</button></div>
+      <button type="button" class="btn-gold" id="bc-send" style="margin-top:14px" onclick="bcReview()">${ICONS.megaphone} Review and send</button></div>
       <div id="bc-status"></div>`;
   }
   await bcTick();
@@ -16761,7 +16858,7 @@ function bcReview(){
   if(!bcRecipients){toast('There are no users to send to');return}
   crOpenSheet('<h3>Send to '+bcRecipients+(bcRecipients===1?' person?':' people?')+'</h3><p>This cannot be undone. Preview:</p>'
     +'<div class="x-quote" style="white-space:pre-wrap;max-height:30vh;overflow:auto">'+esc(t)+'</div>'
-    +'<button type="button" class="modal-btn solid-danger" id="bc-go">Send now</button>'
+    +'<button type="button" class="modal-btn solid-danger" id="bc-go">'+ICONS.megaphone+' Send now</button>'
     +'<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
   document.getElementById('bc-go').onclick=()=>bcSend(t);
 }
@@ -16875,7 +16972,7 @@ async function checkAdminStatus(){
               <button class="btn-ghost" id="au-f-banned" onclick="adminUsersFilter('banned')">Banned</button>
             </div>
             <div class="x-list" id="admin-users-list" style="padding-top:0"></div>
-            <div class="x-more" id="admin-users-more" style="display:none"><button class="btn-ghost" onclick="loadAdminUsers(false)">Load more</button></div>
+            <div class="x-more" id="admin-users-more" style="display:none"><button class="btn-ghost" onclick="loadAdminUsers(false)">${ICONS.chevronDown} Load more</button></div>
           </div>
           <div id="admin-user-detail" style="display:none"></div>
         </div>
@@ -16921,9 +17018,9 @@ async function loadAdminReports(page){
       <div class="rep-reason">${esc(r.reason)}</div>
       <div class="rep-prev">${esc(r.preview)}</div>
       <div class="rep-btns">
-        <button class="modal-btn modal-btn-secondary" onclick="adminReportAct(${r.id},'dismiss')">Dismiss</button>
-        ${r.type==='user'?'':`<button class="modal-btn rep-del" onclick="adminAsk(${r.id},'delete')">Delete</button>`}
-        <button class="modal-btn modal-btn-secondary" onclick="adminAsk(${r.id},'warn')">Warn</button>
+        <button class="modal-btn modal-btn-secondary" onclick="adminReportAct(${r.id},'dismiss')">${ICONS.close} Dismiss</button>
+        ${r.type==='user'?'':`<button class="modal-btn rep-del" onclick="adminAsk(${r.id},'delete')">${ICONS.trash} Delete</button>`}
+        <button class="modal-btn modal-btn-secondary" onclick="adminAsk(${r.id},'warn')">${ICONS.alert} Warn</button>
       </div></div>`).join('');
     const nav = `<div style="display:flex;justify-content:center;gap:10px;padding:4px 0 12px">
       ${adminReportsPage>1?`<button class="btn-ghost" onclick="loadAdminReports(${adminReportsPage-1})">◀ Prev</button>`:''}
@@ -16938,7 +17035,7 @@ function adminAsk(id, action){
   const del = action==='delete';
   crOpenSheet('<h3>'+(del?'Remove this content?':'Warn the author?')+'</h3><p>'+
     (del?'The author is notified. A removed vent leaves a placeholder in the feed and the channel.':'The author gets a warning. Repeated warnings lead to a ban.')+'</p>'+
-    '<button type="button" class="modal-btn solid-danger" onclick="crCloseSheet();adminReportAct('+id+',&quot;'+action+'&quot;)">'+(del?'Remove':'Send warning')+'</button>'+
+    '<button type="button" class="modal-btn solid-danger" onclick="crCloseSheet();adminReportAct('+id+',&quot;'+action+'&quot;)">'+(del?ICONS.trash+' Remove':ICONS.alert+' Send warning')+'</button>'+
     '<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
 }
 async function adminReportAct(id, action){
@@ -17038,7 +17135,7 @@ async function fetchAdminTranscript(scroll=false, preserveAnchor=false){
     const prevScrollHeight = box.scrollHeight;
     const prevScrollTop = box.scrollTop;
     const olderBtn = adminTranscriptHasMore
-      ? `<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderAdminMessages()" id="admin-load-older-btn">Load older messages</button></div>`
+      ? `<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderAdminMessages()" id="admin-load-older-btn">${ICONS.chevronUp} Load older messages</button></div>`
       : '';
     box.innerHTML = olderBtn + (d.data || []).map(m => {
       if(m.is_deleted){
@@ -17067,7 +17164,7 @@ function renderChatList(){
   const list=document.getElementById('chats-list');
   const unread=chatsCache.reduce((a,c)=>a+(c.unread_count||0),0);
   document.getElementById('chat-unread-label').textContent=unread?`${unread} unread message${unread>1?'s':''}`:'All caught up';
-  const more=chatsHasMore?'<div style="text-align:center;padding:12px"><button class="btn-ghost" onclick="loadMoreChats()">Load more conversations</button></div>':'';
+  const more=chatsHasMore?'<div style="text-align:center;padding:12px"><button class="btn-ghost" onclick="loadMoreChats()">'+ICONS.chevronDown+'Load more conversations</button></div>':'';
   list.innerHTML=chatRowsHtml(chatsCache)+more;
 }
 async function loadChats(){
@@ -17128,7 +17225,7 @@ function crRenderMsgs(scroll,preserveAnchor){
   const box=document.getElementById('cr-msgs');
   const wasBottom=box.scrollHeight-box.scrollTop<=box.clientHeight+80;
   const prevScrollHeight=box.scrollHeight, prevScrollTop=box.scrollTop;
-  const olderBtn=crHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderCRMsgs()">Load older messages</button></div>':'';
+  const olderBtn=crHasMore?'<div style="text-align:center;padding:4px 0 12px"><button class="btn-ghost" onclick="loadOlderCRMsgs()">'+ICONS.chevronUp+'Load older messages</button></div>':'';
   box.innerHTML=olderBtn+(crMsgsCache.length||vrPendings.some(x=>x.kind==='chat')?'':crEmptyHtml())+crMsgsCache.map(m=>{
     if(m.is_deleted){
       return `<div class="msg-row ${m.is_mine?'me':'them'}" id="msg-${m.id}"><div class="msg-bubble msg-deleted">Message deleted</div><div class="msg-time">${esc(m.timestamp||'')}</div></div>`;
@@ -17499,11 +17596,11 @@ function crApplyChatState(){
   const name=esc(crPartnerName());
   let html='';
   if(crChat.blocked_by_me){
-    html='<div class="cr-statebar-txt">You blocked '+name+'</div><button type="button" class="modal-btn modal-btn-primary" onclick="crDoUnblock()">Unblock</button>';
+    html='<div class="cr-statebar-txt">You blocked '+name+'</div><button type="button" class="modal-btn modal-btn-primary" onclick="crDoUnblock()">'+ICONS.unlock+' Unblock</button>';
   }else if(crChat.can_chat===false){
     html=crChat.request_pending
       ?'<div class="cr-statebar-txt">Chat request sent. You can chat once '+name+' accepts.</div>'
-      :'<div class="cr-statebar-txt">This chat was deleted.</div><button type="button" class="modal-btn modal-btn-primary" onclick="crRequestAgain()">Send chat request</button>';
+      :'<div class="cr-statebar-txt">This chat was deleted.</div><button type="button" class="modal-btn modal-btn-primary" onclick="crRequestAgain()">'+ICONS.mail+' Send chat request</button>';
   }
   if(html){
     if(bar.dataset.k!==html){ bar.innerHTML=html; bar.dataset.k=html; }
@@ -17578,20 +17675,20 @@ async function crShareMyUsername(){
 function crAskClear(){
   const n=esc(crPartnerName());
   crOpenSheet('<h3>Clear history</h3><p>Choose who loses these messages. This cannot be undone.</p>'+
-    '<button type="button" class="modal-btn danger" onclick="crDoClearSelf()">Delete just for me</button>'+
-    '<button type="button" class="modal-btn danger" onclick="crDoClearBoth()">Delete for me and '+n+'</button>'+
+    '<button type="button" class="modal-btn danger" onclick="crDoClearSelf()">'+ICONS.trash+' Delete just for me</button>'+
+    '<button type="button" class="modal-btn danger" onclick="crDoClearBoth()">'+ICONS.trash+' Delete for me and '+n+'</button>'+
     '<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
 }
 function crAskDelete(){
   const n=esc(crPartnerName());
   crOpenSheet('<h3>Delete chat with '+n+'?</h3><p>The chat and all its messages are removed for both of you. To talk again, a new chat request has to be sent and accepted.</p>'+
-    '<button type="button" class="modal-btn solid-danger" onclick="crDoDelete()">Delete chat</button>'+
+    '<button type="button" class="modal-btn solid-danger" onclick="crDoDelete()">'+ICONS.trash+' Delete chat</button>'+
     '<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
 }
 function crAskBlock(){
   const n=esc(crPartnerName());
   crOpenSheet('<h3>Block '+n+'?</h3><p>They will not be able to message you or send you chat requests. You can unblock them any time from this chat.</p>'+
-    '<button type="button" class="modal-btn solid-danger" onclick="crDoBlock()">Block</button>'+
+    '<button type="button" class="modal-btn solid-danger" onclick="crDoBlock()">'+ICONS.ban+' Block</button>'+
     '<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
 }
 function crDoClearSelf(){ crDoClear('self'); }
@@ -17684,7 +17781,7 @@ async function showUserProfile(userId){
     }else if(requestStatus==='pending'){
       buttonHtml = `<button class="modal-btn modal-btn-secondary" disabled style="opacity:0.6">${ICONS.clock} Request Pending</button>`;
     }else if(requestStatus==='closed'){
-      buttonHtml = `<button class="modal-btn modal-btn-secondary" disabled style="opacity:0.6">Not accepting requests</button>`;
+      buttonHtml = `<button class="modal-btn modal-btn-secondary" disabled style="opacity:0.6">${ICONS.ban} Not accepting requests</button>`;
     }else{
       buttonHtml = `<button class="modal-btn modal-btn-primary" id="chatActionBtn">${ICONS.mail} Request to Chat</button>`;
     }
@@ -17707,7 +17804,7 @@ async function showUserProfile(userId){
         ${u.bio?`<div class="modal-bio">${esc(u.bio)}</div>`:''}
         <div class="modal-stats"><div class="modal-stat"><div class="modal-stat-num">${u.stats?.posts||0}</div><div class="modal-stat-lbl">Vents</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.comments||0}</div><div class="modal-stat-lbl">Replies</div></div><div class="modal-stat"><div class="modal-stat-num">${u.stats?.followers||0}</div><div class="modal-stat-lbl">Followers</div></div></div>
         ${buttonHtml}
-        <button class="modal-btn modal-btn-secondary" onclick="toggleFollow('${esc(u.id)}',${!u.is_following})">${u.is_following?'Following ✓':'Follow'}</button>
+        <button class="modal-btn modal-btn-secondary" onclick="toggleFollow('${esc(u.id)}',${!u.is_following})">${u.is_following?ICONS.userCheck+' Following':ICONS.userPlus+' Follow'}</button>
       `;
     }
     
@@ -17976,7 +18073,7 @@ def send_telegram_message_sync(chat_id, text, parse_mode='HTML', reply_markup=No
             payload["parse_mode"] = parse_mode
         if reply_markup:
             payload["reply_markup"] = reply_markup
-        resp = _tg_session.post(url, json=payload, timeout=10)
+        resp = _tg_post_json(url, payload, 10)
         return resp.json()
     except Exception as e:
         logger.error(f"send_telegram_message_sync failed: {e}")
@@ -18007,7 +18104,7 @@ def send_telegram_media_sync(chat_id, media_type, media_id, caption=None, parse_
         payload["reply_markup"] = reply_markup
 
     try:
-        resp = _tg_session.post(url, json=payload, timeout=15)
+        resp = _tg_post_json(url, payload, 15)
         result = resp.json()
         if result.get('ok'):
             if caption and media_type == 'sticker':
@@ -18119,7 +18216,7 @@ def edit_native_pm_notification_sync(receiver_id, notif_message_id, sender_id, n
         # Without this Telegram strips the buttons from the edited notification.
         payload["reply_markup"] = {"inline_keyboard": pm_notification_rows(receiver_id, sender_id)}
 
-        resp = _tg_session.post(url, json=payload, timeout=10)
+        resp = _tg_post_json(url, payload, 10)
         result = resp.json()
         if not result.get('ok'):
             logger.warning(f"edit_native_pm_notification_sync failed: {result}")
@@ -19875,7 +19972,7 @@ def mini_app_send_chat_request():
             },
             "parse_mode": "Markdown"
         }
-        _tg_session.post(url, json=payload, timeout=5)
+        _tg_post_json(url, payload, 5)
     except Exception as e:
         logger.error(f"Failed to send chat request notification: {e}")
     
