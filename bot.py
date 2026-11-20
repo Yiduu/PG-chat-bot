@@ -12465,7 +12465,10 @@ async def set_bot_commands(app):
     if ADMIN_ID:
         commands.append(BotCommand("admin", "Admin panel (admin only)"))
     
-    await app.bot.set_my_commands(commands)
+    try:
+        await app.bot.set_my_commands(commands)
+    except Exception as e:
+        logger.error(f"set_my_commands failed (non-fatal): {e}")
     
     # Set the bot-level menu button to default behavior
     # This ensures the bottom-left button triggers the keyboard/commands instead of opening the app directly
@@ -13138,7 +13141,7 @@ def main():
         assign_vent_numbers_to_existing_posts()
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
-        return
+        raise SystemExit(1)  # exit non-zero so Render restarts and the failure is visible
 
 
 
@@ -13148,7 +13151,12 @@ def main():
     # (e.g. a page that sends 10 comment messages) makes every other user wait. With it on, updates
     # run concurrently. Trade-off: two updates from the SAME user in the same instant can now
     # interleave (state lives in context.user_data), which the old strict ordering prevented.
-    app = Application.builder().token(TOKEN).concurrent_updates(True).post_init(set_bot_commands).build()
+    from telegram.request import HTTPXRequest
+    _req = HTTPXRequest(connection_pool_size=32, connect_timeout=20, read_timeout=30, write_timeout=30, pool_timeout=30)
+    _upd_req = HTTPXRequest(connection_pool_size=4, connect_timeout=20, read_timeout=30, write_timeout=30, pool_timeout=30)
+    app = (Application.builder().token(TOKEN)
+           .request(_req).get_updates_request(_upd_req)
+           .concurrent_updates(True).post_init(set_bot_commands).build())
     
     # Add your handlers
     # Admin helper: send a premium emoji to the bot to get its custom_emoji_id (own group, never blocks others)
@@ -13242,7 +13250,14 @@ def main():
 
     # Start polling
     logger.info("Starting bot polling...")
-    app.run_polling()
+    from telegram.error import TimedOut as _TimedOut, NetworkError as _NetErr
+    try:
+        app.run_polling(bootstrap_retries=-1, drop_pending_updates=False)
+    except (_TimedOut, _NetErr) as e:
+        logger.error(f"Polling startup failed ({e}); exiting so Render restarts the bot")
+        import time as _t
+        _t.sleep(10)
+        raise SystemExit(1)
 
 # In bot.py, replace the simple /mini_app route with this:
 
