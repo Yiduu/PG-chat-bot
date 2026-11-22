@@ -592,6 +592,8 @@ def init_db():
                 c.execute("ALTER TABLE admin_broadcast_jobs ADD COLUMN IF NOT EXISTS media_type TEXT")
                 c.execute("ALTER TABLE admin_broadcast_jobs ADD COLUMN IF NOT EXISTS media_id TEXT")
                 c.execute("ALTER TABLE admin_broadcast_jobs ADD COLUMN IF NOT EXISTS html TEXT")
+                # Resume point: the last recipient (in user_id order) that was fully handled.
+                c.execute("ALTER TABLE admin_broadcast_jobs ADD COLUMN IF NOT EXISTS last_user_id TEXT")
 
                 # Check for 'thread_context_post_id' column in users
                 if ('users', 'thread_context_post_id') not in existing_columns:
@@ -5101,52 +5103,125 @@ def _bc_classify(mime, filename, size):
     return 'document'
 
 
-def _broadcast_recipients(admin_id):
-    rows = db_fetch_all("SELECT user_id FROM users WHERE user_id <> %s AND COALESCE(is_banned, FALSE) = FALSE",
-                        (str(admin_id),)) or []
+def _broadcast_recipients(admin_id, after=None):
+    """Everyone except the sender and banned users, in a stable user_id order (so a send can resume)."""
+    sql = "SELECT user_id FROM users WHERE user_id <> %s AND COALESCE(is_banned, FALSE) = FALSE"
+    params = [str(admin_id)]
+    if after:
+        sql += " AND user_id > %s"
+        params.append(str(after))
+    rows = db_fetch_all(sql + " ORDER BY user_id", tuple(params)) or []
     return [r['user_id'] for r in rows]
 
 
-def _run_broadcast_job(job_id, user_ids, p):
-    """Runs in a background thread: about 20 messages a second, one retry after a Telegram 429."""
-    sent = failed = blocked = 0
+BROADCAST_RATE = 25.0      # messages per second overall (Telegram allows about 30)
+BROADCAST_WORKERS = 8
+BROADCAST_CHUNK = 40
 
-    def _save(status=None):
+
+def _run_broadcast_job(job_id, user_ids, p, counts=(0, 0, 0)):
+    """Runs in a background thread. Sends with a few workers at a shared pace (~25 messages/second),
+    honours Telegram's 429 'retry after' for everyone, retries network hiccups, and saves its
+    position after every chunk so a restart can pick up where it stopped (resume_interrupted_broadcasts)."""
+    sent, failed, blocked = counts
+    lock = threading.Lock()
+    pace = {'next': 0.0, 'pause_until': 0.0}
+
+    def _wait_turn():
+        with lock:
+            now = time.monotonic()
+            t = max(pace['next'], pace['pause_until'], now)
+            pace['next'] = t + 1.0 / BROADCAST_RATE
+        if t > now:
+            time.sleep(t - now)
+
+    def _one(uid):
+        resp = None
+        for attempt in range(5):
+            _wait_turn()
+            resp = _bc_send(uid, p)
+            if resp is None:                       # network error: short pause, try again
+                time.sleep(1 + attempt)
+                continue
+            if not resp.get('ok') and resp.get('error_code') == 429:
+                wait = int((resp.get('parameters') or {}).get('retry_after') or 1)
+                with lock:
+                    pace['pause_until'] = max(pace['pause_until'], time.monotonic() + min(wait, 120) + 1)
+                continue
+            if not resp.get('ok') and (resp.get('error_code') or 0) >= 500:
+                time.sleep(1 + attempt)
+                continue
+            break
+        return uid, resp
+
+    def _save(status=None, last=None):
         try:
             if status:
                 db_execute("UPDATE admin_broadcast_jobs SET sent = %s, failed = %s, blocked = %s, status = %s, "
                            "finished_at = CURRENT_TIMESTAMP WHERE job_id = %s", (sent, failed, blocked, status, job_id))
             else:
-                db_execute("UPDATE admin_broadcast_jobs SET sent = %s, failed = %s, blocked = %s WHERE job_id = %s",
-                           (sent, failed, blocked, job_id))
+                db_execute("UPDATE admin_broadcast_jobs SET sent = %s, failed = %s, blocked = %s, last_user_id = %s "
+                           "WHERE job_id = %s", (sent, failed, blocked, last, job_id))
         except Exception as e:
             logger.error(f"Broadcast {job_id}: could not save progress: {e}")
 
+    last_ping = time.monotonic()
     try:
-        for i, uid in enumerate(user_ids, 1):
-            resp = _bc_send(uid, p)
-            if resp and not resp.get('ok') and resp.get('error_code') == 429:
-                wait = int((resp.get('parameters') or {}).get('retry_after') or 1)
-                time.sleep(min(wait, 30) + 1)
-                resp = _bc_send(uid, p)
-            code = (resp or {}).get('error_code')
-            desc = ((resp or {}).get('description') or '').lower()
-            if resp and resp.get('ok'):
-                sent += 1
-            elif code == 403 or (code == 400 and ('chat not found' in desc or 'deactivated' in desc)):
-                blocked += 1          # blocked the bot, deactivated, or never started it
-            else:
-                failed += 1
-                if failed <= 3:
-                    logger.warning(f"Broadcast {job_id}: send to {uid} failed: {desc or resp}")
-            if i % 25 == 0:
-                _save()
-            time.sleep(0.05)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=BROADCAST_WORKERS) as ex:
+            for pos in range(0, len(user_ids), BROADCAST_CHUNK):
+                chunk = user_ids[pos:pos + BROADCAST_CHUNK]
+                for uid, resp in ex.map(_one, chunk):
+                    code = (resp or {}).get('error_code')
+                    desc = ((resp or {}).get('description') or '').lower()
+                    if resp and resp.get('ok'):
+                        sent += 1
+                    elif code == 403 or (code == 400 and ('chat not found' in desc or 'deactivated' in desc)):
+                        blocked += 1          # blocked the bot, deactivated, or never started it
+                    else:
+                        failed += 1
+                        if failed <= 5:
+                            logger.warning(f"Broadcast {job_id}: send to {uid} failed: {desc or resp}")
+                _save(last=chunk[-1])
+                # Free hosting stops an idle web service; a request to ourselves keeps it awake while we send.
+                if time.monotonic() - last_ping > 240:
+                    last_ping = time.monotonic()
+                    base = os.getenv('RENDER_EXTERNAL_URL')
+                    if base:
+                        try:
+                            requests.get(base.rstrip('/') + '/health', timeout=10)
+                        except Exception:
+                            pass
         _save('done')
         logger.info(f"Broadcast {job_id} finished: sent={sent} failed={failed} blocked={blocked}")
     except Exception as e:
         logger.error(f"Broadcast {job_id} crashed: {e}")
         _save('failed')
+
+
+def resume_interrupted_broadcasts():
+    """Called at startup: a broadcast that was still running when the service restarted (deploy, crash,
+    host sleep) continues with the people it had not reached yet."""
+    try:
+        jobs = db_fetch_all(
+            "SELECT job_id, admin_id, media_type, media_id, html, body, sent, failed, blocked, last_user_id "
+            "FROM admin_broadcast_jobs WHERE status = 'running' AND created_at > LOCALTIMESTAMP - INTERVAL '2 hours'") or []
+    except Exception as e:
+        logger.error(f"Could not look for interrupted broadcasts: {e}")
+        return
+    for j in jobs:
+        p = {'type': j['media_type'] or 'text',
+             'html': j['html'] if j['html'] is not None else bc_html_from_plain(j['body'] or ''),
+             'media_id': j['media_id']}
+        rest = _broadcast_recipients(j['admin_id'], after=j['last_user_id'])
+        counts = (int(j['sent'] or 0), int(j['failed'] or 0), int(j['blocked'] or 0))
+        if not rest:
+            db_execute("UPDATE admin_broadcast_jobs SET status = 'done', finished_at = CURRENT_TIMESTAMP WHERE job_id = %s",
+                       (j['job_id'],))
+            continue
+        logger.info(f"Resuming broadcast {j['job_id']}: {len(rest)} recipients left")
+        threading.Thread(target=_run_broadcast_job, args=(j['job_id'], rest, p, counts),
+                         daemon=True, name=f"broadcast-{j['job_id']}").start()
 
 
 def broadcast_job_running():
@@ -13527,6 +13602,9 @@ def main():
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
         raise SystemExit(1)  # exit non-zero so Render restarts and the failure is visible
+
+    # A broadcast cut off by a restart continues where it stopped
+    resume_interrupted_broadcasts()
 
 
 
