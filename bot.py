@@ -3481,6 +3481,55 @@ def _persist_weekly_badges(top_users, today):
     return [(uid, names.get(uid) or "Contributor", points, badge) for uid, points, badge in winners]
 
 
+# ---- Premium weekly announcement ------------------------------------------------------
+# The channel announcement uses HTML so ranks / title / description can carry premium custom
+# emoji (<tg-emoji>). Telegram shows the normal emoji inside the tag when it can't render the
+# premium one, and if the send is rejected the post is re-sent as plain text - the announcement
+# is never lost. Env: PREMIUM_ANNOUNCEMENTS=0 turns the premium emoji off.
+PREMIUM_ANNOUNCE_ON = os.getenv('PREMIUM_ANNOUNCEMENTS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+PREMIUM_ANNOUNCE_IDS = {
+    '\U0001F947': '5280735858926822987',  # 🥇 1st
+    '\U0001F948': '5283195573812340110',  # 🥈 2nd
+    '\U0001F949': '5282750778409233531',  # 🥉 3rd
+    '\U0001F3C6': '5409008750893734809',  # 🏆 title
+    '\U0001F389': '5436040291507247633',  # 🎉 congratulations
+    '\U0001F64F': '5472189549473963781',  # 🙏 thanks
+    '\u2728': '5472164874886846699',      # ✨ sparkle
+}
+WEEKLY_RANK_LABELS = ["1st", "2nd", "3rd"]
+
+
+def _ann_emoji(emoji, premium=True):
+    """One emoji for the announcement: premium <tg-emoji> when available, else the normal one."""
+    cid = PREMIUM_ANNOUNCE_IDS.get(emoji) if (premium and PREMIUM_ANNOUNCE_ON) else None
+    return f'<tg-emoji emoji-id="{cid}">{emoji}</tg-emoji>' if cid else emoji
+
+
+def build_weekly_announcement(winners, premium=True, week_end=None):
+    """HTML text for the weekly channel announcement.
+    winners: iterable of (name, points, badge_emoji) in rank order."""
+    import html as _html
+    end = week_end or datetime.now(timezone.utc).date()
+    start = end - timedelta(days=7)
+    e = lambda x: _ann_emoji(x, premium)
+    lines = [
+        f"{e(chr(0x1F3C6))} <b>Weekly Top Contributors</b>",
+        f"<i>{start.strftime('%b %d')} \u2013 {end.strftime('%b %d, %Y')}</i>",
+        "",
+    ]
+    for idx, (name, points, badge) in enumerate(winners):
+        label = WEEKLY_RANK_LABELS[idx] if idx < len(WEEKLY_RANK_LABELS) else f"#{idx + 1}"
+        lines.append(f"{e(badge)} <b>{label}</b> \u2022 {_html.escape(str(name))} \u2013 <b>{points} pts</b>")
+    lines += [
+        "",
+        "These members earned the most points this week by sharing, commenting and receiving "
+        "likes. Their medal shows next to their name until the next weekly announcement.",
+        "",
+        f"{e(chr(0x1F389))} Congratulations! Thank you for being such a blessing to this community {e(chr(0x1F64F))}",
+    ]
+    return "\n".join(lines)
+
+
 async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
     """
     Weekly job to announce top contributors.
@@ -3511,7 +3560,7 @@ async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
 
         winners_info = []
         for user_id, name, points, badge_emoji in winners:
-            winners_info.append(f"{badge_emoji} {name} – {points} pts")
+            winners_info.append((name, points, badge_emoji))
             summary['winners_count'] += 1
             
             # DM winner
@@ -3525,16 +3574,22 @@ async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
             except Exception as dm_e:
                 logger.warning(f"Could not send DM to weekly winner {user_id}: {dm_e}")
 
-        # Announce in channel
+        # Announce in channel (premium ranking + description; plain-text retry if rejected)
         if CHANNEL_ID and winners_info:
-            announcement = "*Weekly Top Contributors*\n\n" + "\n".join(winners_info) + \
-                          "\n\nCongratulations! Thank you for being such a blessing to this community."
             try:
-                await context.bot.send_message(
-                    chat_id=CHANNEL_ID,
-                    text=announcement,
-                    parse_mode=ParseMode.MARKDOWN
-                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=build_weekly_announcement(winners_info, premium=True),
+                        parse_mode=ParseMode.HTML
+                    )
+                except BadRequest as pe:
+                    logger.warning(f"Premium weekly announcement rejected ({pe}); resending without premium emoji")
+                    await context.bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=build_weekly_announcement(winners_info, premium=False),
+                        parse_mode=ParseMode.HTML
+                    )
                 summary['announcement_sent'] = True
             except Exception as ch_e:
                 logger.error(f"Failed to announce weekly winners in channel: {ch_e}")
