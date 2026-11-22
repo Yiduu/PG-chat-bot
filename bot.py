@@ -588,6 +588,10 @@ def init_db():
                         finished_at TIMESTAMP
                     )
                 ''')
+                # Media + premium-emoji broadcasts: what to send (type, Telegram file_id, HTML text).
+                c.execute("ALTER TABLE admin_broadcast_jobs ADD COLUMN IF NOT EXISTS media_type TEXT")
+                c.execute("ALTER TABLE admin_broadcast_jobs ADD COLUMN IF NOT EXISTS media_id TEXT")
+                c.execute("ALTER TABLE admin_broadcast_jobs ADD COLUMN IF NOT EXISTS html TEXT")
 
                 # Check for 'thread_context_post_id' column in users
                 if ('users', 'thread_context_post_id') not in existing_columns:
@@ -4979,6 +4983,201 @@ async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ---- Broadcast core (shared by the bot flow and the mini app) ---------------------------
+# A broadcast is a payload {'type', 'html', 'media_id'}: type is text/photo/video/voice/audio/
+# document/gif/sticker, html is the text (or caption) as Telegram HTML. Premium custom emoji are
+# kept when the admin types them in the bot, and emoji from the premium set are upgraded to
+# <tg-emoji> automatically. If Telegram rejects the formatting the message is re-sent as plain text.
+# Env: BROADCAST_PREMIUM=0 turns the automatic upgrade off.
+BROADCAST_PREMIUM_ON = os.getenv('BROADCAST_PREMIUM', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+BROADCAST_PREMIUM_IDS = {**PREMIUM_AVATAR_IDS, **PREMIUM_ANNOUNCE_IDS}
+_BC_EMOJI_RE = re.compile('(' + '|'.join(re.escape(k) for k in sorted(BROADCAST_PREMIUM_IDS, key=len, reverse=True)) + ')\ufe0f?')
+_BC_TAG_RE = re.compile(r'(<[^>]*>)')
+BROADCAST_TEXT_MAX = 3500
+BROADCAST_CAPTION_MAX = 1024
+BROADCAST_MAX_UPLOAD = 20 * 1024 * 1024
+
+
+def bc_upgrade_html(html_text):
+    """Swap plain emoji from the premium set for <tg-emoji>, leaving tags and existing custom emoji alone."""
+    if not BROADCAST_PREMIUM_ON or not html_text:
+        return html_text or ''
+    out, in_tg = [], False
+    for part in _BC_TAG_RE.split(html_text):
+        if len(part) > 1 and part.startswith('<') and part.endswith('>'):
+            low = part.lower()
+            if low.startswith('<tg-emoji'):
+                in_tg = True
+            elif low.startswith('</tg-emoji'):
+                in_tg = False
+            out.append(part)
+        elif in_tg:
+            out.append(part)
+        else:
+            out.append(_BC_EMOJI_RE.sub(
+                lambda m: f'<tg-emoji emoji-id="{BROADCAST_PREMIUM_IDS[m.group(1)]}">{m.group(0)}</tg-emoji>', part))
+    return ''.join(out)
+
+
+def bc_html_from_plain(text):
+    """Plain text typed in the mini app -> safe Telegram HTML with premium emoji."""
+    return bc_upgrade_html(html.escape(text or '', quote=False))
+
+
+def bc_plain_from_html(html_text):
+    return html.unescape(re.sub(r'<[^>]+>', '', html_text or ''))
+
+
+def _bc_api(method, payload=None, data=None, files=None, timeout=20):
+    """One Bot API call via requests. Returns the JSON dict, or None if the request itself failed."""
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/{method}"
+        if files is not None:
+            r = _tg_session.post(url, data=data, files=files, timeout=max(timeout, 120))
+        else:
+            r = _tg_session.post(url, json=payload, timeout=timeout)
+        return r.json()
+    except Exception as e:
+        logger.error(f"Broadcast API call {method} failed: {e}")
+        return None
+
+
+def _bc_build(chat_id, p, as_html=True):
+    """(method, payload) for one broadcast message to one chat."""
+    t = p.get('type') or 'text'
+    h = p.get('html') or ''
+    text = h if as_html else bc_plain_from_html(h)
+    if t == 'text':
+        d = {'chat_id': chat_id, 'text': text or ' ', 'disable_web_page_preview': True}
+        if as_html:
+            d['parse_mode'] = 'HTML'
+        return 'sendMessage', d
+    method, field = _telegram_media_method(t)
+    d = {'chat_id': chat_id, field: p.get('media_id')}
+    if text and t != 'sticker':
+        d['caption'] = text
+        if as_html:
+            d['parse_mode'] = 'HTML'
+    return method, d
+
+
+def _bc_send(chat_id, p):
+    """Send one broadcast message; retries once as plain text when Telegram can't parse the HTML."""
+    method, d = _bc_build(chat_id, p, True)
+    resp = _bc_api(method, d)
+    if resp and not resp.get('ok') and resp.get('error_code') == 400 and (p.get('html') or ''):
+        desc = (resp.get('description') or '').lower()
+        if any(w in desc for w in ('parse', 'entit', 'emoji', 'tag')):
+            method, d = _bc_build(chat_id, p, False)
+            resp = _bc_api(method, d)
+    return resp
+
+
+def _bc_file_id(result, media_type):
+    """Pull the reusable file_id out of a sendX response."""
+    if not result:
+        return None
+    if media_type == 'photo':
+        sizes = result.get('photo') or []
+        return sizes[-1].get('file_id') if sizes else None
+    key = {'gif': 'animation'}.get(media_type, media_type)
+    obj = result.get(key) or result.get('document') or {}
+    return obj.get('file_id')
+
+
+def _bc_classify(mime, filename, size):
+    mime = (mime or '').lower()
+    name = (filename or '').lower()
+    if mime == 'image/gif' or name.endswith('.gif'):
+        return 'gif'
+    if mime in ('image/jpeg', 'image/png', 'image/webp'):
+        return 'photo' if size <= 10 * 1024 * 1024 else 'document'
+    if mime in ('video/mp4', 'video/quicktime'):
+        return 'video'
+    if mime in ('audio/ogg', 'audio/opus') or name.endswith(('.ogg', '.oga', '.opus')):
+        return 'voice'
+    if mime.startswith('audio/'):
+        return 'audio'
+    return 'document'
+
+
+def _broadcast_recipients(admin_id):
+    rows = db_fetch_all("SELECT user_id FROM users WHERE user_id <> %s AND COALESCE(is_banned, FALSE) = FALSE",
+                        (str(admin_id),)) or []
+    return [r['user_id'] for r in rows]
+
+
+def _run_broadcast_job(job_id, user_ids, p):
+    """Runs in a background thread: about 20 messages a second, one retry after a Telegram 429."""
+    sent = failed = blocked = 0
+
+    def _save(status=None):
+        try:
+            if status:
+                db_execute("UPDATE admin_broadcast_jobs SET sent = %s, failed = %s, blocked = %s, status = %s, "
+                           "finished_at = CURRENT_TIMESTAMP WHERE job_id = %s", (sent, failed, blocked, status, job_id))
+            else:
+                db_execute("UPDATE admin_broadcast_jobs SET sent = %s, failed = %s, blocked = %s WHERE job_id = %s",
+                           (sent, failed, blocked, job_id))
+        except Exception as e:
+            logger.error(f"Broadcast {job_id}: could not save progress: {e}")
+
+    try:
+        for i, uid in enumerate(user_ids, 1):
+            resp = _bc_send(uid, p)
+            if resp and not resp.get('ok') and resp.get('error_code') == 429:
+                wait = int((resp.get('parameters') or {}).get('retry_after') or 1)
+                time.sleep(min(wait, 30) + 1)
+                resp = _bc_send(uid, p)
+            code = (resp or {}).get('error_code')
+            desc = ((resp or {}).get('description') or '').lower()
+            if resp and resp.get('ok'):
+                sent += 1
+            elif code == 403 or (code == 400 and ('chat not found' in desc or 'deactivated' in desc)):
+                blocked += 1          # blocked the bot, deactivated, or never started it
+            else:
+                failed += 1
+                if failed <= 3:
+                    logger.warning(f"Broadcast {job_id}: send to {uid} failed: {desc or resp}")
+            if i % 25 == 0:
+                _save()
+            time.sleep(0.05)
+        _save('done')
+        logger.info(f"Broadcast {job_id} finished: sent={sent} failed={failed} blocked={blocked}")
+    except Exception as e:
+        logger.error(f"Broadcast {job_id} crashed: {e}")
+        _save('failed')
+
+
+def broadcast_job_running():
+    return bool(db_fetch_one("SELECT 1 AS x FROM admin_broadcast_jobs WHERE status = 'running' "
+                             "AND created_at > LOCALTIMESTAMP - INTERVAL '2 hours' LIMIT 1"))
+
+
+def start_broadcast_job(admin_id, p):
+    """Claim the single running slot and start the background send.
+    Returns (job_id, total, error_message, http_status)."""
+    recipients = _broadcast_recipients(admin_id)
+    if not recipients:
+        return None, 0, 'There are no users to send to.', 400
+    plain = bc_plain_from_html(p.get('html') or '').strip()
+    t = p.get('type') or 'text'
+    body = plain if t == 'text' else (f"[{t}] {plain}".strip())
+    job = db_fetch_one('''
+        INSERT INTO admin_broadcast_jobs (admin_id, body, total, media_type, media_id, html)
+        SELECT %s, %s, %s, %s, %s, %s
+        WHERE NOT EXISTS (SELECT 1 FROM admin_broadcast_jobs
+                           WHERE status = 'running' AND created_at > LOCALTIMESTAMP - INTERVAL '2 hours')
+        RETURNING job_id
+    ''', (str(admin_id), body or f"[{t}]", len(recipients), t, p.get('media_id'), p.get('html') or ''))
+    if not job:
+        return None, 0, 'Another broadcast is still sending. Wait for it to finish.', 409
+    threading.Thread(target=_run_broadcast_job, args=(job['job_id'], recipients, dict(p)),
+                     daemon=True, name=f"broadcast-{job['job_id']}").start()
+    logger.info(f"Admin {admin_id} started broadcast {job['job_id']} ({t}) to {len(recipients)} users")
+    return job['job_id'], len(recipients), None, 200
+
+
 async def handle_broadcast_type(update: Update, context: ContextTypes.DEFAULT_TYPE, broadcast_type: str):
     """Handle broadcast type selection"""
     query = update.callback_query
@@ -4995,16 +5194,17 @@ async def handle_broadcast_type(update: Update, context: ContextTypes.DEFAULT_TY
     # Set broadcast type
     context.user_data['broadcast_type'] = broadcast_type
     context.user_data['broadcast_step'] = 'waiting_for_content'
+    context.user_data.pop('broadcast_data', None)
     
-    # Ask for content based on type
+    premium_note = "\n\nPremium emoji you add are kept, and emoji from the premium set are upgraded automatically. Bold, italic and links are kept too."
     if broadcast_type == 'text':
-        prompt = "*Please type your broadcast message:*\n\nYou can use markdown formatting."
+        prompt = "*Please type your broadcast message:*" + premium_note
     elif broadcast_type == 'photo':
-        prompt = "*Please send a photo with caption:*\n\nSend a photo and add a caption (optional)."
+        prompt = "*Please send a photo with a caption:*\n\nThe caption is optional." + premium_note
     elif broadcast_type == 'voice':
-        prompt = "*Please send a voice message:*\n\nSend a voice message with optional caption."
+        prompt = "*Please send a voice message:*\n\nA caption is optional." + premium_note
     else:  # other
-        prompt = "*Please send your media:*\n\nYou can send any media type (photo, video, document, etc.) with optional caption."
+        prompt = "*Please send your media:*\n\nPhoto, video, GIF, audio, document or sticker, with an optional caption." + premium_note
     
     keyboard = [[InlineKeyboardButton("Cancel", callback_data='admin_panel')]]
     
@@ -5021,243 +5221,170 @@ async def handle_broadcast_type(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 
-async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show broadcast confirmation with preview"""
-    # Check if this is a callback query or regular message
-    if update.callback_query:
-        query = update.callback_query
-        await query.answer()
-        user_id = str(query.from_user.id)
-        is_callback = True
-    else:
-        # Handle case when called from handle_message
-        user_id = str(update.effective_user.id)
-        is_callback = False
-    
-    broadcast_data = context.user_data.get('broadcast_data', {})
-    
-    if not broadcast_data:
-        if is_callback:
-            await update.callback_query.answer("No broadcast data found.", show_alert=True)
-        else:
-            await update.message.reply_text("No broadcast data found.")
+async def broadcast_capture(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Catches the admin's content after they pick a broadcast type (text or any media) and shows a
+    real preview plus the confirm buttons. Runs before handle_message and swallows only that message."""
+    msg = update.effective_message
+    chat = update.effective_chat
+    if not msg or not chat or chat.type != 'private':
         return
-    
-    # Verify admin permissions
-    user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
+    if context.user_data.get('broadcast_step') != 'waiting_for_content':
+        return
+    text = msg.text or ''
+    if text in ("Cancel", "❌ Cancel", "/cancel") or text.lower() in ("cancel", "❌ cancel"):
+        return  # the normal cancel handling resets the broadcast state
+
+    user_id = str(update.effective_user.id)
+    user = await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
     if not user or not user['is_admin']:
-        if is_callback:
-            await update.callback_query.answer("You don't have permission to access this.", show_alert=True)
-        else:
-            await update.message.reply_text("You don't have permission to access this.")
+        for k in ('broadcasting', 'broadcast_step', 'broadcast_type', 'broadcast_data'):
+            context.user_data.pop(k, None)
         return
-    
-    # Get user count for confirmation
-    total_users = (await db_fetch_one_async("SELECT COUNT(*) as count FROM users"))
-    users_count = total_users['count'] if total_users else 0
-    
+
+    media_type = media_id = None
+    html_text = ''
+    if msg.photo:
+        media_type, media_id, html_text = 'photo', msg.photo[-1].file_id, msg.caption_html or ''
+    elif msg.video:
+        media_type, media_id, html_text = 'video', msg.video.file_id, msg.caption_html or ''
+    elif msg.voice:
+        media_type, media_id, html_text = 'voice', msg.voice.file_id, msg.caption_html or ''
+    elif msg.audio:
+        media_type, media_id, html_text = 'audio', msg.audio.file_id, msg.caption_html or ''
+    elif msg.animation:
+        media_type, media_id, html_text = 'gif', msg.animation.file_id, msg.caption_html or ''
+    elif msg.document:
+        media_type, media_id, html_text = 'document', msg.document.file_id, msg.caption_html or ''
+    elif msg.sticker:
+        media_type, media_id = 'sticker', msg.sticker.file_id
+    elif msg.text:
+        media_type, html_text = 'text', msg.text_html or ''
+    else:
+        await msg.reply_text("I can't broadcast that kind of message. Send text, a photo, video, GIF, voice, audio, document or sticker.")
+        raise ApplicationHandlerStop
+
+    plain_len = len(bc_plain_from_html(html_text))
+    limit = BROADCAST_TEXT_MAX if media_type == 'text' else BROADCAST_CAPTION_MAX
+    if plain_len > limit:
+        await msg.reply_text(f"That is {plain_len} characters. The limit is {limit}. Shorten it and send it again.")
+        raise ApplicationHandlerStop
+
+    context.user_data['broadcast_data'] = {
+        'type': media_type, 'html': bc_upgrade_html(html_text), 'media_id': media_id,
+    }
+    context.user_data['broadcast_step'] = 'confirming'
+    await confirm_broadcast(update, context)
+    raise ApplicationHandlerStop
+
+
+async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send the admin a real preview of the broadcast, then the confirm buttons."""
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    user_id = str(update.effective_user.id)
+    data = context.user_data.get('broadcast_data') or {}
+    if not data:
+        await msg.reply_text("No broadcast data found.")
+        return
+
+    user = await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']:
+        await msg.reply_text("You don't have permission to access this.")
+        return
+
+    preview = await asyncio.to_thread(_bc_send, chat_id, data)
+    if not (preview and preview.get('ok')):
+        err = (preview or {}).get('description') or 'Telegram did not accept it'
+        context.user_data['broadcast_step'] = 'waiting_for_content'
+        await msg.reply_text(f"I could not build that broadcast: {err}\n\nSend it again, or Cancel.")
+        return
+
+    recipients = len(await asyncio.to_thread(_broadcast_recipients, user_id))
     text = (
-        f"*Broadcast Confirmation*\n\n"
-        f"*Recipients:* {users_count} users\n"
-        f"*Type:* {broadcast_data.get('type', 'text').title()}\n\n"
-        f"*Preview:*\n"
+        "Broadcast confirmation\n\n"
+        f"Recipients: {recipients} users (banned users and you are skipped)\n"
+        f"Type: {data.get('type', 'text').title()}\n\n"
+        "The message above is exactly what everyone will receive. Send it?"
     )
-    
-    # Add content preview
-    content = broadcast_data.get('content', '') or broadcast_data.get('caption', '')
-    if content:
-        if len(content) > 200:
-            preview = content[:197] + "..."
-        else:
-            preview = content
-        text += f"{preview}\n\n"
-    
-    text += "_Are you sure you want to send this broadcast to all users?_"
-    
     keyboard = [
         [
             InlineKeyboardButton("Send Broadcast", callback_data='execute_broadcast'),
             InlineKeyboardButton("Edit", callback_data='admin_broadcast')
         ],
-        [
-            InlineKeyboardButton("Cancel", callback_data='admin_panel')
-        ]
+        [InlineKeyboardButton("Cancel", callback_data='admin_panel')]
     ]
-    
-    if is_callback:
-        await update.callback_query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.MARKDOWN
-        )
-    else:
-        await update.message.reply_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.MARKDOWN
-        )
+    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+def _bc_progress_text(job):
+    return (
+        f"Broadcasting...\n\nSent: {job['sent']}\nBlocked/Inactive: {job['blocked']}\n"
+        f"Failed: {job['failed']}\nTotal: {job['total']}"
+    )
+
+
+async def _watch_broadcast(bot, chat_id, message_id, job_id):
+    """Keeps the admin's status message up to date until the background job finishes."""
+    last = None
+    keyboard = None
+    try:
+        for _ in range(900):  # about 45 minutes
+            await asyncio.sleep(3)
+            job = await db_fetch_one_async(
+                "SELECT status, total, sent, failed, blocked FROM admin_broadcast_jobs WHERE job_id = %s", (job_id,))
+            if not job:
+                return
+            done = job['status'] != 'running'
+            if done:
+                total = int(job['total'] or 0)
+                rate = (int(job['sent']) / total * 100) if total else 0
+                text = (f"{'Broadcast complete' if job['status'] == 'done' else 'Broadcast stopped'}\n\n"
+                        f"Total users: {total}\nSuccessfully sent: {job['sent']}\n"
+                        f"Blocked/Inactive: {job['blocked']}\nFailed: {job['failed']}\n"
+                        f"Success rate: {rate:.1f}%")
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Send Another", callback_data='admin_broadcast')],
+                    [InlineKeyboardButton("Admin Panel", callback_data='admin_panel')],
+                ])
+            else:
+                text = _bc_progress_text(job)
+            if text != last:
+                try:
+                    await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=keyboard)
+                    last = text
+                except Exception as e:
+                    logger.debug(f"Broadcast status edit skipped: {e}")
+            if done:
+                return
+    except Exception as e:
+        logger.error(f"Broadcast watcher for job {job_id} stopped: {e}")
+
 
 async def execute_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Execute the broadcast to all users"""
-    # Check if this is a callback query
-    if update.callback_query:
-        query = update.callback_query
-        await query.answer()
-        status_message = query.message
-    else:
-        # This shouldn't happen from messages, but handle it
-        await update.message.reply_text("This action can only be triggered from the confirmation menu.")
+    """Start the broadcast (background job shared with the mini app) and follow its progress."""
+    query = update.callback_query
+    user_id = str(query.from_user.id)
+    user = await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    if not user or not user['is_admin']:
+        await query.answer("You don't have permission to access this.", show_alert=True)
         return
-    
-    user_id = str(update.effective_user.id)
-    broadcast_data = context.user_data.get('broadcast_data', {})
-    
-    if not broadcast_data:
+    data = context.user_data.get('broadcast_data') or {}
+    if not data:
         await query.answer("No broadcast data found.", show_alert=True)
         return
-    
-    # Show processing message
-    status_message = await query.edit_message_text(
-        "*Starting Broadcast...*\n\nPreparing to send to all users...",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    
-    # Get all users (exclude the sender)
-    all_users = (await db_fetch_all_async("SELECT user_id FROM users WHERE user_id != %s", (user_id,)))
-    total_users = len(all_users)
-    
-    if total_users == 0:
-        await status_message.edit_text(
-            "No users to broadcast to.",
-            parse_mode=ParseMode.MARKDOWN
-        )
+    await query.answer()
+
+    job_id, total, err, _status = await asyncio.to_thread(start_broadcast_job, user_id, data)
+    if err:
+        await query.edit_message_text(err)
         return
-    
-    # Track statistics
-    success_count = 0
-    failed_count = 0
-    blocked_count = 0
-    
-    # Prepare message based on type
-    message_type = broadcast_data.get('type', 'text')
-    content = broadcast_data.get('content', '')
-    media_id = broadcast_data.get('media_id')
-    caption = broadcast_data.get('caption', '')
-    
-    # Send to users in batches
-    batch_size = 30  # Telegram rate limit
-    
-    for i, user in enumerate(all_users):
-        try:
-            # Update progress every batch
-            if i % batch_size == 0:
-                current_batch = i // batch_size + 1
-                total_batches = (total_users + batch_size - 1) // batch_size
-                progress = int((i / total_users) * 100)
-                
-                await status_message.edit_text(
-                    f"*Broadcasting...*\n\n"
-                    f"Progress: {progress}%\n"
-                    f"Sent: {success_count}\n"
-                    f"Failed: {failed_count}\n"
-                    f"Blocked: {blocked_count}\n"
-                    f"Batch: {current_batch}/{total_batches}\n\n"
-                    f"_Please wait..._",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            
-            # Send based on message type
-            if message_type == 'text':
-                await context.bot.send_message(
-                    chat_id=user['user_id'],
-                    text=content,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                
-            elif message_type == 'photo' and media_id:
-                await context.bot.send_photo(
-                    chat_id=user['user_id'],
-                    photo=media_id,
-                    caption=caption,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                
-            elif message_type == 'voice' and media_id:
-                await context.bot.send_voice(
-                    chat_id=user['user_id'],
-                    voice=media_id,
-                    caption=caption,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                
-            elif message_type == 'document' and media_id:
-                await context.bot.send_document(
-                    chat_id=user['user_id'],
-                    document=media_id,
-                    caption=caption,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                
-            elif message_type == 'video' and media_id:
-                await context.bot.send_video(
-                    chat_id=user['user_id'],
-                    video=media_id,
-                    caption=caption,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            
-            success_count += 1
-            
-            # Small delay to respect rate limits
-            if i % 10 == 0:
-                await asyncio.sleep(0.1)
-                
-        except BadRequest as e:
-            if "blocked" in str(e).lower() or "Forbidden" in str(e):
-                blocked_count += 1
-            else:
-                failed_count += 1
-                logger.error(f"Failed to send broadcast to {user['user_id']}: {e}")
-        except Exception as e:
-            failed_count += 1
-            logger.error(f"Failed to send broadcast to {user['user_id']}: {e}")
-    
-    # Broadcast complete
-    completion_time = datetime.now().strftime("%H:%M:%S")
-    
-    # Clean up
-    if 'broadcasting' in context.user_data:
-        del context.user_data['broadcasting']
-    if 'broadcast_step' in context.user_data:
-        del context.user_data['broadcast_step']
-    if 'broadcast_type' in context.user_data:
-        del context.user_data['broadcast_type']
-    if 'broadcast_data' in context.user_data:
-        del context.user_data['broadcast_data']
-    
-    # Show final report
-    report_text = (
-        f"*Broadcast Complete!*\n\n"
-        f"Completed: {completion_time}\n"
-        f"Total Users: {total_users}\n"
-        f"Successfully Sent: {success_count}\n"
-        f"Failed: {failed_count}\n"
-        f"Blocked/Inactive: {blocked_count}\n"
-        f"Success Rate: {((success_count / total_users) * 100):.1f}%\n\n"
-        f"_Broadcast delivered to {success_count} active users._"
-    )
-    
-    keyboard = [
-        [InlineKeyboardButton("Send Another", callback_data='admin_broadcast')],
-        [InlineKeyboardButton("Admin Panel", callback_data='admin_panel')],
-        [InlineKeyboardButton("Main Menu", callback_data='menu')]
-    ]
-    
-    await status_message.edit_text(
-        report_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
-    )
+
+    for k in ('broadcasting', 'broadcast_step', 'broadcast_type', 'broadcast_data'):
+        context.user_data.pop(k, None)
+    await query.edit_message_text(f"Broadcasting...\n\nSent: 0\nTotal: {total}")
+    context.application.create_task(_watch_broadcast(context.bot, query.message.chat_id, query.message.message_id, job_id))
+
+
 async def advanced_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Advanced broadcast with targeting options"""
     query = update.callback_query
@@ -13443,6 +13570,7 @@ def main():
     app.add_handler(CommandHandler("weekly_status", weekly_status_command))
     
     # ---- moderation ----
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND & filters.ChatType.PRIVATE, broadcast_capture), group=-3)  # admin broadcast content
     app.add_handler(TypeHandler(Update, ban_gate), group=-2)                                   # blocks banned users first
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mod_text_input), group=-1)  # typed ban/warn reasons
     app.add_handler(CommandHandler("ban", ban_command))
@@ -17055,15 +17183,36 @@ function adminMessage(){
 }
 
 // ---- Broadcast ----
-let bcPoll=null,bcJob=null,bcRecipients=0;
+let bcPoll=null,bcJob=null,bcRecipients=0,bcFile=null,bcEmoji=[],bcMaxMb=20;
 function stopBroadcastPoll(){if(bcPoll){clearInterval(bcPoll);bcPoll=null}}
-function bcCount(){const t=document.getElementById('bc-text'),c=document.getElementById('bc-count');if(t&&c)c.textContent=t.value.length+'/3500'}
+function bcLimit(){return bcFile?1024:3500}
+function bcCount(){const t=document.getElementById('bc-text'),c=document.getElementById('bc-count');if(t){t.maxLength=bcLimit();if(c)c.textContent=t.value.length+'/'+bcLimit()}}
+function bcInsert(e){
+  const t=document.getElementById('bc-text');if(!t)return;
+  const a=t.selectionStart==null?t.value.length:t.selectionStart,b=t.selectionEnd==null?a:t.selectionEnd;
+  t.value=t.value.slice(0,a)+e+t.value.slice(b);
+  const pos=a+e.length;t.focus();try{t.setSelectionRange(pos,pos)}catch(x){}
+  bcCount();hap('select');
+}
+function bcPickFile(inp){
+  const f=inp.files&&inp.files[0];
+  if(!f){bcFile=null}
+  else if(f.size>bcMaxMb*1024*1024){toast('That file is '+fmtBytes(f.size)+'. The limit is '+bcMaxMb+' MB.');inp.value='';bcFile=null}
+  else bcFile=f;
+  bcFileUI();bcCount();
+}
+function bcClearFile(){const i=document.getElementById('bc-file');if(i)i.value='';bcFile=null;bcFileUI();bcCount()}
+function bcFileUI(){
+  const n=document.getElementById('bc-file-name');if(!n)return;
+  n.innerHTML=bcFile?('<span class="x-chip">'+esc(bcFile.name)+' ('+fmtBytes(bcFile.size)+')</span> <button type="button" class="btn-ghost x-sbtn" onclick="bcClearFile()">Remove</button>')
+    :'<span class="x-small">No file attached</span>';
+}
 function renderBroadcastStatus(j){
   const box=document.getElementById('bc-status');if(!box)return;
   const btn=document.getElementById('bc-send');
   if(!j){box.innerHTML='';if(btn)btn.disabled=false;return}
   const pct=j.total?Math.min(100,Math.round(j.done/j.total*100)):0;
-  const label={running:'Sending…',done:'Finished',failed:'Stopped by an error',interrupted:'Interrupted'}[j.status]||j.status;
+  const label=({running:'Sending…',done:'Finished',failed:'Stopped by an error',interrupted:'Interrupted'}[j.status]||j.status)+(j.media_type&&j.media_type!=='text'?' · '+j.media_type:'');
   box.innerHTML=`<div class="x-card"><h3>${esc(label)}</h3><div class="x-small">${esc(j.created)}</div>
     <div class="x-quote">${esc(j.preview)}</div>
     <div class="x-bar"><i style="width:${pct}%"></i></div>
@@ -17073,8 +17222,10 @@ function renderBroadcastStatus(j){
 async function bcTick(){
   try{
     const d=await secureApi('/api/mini-app/admin/broadcast'+(bcJob?'?job_id='+bcJob:''));
-    bcRecipients=d.recipients||0;
+    bcRecipients=d.recipients||0;bcEmoji=d.premium_emoji||[];bcMaxMb=d.max_upload_mb||20;
     renderBroadcastStatus(d.job);
+    const pal=document.getElementById('bc-emoji');if(pal&&!pal.dataset.built&&bcEmoji.length){pal.dataset.built='1';pal.innerHTML=bcEmoji.map(e=>'<button type="button" class="btn-ghost x-sbtn" style="font-size:20px;padding:4px 8px" onclick="bcInsert(this.textContent)">'+esc(e)+'</button>').join('')}
+    const pn=document.getElementById('bc-pnote');if(pn)pn.style.display=bcEmoji.length?'':'none';
     if(d.job&&d.job.status==='running'){
       if(!bcPoll)bcPoll=setInterval(()=>{if(!document.hidden)bcTick()},2000);
     }else stopBroadcastPoll();
@@ -17088,33 +17239,46 @@ async function loadAdminBroadcast(){
   if(!box.dataset.built){
     box.dataset.built='1';
     box.innerHTML=`<div class="x-card"><h3>Send a broadcast</h3>
-      <p>Sends a text message from the bot to every user except banned users and you. Plain text only. It goes out right away.</p>
+      <p>Sends a message from the bot to every user except banned users and you. You can attach one photo, video, GIF, voice note, audio file or document. It goes out right away.</p>
       <textarea id="bc-text" class="ed-input" rows="6" maxlength="3500" placeholder="Write your message…" style="resize:none;margin-top:12px" oninput="bcCount()"></textarea>
       <div class="ed-hint" id="bc-count">0/3500</div>
+      <div id="bc-pnote" style="display:none;margin-top:10px"><div class="x-small">Premium emoji: tap one to add it. Any avatar or palette emoji you type is sent as a premium emoji.</div>
+      <div id="bc-emoji" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;max-height:132px;overflow:auto"></div></div>
+      <div style="margin-top:12px"><input type="file" id="bc-file" style="display:none" onchange="bcPickFile(this)">
+      <button type="button" class="btn-ghost x-sbtn" onclick="document.getElementById('bc-file').click()">Attach a file</button>
+      <span id="bc-file-name" style="margin-left:8px"></span></div>
       <button type="button" class="btn-gold" id="bc-send" style="margin-top:14px" onclick="bcReview()">Review and send</button></div>
       <div id="bc-status"></div>`;
+    bcFileUI();
   }
   await bcTick();
 }
 function bcReview(){
   const t=document.getElementById('bc-text').value.trim();
-  if(!t){toast('Write a message first');return}
+  if(!t&&!bcFile){toast('Write a message or attach a file first');return}
   if(!bcRecipients){toast('There are no users to send to');return}
   crOpenSheet('<h3>Send to '+bcRecipients+(bcRecipients===1?' person?':' people?')+'</h3><p>This cannot be undone. Preview:</p>'
-    +'<div class="x-quote" style="white-space:pre-wrap;max-height:30vh;overflow:auto">'+esc(t)+'</div>'
+    +'<div class="x-quote" style="white-space:pre-wrap;max-height:30vh;overflow:auto">'+(bcFile?'<span class="x-chip">'+esc(bcFile.name)+'</span> ':'')+esc(t)+'</div>'
     +'<button type="button" class="modal-btn solid-danger" id="bc-go">Send now</button>'
     +'<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
   document.getElementById('bc-go').onclick=()=>bcSend(t);
 }
 async function bcSend(text){
-  const b=document.getElementById('bc-go');if(b)b.disabled=true;
+  const b=document.getElementById('bc-go');if(b){b.disabled=true;b.textContent=bcFile?'Uploading…':'Sending…'}
   try{
-    const d=await secureApi('/api/mini-app/admin/broadcast',{method:'POST',body:JSON.stringify({text:text})});
+    const tg=window.Telegram&&window.Telegram.WebApp;
+    const initData=(tg&&tg.initData)||'';
+    if(!initData)throw new Error('Open the app from Telegram to use this.');
+    const fd=new FormData();fd.append('text',text);if(bcFile)fd.append('file',bcFile);
+    const r=await fetch(API+'/api/mini-app/admin/broadcast',{method:'POST',headers:{'X-Telegram-Init-Data':initData},body:fd});
+    let d=null;try{d=await r.json()}catch(x){}
+    if(!r.ok||!d||!d.success)throw new Error((d&&d.error)||'Could not start the broadcast');
     crCloseSheet();hap('success');toast('Broadcast started');
     bcJob=d.job_id;
-    const t=document.getElementById('bc-text');if(t){t.value='';bcCount()}
+    const t=document.getElementById('bc-text');if(t)t.value='';
+    bcClearFile();bcCount();
     await bcTick();
-  }catch(e){if(b)b.disabled=false;toast(e.message||'Could not start the broadcast')}
+  }catch(e){if(b){b.disabled=false;b.textContent='Send now'}toast(e.message||'Could not start the broadcast')}
 }
 
 // ---- edit profile ----
@@ -21684,53 +21848,8 @@ def mini_app_admin_user_action(target_id, action):
 
 
 # ---------- admin: broadcast ----------
-
-def _run_broadcast_job(job_id, user_ids, body):
-    """Runs in a background thread. Plain text (no parse mode, so a stray * or _ can't break a send),
-    about 20 messages a second, one retry after a Telegram 429."""
-    sent = failed = blocked = 0
-
-    def _save(status=None):
-        try:
-            if status:
-                db_execute("UPDATE admin_broadcast_jobs SET sent = %s, failed = %s, blocked = %s, status = %s, "
-                           "finished_at = CURRENT_TIMESTAMP WHERE job_id = %s", (sent, failed, blocked, status, job_id))
-            else:
-                db_execute("UPDATE admin_broadcast_jobs SET sent = %s, failed = %s, blocked = %s WHERE job_id = %s",
-                           (sent, failed, blocked, job_id))
-        except Exception as e:
-            logger.error(f"Broadcast {job_id}: could not save progress: {e}")
-
-    try:
-        for i, uid in enumerate(user_ids, 1):
-            resp = send_telegram_message_sync(uid, body, parse_mode=None)
-            if resp and not resp.get('ok') and resp.get('error_code') == 429:
-                wait = int((resp.get('parameters') or {}).get('retry_after') or 1)
-                time.sleep(min(wait, 30) + 1)
-                resp = send_telegram_message_sync(uid, body, parse_mode=None)
-            code = (resp or {}).get('error_code')
-            desc = ((resp or {}).get('description') or '').lower()
-            if resp and resp.get('ok'):
-                sent += 1
-            elif code == 403 or (code == 400 and ('chat not found' in desc or 'deactivated' in desc)):
-                blocked += 1          # blocked the bot, deactivated, or never started it
-            else:
-                failed += 1
-            if i % 25 == 0:
-                _save()
-            time.sleep(0.05)
-        _save('done')
-        logger.info(f"Broadcast {job_id} finished: sent={sent} failed={failed} blocked={blocked}")
-    except Exception as e:
-        logger.error(f"Broadcast {job_id} crashed: {e}")
-        _save('failed')
-
-
-def _broadcast_recipients(admin_id):
-    rows = db_fetch_all("SELECT user_id FROM users WHERE user_id <> %s AND COALESCE(is_banned, FALSE) = FALSE",
-                        (str(admin_id),)) or []
-    return [r['user_id'] for r in rows]
-
+# The sending itself (premium emoji, media, background job) lives in the bot section above
+# (start_broadcast_job / _run_broadcast_job); these routes only take the admin's input.
 
 @flask_app.route('/api/mini-app/admin/broadcast', methods=['GET'])
 def mini_app_admin_broadcast_status():
@@ -21740,7 +21859,7 @@ def mini_app_admin_broadcast_status():
         if err:
             return err
         job_id = _parse_positive_int(request.args.get('job_id'))
-        cols = ("job_id, body, total, sent, failed, blocked, created_at, "
+        cols = ("job_id, body, total, sent, failed, blocked, created_at, media_type, "
                 "CASE WHEN status = 'running' AND created_at <= LOCALTIMESTAMP - INTERVAL '2 hours' "
                 "THEN 'interrupted' ELSE status END AS status")
         if job_id:
@@ -21758,8 +21877,13 @@ def mini_app_admin_broadcast_status():
                 'done': int(job['sent'] or 0) + int(job['failed'] or 0) + int(job['blocked'] or 0),
                 'created': job['created_at'].strftime('%b %d, %H:%M') if job.get('created_at') else '',
                 'preview': body if len(body) <= 120 else body[:117] + '...',
+                'media_type': job.get('media_type') or 'text',
             }
-        return jsonify({'success': True, 'recipients': int(count['n']) if count else 0, 'job': out})
+        palette = list(dict.fromkeys(
+            [k for k in PREMIUM_ANNOUNCE_IDS] + [k for k in PREMIUM_AVATAR_IDS]))[:40]
+        return jsonify({'success': True, 'recipients': int(count['n']) if count else 0, 'job': out,
+                        'premium_emoji': palette if BROADCAST_PREMIUM_ON else [],
+                        'max_upload_mb': BROADCAST_MAX_UPLOAD // (1024 * 1024)})
     except Exception as e:
         logger.error(f"Mini-app broadcast status error: {e}")
         return jsonify({'success': False, 'error': 'Could not load the broadcast status'}), 500
@@ -21767,37 +21891,64 @@ def mini_app_admin_broadcast_status():
 
 @flask_app.route('/api/mini-app/admin/broadcast', methods=['POST'])
 def mini_app_admin_broadcast_start():
-    """Send a text message to every user except the sender and banned users. Returns at once; the send
-    runs in the background and the app polls GET /admin/broadcast?job_id=. One broadcast at a time."""
+    """Send text and/or one attached file (photo, video, GIF, voice, audio or document) to every user
+    except the sender and banned users. Returns at once; the send runs in the background and the app
+    polls GET /admin/broadcast?job_id=. One broadcast at a time. Accepts JSON {text} or multipart
+    form fields text + file. Emoji from the premium set are sent as premium emoji."""
     try:
         admin_id, err = _verified_user(require_admin=True)
         if err:
             return err
-        body = ((request.get_json(silent=True) or {}).get('text') or '').strip()
-        if not body:
-            return jsonify({'success': False, 'error': 'Write a message first.'}), 400
-        if len(body) > MOD_MESSAGE_MAX_LEN:
-            return jsonify({'success': False,
-                            'error': f'That message is too long ({len(body)} characters, the limit is {MOD_MESSAGE_MAX_LEN}).'}), 400
-        recipients = _broadcast_recipients(admin_id)
-        if not recipients:
-            return jsonify({'success': False, 'error': 'There are no users to send to.'}), 400
+        upload = None
+        if request.mimetype == 'multipart/form-data':
+            if request.content_length and request.content_length > BROADCAST_MAX_UPLOAD + 1024 * 1024:
+                return jsonify({'success': False, 'error': f'That file is too big. The limit is {BROADCAST_MAX_UPLOAD // (1024 * 1024)} MB.'}), 413
+            text = (request.form.get('text') or '').strip()
+            upload = request.files.get('file')
+        else:
+            text = ((request.get_json(silent=True) or {}).get('text') or '').strip()
 
-        # Claim the single "running" slot atomically so a double tap can't start two sends.
-        job = db_fetch_one('''
-            INSERT INTO admin_broadcast_jobs (admin_id, body, total)
-            SELECT %s, %s, %s
-            WHERE NOT EXISTS (SELECT 1 FROM admin_broadcast_jobs
-                               WHERE status = 'running' AND created_at > LOCALTIMESTAMP - INTERVAL '2 hours')
-            RETURNING job_id
-        ''', (admin_id, body, len(recipients)))
-        if not job:
+        data = upload.read() if upload else b''
+        if upload and not data:
+            return jsonify({'success': False, 'error': 'That file is empty.'}), 400
+        if len(data) > BROADCAST_MAX_UPLOAD:
+            return jsonify({'success': False, 'error': f'That file is too big. The limit is {BROADCAST_MAX_UPLOAD // (1024 * 1024)} MB.'}), 413
+        if not text and not data:
+            return jsonify({'success': False, 'error': 'Write a message or attach a file first.'}), 400
+        limit = BROADCAST_CAPTION_MAX if data else BROADCAST_TEXT_MAX
+        if len(text) > limit:
+            return jsonify({'success': False,
+                            'error': f'That {"caption" if data else "message"} is too long ({len(text)} characters, the limit is {limit}).'}), 400
+        if not _broadcast_recipients(admin_id):
+            return jsonify({'success': False, 'error': 'There are no users to send to.'}), 400
+        if broadcast_job_running():
             return jsonify({'success': False, 'error': 'Another broadcast is still sending. Wait for it to finish.'}), 409
 
-        threading.Thread(target=_run_broadcast_job, args=(job['job_id'], recipients, body),
-                         daemon=True, name=f"broadcast-{job['job_id']}").start()
-        logger.info(f"Admin {admin_id} started broadcast {job['job_id']} to {len(recipients)} users")
-        return jsonify({'success': True, 'job_id': job['job_id'], 'total': len(recipients)})
+        payload = {'type': 'text', 'html': bc_html_from_plain(text), 'media_id': None}
+        if data:
+            kind = _bc_classify(upload.mimetype, upload.filename, len(data))
+            method, field = _telegram_media_method(kind)
+            form = {'chat_id': str(admin_id)}
+            if payload['html'] and kind != 'sticker':
+                form['caption'] = payload['html']
+                form['parse_mode'] = 'HTML'
+            # The upload goes to the admin's own chat first: that gives a reusable file_id for everyone else,
+            # and the admin gets a preview of exactly what will be sent.
+            resp = _bc_api(method, data=form, files={field: (upload.filename or 'file', data, upload.mimetype or 'application/octet-stream')})
+            if resp and not resp.get('ok') and resp.get('error_code') == 400 and 'caption' in form:
+                form.pop('parse_mode', None)
+                form['caption'] = bc_plain_from_html(payload['html'])
+                resp = _bc_api(method, data=form, files={field: (upload.filename or 'file', data, upload.mimetype or 'application/octet-stream')})
+            file_id = _bc_file_id((resp or {}).get('result'), kind) if resp and resp.get('ok') else None
+            if not file_id:
+                why = (resp or {}).get('description') or 'Telegram did not accept the file'
+                return jsonify({'success': False, 'error': f'Could not upload the file: {why}'}), 400
+            payload.update({'type': kind, 'media_id': file_id})
+
+        job_id, total, msg, status = start_broadcast_job(admin_id, payload)
+        if msg:
+            return jsonify({'success': False, 'error': msg}), status
+        return jsonify({'success': True, 'job_id': job_id, 'total': total})
     except Exception as e:
         logger.error(f"Mini-app broadcast start error: {e}")
         return jsonify({'success': False, 'error': 'Could not start the broadcast'}), 500
