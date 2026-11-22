@@ -3490,6 +3490,9 @@ PREMIUM_ANNOUNCE_IDS = {
     '\U0001F947': '5280735858926822987',  # 🥇 1st
     '\U0001F948': '5283195573812340110',  # 🥈 2nd
     '\U0001F949': '5282750778409233531',  # 🥉 3rd
+    '\U0001F3C6': '5409008750893734809',  # 🏆 title
+    '\U0001F389': '5436040291507247633',  # 🎉 congratulations
+    '\U0001F64F': '5472189549473963781',  # 🙏 thanks
 }
 
 
@@ -3500,13 +3503,15 @@ def _ann_emoji(emoji, premium=True):
 
 
 def build_weekly_announcement(winners, premium=True, week_end=None):
-    """Same text as the original announcement; only the medals are premium emoji.
+    """Original announcement text (no extra lines), with premium emoji on the title, the rank
+    medals and the closing line.
     winners: iterable of (name, points, badge_emoji) in rank order."""
     import html as _html
-    lines = [f"{_ann_emoji(badge, premium)} {_html.escape(str(name))} \u2013 {points} pts"
+    e = lambda x: _ann_emoji(x, premium)
+    lines = [f"{e(badge)} {_html.escape(str(name))} \u2013 {points} pts"
              for name, points, badge in winners]
-    return ("<b>Weekly Top Contributors</b>\n\n" + "\n".join(lines) +
-            "\n\nCongratulations! Thank you for being such a blessing to this community.")
+    return (f"{e(chr(0x1F3C6))} <b>Weekly Top Contributors</b>\n\n" + "\n".join(lines) +
+            f"\n\n{e(chr(0x1F389))} Congratulations! Thank you for being such a blessing to this community {e(chr(0x1F64F))}")
 
 
 async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
