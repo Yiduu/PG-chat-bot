@@ -3482,8 +3482,7 @@ def _persist_weekly_badges(top_users, today):
 
 
 # ---- Premium weekly announcement ------------------------------------------------------
-# The channel announcement uses HTML so ranks / title / description can carry premium custom
-# emoji (<tg-emoji>). Telegram shows the normal emoji inside the tag when it can't render the
+# The channel announcement uses HTML so the rank medals can be premium custom emoji (<tg-emoji>). Telegram shows the normal emoji inside the tag when it can't render the
 # premium one, and if the send is rejected the post is re-sent as plain text - the announcement
 # is never lost. Env: PREMIUM_ANNOUNCEMENTS=0 turns the premium emoji off.
 PREMIUM_ANNOUNCE_ON = os.getenv('PREMIUM_ANNOUNCEMENTS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
@@ -3491,12 +3490,7 @@ PREMIUM_ANNOUNCE_IDS = {
     '\U0001F947': '5280735858926822987',  # 🥇 1st
     '\U0001F948': '5283195573812340110',  # 🥈 2nd
     '\U0001F949': '5282750778409233531',  # 🥉 3rd
-    '\U0001F3C6': '5409008750893734809',  # 🏆 title
-    '\U0001F389': '5436040291507247633',  # 🎉 congratulations
-    '\U0001F64F': '5472189549473963781',  # 🙏 thanks
-    '\u2728': '5472164874886846699',      # ✨ sparkle
 }
-WEEKLY_RANK_LABELS = ["1st", "2nd", "3rd"]
 
 
 def _ann_emoji(emoji, premium=True):
@@ -3506,28 +3500,13 @@ def _ann_emoji(emoji, premium=True):
 
 
 def build_weekly_announcement(winners, premium=True, week_end=None):
-    """HTML text for the weekly channel announcement.
+    """Same text as the original announcement; only the medals are premium emoji.
     winners: iterable of (name, points, badge_emoji) in rank order."""
     import html as _html
-    end = week_end or datetime.now(timezone.utc).date()
-    start = end - timedelta(days=7)
-    e = lambda x: _ann_emoji(x, premium)
-    lines = [
-        f"{e(chr(0x1F3C6))} <b>Weekly Top Contributors</b>",
-        f"<i>{start.strftime('%b %d')} \u2013 {end.strftime('%b %d, %Y')}</i>",
-        "",
-    ]
-    for idx, (name, points, badge) in enumerate(winners):
-        label = WEEKLY_RANK_LABELS[idx] if idx < len(WEEKLY_RANK_LABELS) else f"#{idx + 1}"
-        lines.append(f"{e(badge)} <b>{label}</b> \u2022 {_html.escape(str(name))} \u2013 <b>{points} pts</b>")
-    lines += [
-        "",
-        "These members earned the most points this week by sharing, commenting and receiving "
-        "likes. Their medal shows next to their name until the next weekly announcement.",
-        "",
-        f"{e(chr(0x1F389))} Congratulations! Thank you for being such a blessing to this community {e(chr(0x1F64F))}",
-    ]
-    return "\n".join(lines)
+    lines = [f"{_ann_emoji(badge, premium)} {_html.escape(str(name))} \u2013 {points} pts"
+             for name, points, badge in winners]
+    return ("<b>Weekly Top Contributors</b>\n\n" + "\n".join(lines) +
+            "\n\nCongratulations! Thank you for being such a blessing to this community.")
 
 
 async def award_weekly_badges(context: ContextTypes.DEFAULT_TYPE):
