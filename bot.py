@@ -1533,6 +1533,7 @@ PREMIUM_LABEL_RULES = [(re.compile(p, re.I), k) for p, k in [
     (r'^(block|yes, block|ban|banned users)\b', 'ic_block'),
     (r'^yes, report|^report|^warn|^review reports|^pending reports|^back to reports', 'ic_warn'),
     (r'^warning history', 'ic_history'),
+    (r'^(pending deletions|request deletion)', 'act_delete'),
     (r'^(delete|yes, delete|remove|recently deleted)', 'act_delete'),
     (r'^restore', 'ic_refresh'),
     (r'^(edit|type reason)', 'act_edit'),
@@ -2469,20 +2470,31 @@ def notify_admin_of_delete_request(request_id, post_id, reason):
     if not ADMIN_ID:
         logger.warning(f"Delete request #{request_id} created but ADMIN_ID is not set")
         return
-    post = db_fetch_one("SELECT content, media_type FROM posts WHERE post_id = %s", (int(post_id),))
-    snippet = ((post or {}).get('content') or '').strip()
-    if not snippet:
-        snippet = '[media/attachment]'
+    post = db_fetch_one(
+        "SELECT content, media_type, vent_number, author_id FROM posts WHERE post_id = %s", (int(post_id),))
+    label = f"Vent - {post['vent_number']:03d}" if post and post.get('vent_number') else f"Vent #{post_id}"
+    author = get_user_cached(post['author_id']) if post else None
+    author_name = get_display_name(author) if author else "Unknown"
+    snippet = ((post or {}).get('content') or '').strip() or '[media/attachment]'
     snippet = snippet[:200] + ('...' if len(snippet) > 200 else '')
     text = (f"<b>Deletion request #{request_id}</b>\n"
-            f"Vent #{post_id}\n"
+            f"{html.escape(label)}\n"
+            f"From: {html.escape(author_name)}\n"
             f"Reason: {html.escape(reason)}\n\n"
-            f"<blockquote>{html.escape(snippet)}</blockquote>")
-    markup = {"inline_keyboard": [[
-        {"text": "Approve (delete)", "callback_data": f"delreq_approve_{request_id}"},
-        {"text": "Reject", "callback_data": f"delreq_reject_{request_id}"},
-    ]]}
-    _fire_and_forget(send_telegram_message_sync, ADMIN_ID, text, parse_mode='HTML', reply_markup=markup)
+            f"<blockquote>{html.escape(snippet)}</blockquote>\n\n"
+            f"You can also find it under Admin Panel → Pending Deletions.")
+    markup = {"inline_keyboard": [
+        [{"text": "Approve (delete)", "callback_data": f"delreq_approve_{request_id}"},
+         {"text": "Reject", "callback_data": f"delreq_reject_{request_id}"}],
+        [{"text": "🛡 Moderate author", "callback_data": f"mod_post_{post_id}"}],
+    ]}
+
+    def _send():
+        res = send_telegram_message_sync(ADMIN_ID, text, parse_mode='HTML', reply_markup=markup)
+        if not res or not res.get('ok'):
+            logger.error(f"Could not notify admin of delete request #{request_id}: {res}")
+
+    _fire_and_forget(_send)
 
 
 async def admin_remove_post(context, post):
@@ -4942,9 +4954,17 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ) AS active_users
     '''))
     active_count = active_today['count'] if active_today else 0
+
+    del_row = (await db_fetch_one_async("""
+        SELECT COUNT(*) AS count FROM delete_requests dr
+        JOIN posts p ON p.post_id = dr.post_id
+        WHERE dr.status = 'pending' AND COALESCE(p.deleted, FALSE) = FALSE
+    """))
+    pending_deletions = del_row['count'] if del_row else 0
     
     keyboard = [
         [InlineKeyboardButton(f"Pending Posts ({pending_count})", callback_data='admin_pending')],
+        [InlineKeyboardButton(f"Pending Deletions ({pending_deletions})", callback_data='admin_delreqs')],
         [InlineKeyboardButton(f"Users: {users_count}", callback_data='admin_users')],
         [InlineKeyboardButton("Statistics", callback_data='admin_stats')],
         [InlineKeyboardButton("Send Broadcast", callback_data='admin_broadcast')],
@@ -4959,6 +4979,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"*Admin Panel*\n\n"
         f"*Quick Stats:*\n"
         f"• Pending Posts: {pending_count}\n"
+        f"• Pending Deletions: {pending_deletions}\n"
         f"• Total Users: {users_count}\n"
         f"• Active Today: {active_count}\n\n"
         f"Select an option below:"
@@ -5753,6 +5774,74 @@ async def show_pending_posts(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.callback_query.message.reply_text(footer_text, reply_markup=nav_markup)
     else:
         await update.message.reply_text(footer_text, reply_markup=nav_markup)
+
+
+DELREQ_PAGE_SIZE = 5
+
+
+async def show_delete_requests(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
+    """Admin panel: pending vent deletion requests, each with Approve / Reject."""
+    query = update.callback_query
+    user_id = str(update.effective_user.id)
+    if not await _is_admin_user(user_id):
+        if query:
+            await query.answer("You don't have permission to access this.", show_alert=True)
+        return
+    if query:
+        await query.answer()
+    msg = query.message if query else update.message
+    page = max(1, page)
+
+    rows = await db_fetch_all_async("""
+        SELECT dr.request_id, dr.post_id, dr.reason, dr.created_at,
+               p.content, p.media_type, p.vent_number,
+               u.anonymous_name, u.sex, u.avatar_emoji,
+               COUNT(*) OVER () AS total_count
+        FROM delete_requests dr
+        JOIN posts p ON p.post_id = dr.post_id
+        LEFT JOIN users u ON u.user_id = dr.requester_id
+        WHERE dr.status = 'pending' AND COALESCE(p.deleted, FALSE) = FALSE
+        ORDER BY dr.created_at DESC, dr.request_id DESC
+        LIMIT %s OFFSET %s
+    """, (DELREQ_PAGE_SIZE, (page - 1) * DELREQ_PAGE_SIZE)) or []
+
+    if not rows and page > 1:
+        return await show_delete_requests(update, context, page=1)
+    if not rows:
+        await msg.reply_text(
+            "No pending deletion requests.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Admin Panel", callback_data='admin_panel')]]))
+        return
+
+    total = int(rows[0]['total_count'])
+    total_pages = max(1, (total + DELREQ_PAGE_SIZE - 1) // DELREQ_PAGE_SIZE)
+
+    for r in rows:
+        label = f"Vent - {r['vent_number']:03d}" if r.get('vent_number') else f"Vent #{r['post_id']}"
+        snippet = (r['content'] or '').strip() or f"[{r.get('media_type') or 'media'}]"
+        snippet = snippet[:300] + ('...' if len(snippet) > 300 else '')
+        text = (f"<b>Deletion request #{r['request_id']}</b>\n"
+                f"{html.escape(label)}\n"
+                f"From: {html.escape(get_display_name(r))}\n"
+                f"Requested: {_feed_time_ago(r['created_at'])}\n"
+                f"Reason: {html.escape(r['reason'])}\n\n"
+                f"<blockquote>{html.escape(snippet)}</blockquote>")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Approve (delete)", callback_data=f"delreq_approve_{r['request_id']}"),
+             InlineKeyboardButton("Reject", callback_data=f"delreq_reject_{r['request_id']}")],
+            [InlineKeyboardButton("🛡 Moderate author", callback_data=f"mod_post_{r['post_id']}")],
+        ])
+        await msg.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"admin_delreqs_{page - 1}"))
+    nav.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"admin_delreqs_{page + 1}"))
+    await msg.reply_text(
+        f"Showing {len(rows)} of {total} pending deletion request(s)",
+        reply_markup=InlineKeyboardMarkup([nav, [InlineKeyboardButton("Admin Panel", callback_data='admin_panel')]]))
 
 
 async def toggle_bulk_delete_select(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
@@ -10515,6 +10604,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
                 
                 if post and post['author_id'] == user_id:
+                    already = await db_fetch_one_async(
+                        "SELECT 1 FROM delete_requests WHERE post_id = %s AND status = 'pending'", (post_id,))
+                    if already:
+                        await query.answer("You already sent a deletion request for this vent. "
+                                           "An admin will decide soon.", show_alert=True)
+                        return
                     # Ask for confirmation with page info
                     keyboard = InlineKeyboardMarkup([
                         [
@@ -10539,7 +10634,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 parts = query.data.split('_')
                 post_id = int(parts[3])
-                from_page = int(parts[4]) if len(parts) > 4 else 1
 
                 post = await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,))
                 if not post or str(post['author_id']) != str(user_id):
@@ -10549,13 +10643,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.answer("This post is already deleted", show_alert=True)
                     return
 
-                # An admin deleting their own vent doesn't need to ask themselves.
-                if await _is_admin_user(user_id):
-                    changed = await admin_remove_post(context, post)
-                    await query.answer("Vent deleted" if changed else "Already deleted", show_alert=not changed)
-                    await show_previous_posts(update, context, from_page)
-                    return
-
                 pending = await db_fetch_one_async(
                     "SELECT 1 FROM delete_requests WHERE post_id = %s AND status = 'pending'", (post_id,))
                 if pending:
@@ -10563,14 +10650,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                        "An admin will decide soon.", show_alert=True)
                     return
 
-                # Reuse the 5-minute 'reporting' text-capture state (cleared by menu/cancel/timeout).
+                # Clear any stale input state (e.g. a lingering "write comment") so the typed
+                # reason can't be mistaken for something else, then wait for the reason.
+                reset_state(context)
                 context.user_data['reporting'] = {'type': 'delete_post', 'id': post_id, 'timestamp': time.time()}
-                await query.message.reply_text(
-                    "*Request Deletion*\n\nPlease type why you want this vent deleted (max 200 characters). "
-                    "An admin will review it and decide.\n\nTap Cancel to go back.",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=cancel_menu
-                )
+
+                prompt = ("*Request Deletion*\n\nPlease type why you want this vent deleted "
+                          "(max 200 characters). An admin will review it and decide.")
+                cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data='cancel_input')]])
+                try:
+                    await query.message.edit_text(prompt, reply_markup=cancel_kb, parse_mode=ParseMode.MARKDOWN)
+                except BadRequest:
+                    await query.message.reply_text(prompt, reply_markup=cancel_kb, parse_mode=ParseMode.MARKDOWN)
                 await query.answer()
             except Exception as e:
                 logger.error(f"Error requesting post deletion: {e}")
@@ -12044,6 +12135,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error in cancel_report handler: {e}", exc_info=True)
                 await query.answer("Report cancelled.")
 
+        elif query.data == 'admin_delreqs':
+            await show_delete_requests(update, context, page=1)
+
+        elif query.data.startswith('admin_delreqs_'):
+            try:
+                page = int(query.data.split('_')[2])
+            except (IndexError, ValueError):
+                page = 1
+            await show_delete_requests(update, context, page=page)
+
         elif query.data.startswith('admin_chats_'):
             try:
                 page = int(query.data.split('_')[2])
@@ -12317,6 +12418,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reporting = context.user_data.get('reporting')
         _is_del_req = reporting.get('type') == 'delete_post'
         _again = "Request Deletion" if _is_del_req else "Report"
+        _cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data='cancel_input')]])
 
         # Expire stale reporting state so it can never linger indefinitely
         started_at = reporting.get('timestamp', 0)
@@ -12328,28 +12430,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        reason = (text or "").strip()
+        # Invalid input keeps the flow open so the user can simply type again (or tap Cancel).
+        if not reason:
+            await update.message.reply_text("Please type the reason as text.", reply_markup=_cancel_kb)
+            return
+        if len(reason) > 200:
+            await update.message.reply_text(
+                f"That's {len(reason)} characters. Please shorten it to 200 or fewer and send it again.",
+                reply_markup=_cancel_kb
+            )
+            return
+
         try:
-            reason = text.strip() if text else ""
-
-            if not reason:
-                await update.message.reply_text(
-                    f"Please provide a reason (at least 1 character). Tap {_again} again to retry.",
-                    reply_markup=get_main_menu(user_id)
-                )
-                return
-
-            if len(reason) > 200:
-                await update.message.reply_text(
-                    f"Reason is too long (max 200 characters). Tap {_again} again to retry.",
-                    reply_markup=get_main_menu(user_id)
-                )
-                return
-
             target_type = reporting['type']
             target_id = reporting['id']
 
             if target_type == 'delete_post':
-                # Author asked for their vent to be deleted: store it and ask the admin to decide.
                 post = await db_fetch_one_async("SELECT author_id, deleted FROM posts WHERE post_id = %s", (target_id,))
                 if not post or str(post['author_id']) != str(user_id):
                     msg = "You can only request deletion of your own vents."
@@ -12382,13 +12479,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "Thank you. An admin will review your report.",
                     reply_markup=get_main_menu(user_id)
                 )
-                # Notify admin of new report
                 await notify_admin_of_new_report(context, report_id, user_id, target_type, reason)
-                # Notify reported user that they have been reported
                 await notify_reported_user(context, report_id, user_id, target_type, target_id, reason)
         finally:
-            # ALWAYS clear reporting state here — success, failure, or
-            # invalid input — so it can never linger into the next message.
             if 'reporting' in context.user_data:
                 del context.user_data['reporting']
         return
