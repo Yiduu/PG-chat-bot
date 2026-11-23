@@ -521,6 +521,23 @@ def init_db():
                     )
                 ''')
 
+                # ---------------- Vent deletion requests ----------------
+                # Authors can no longer delete a vent themselves: they send a request with a reason
+                # and an admin approves or rejects it.
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS delete_requests (
+                        request_id SERIAL PRIMARY KEY,
+                        post_id INTEGER NOT NULL,
+                        requester_id TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        status TEXT DEFAULT 'pending',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        reviewed_by TEXT,
+                        reviewed_at TIMESTAMP
+                    )
+                ''')
+                c.execute("CREATE INDEX IF NOT EXISTS idx_delete_requests_post ON delete_requests (post_id, status)")
+
                 # User reports store the reported user's Telegram ID in target_id, and
                 # Telegram IDs can exceed the 32-bit INTEGER range, so widen the column.
                 c.execute("""
@@ -2416,37 +2433,74 @@ async def channel_restore_post(context, post):
         return False
 
 
-async def perform_author_delete(update, context, user_id, post_id, from_page):
-    """An author deletes their own published vent. It always leaves a 'deleted by the author'
-    placeholder and can be restored for RESTORE_WINDOW_HOURS."""
-    query = update.callback_query
-    post = await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-    if not post or str(post['author_id']) != str(user_id):
-        await query.answer("You can only delete your own posts", show_alert=True)
-        return
-    if post.get('deleted'):
-        await query.answer("This post is already deleted", show_alert=True)
-        return
+# ---------------- Vent deletion requests ----------------
+# Only an admin can delete a vent. An author sends a request with a reason; the admin is notified
+# and approves or rejects it. (Vents an author deleted before this change can still be restored.)
 
-    if post.get('channel_message_id'):
-        await channel_show_placeholder(context, post, False)
-    changed = await asyncio.to_thread(soft_delete_post, post_id, 'author')
-    if not changed:
-        await query.answer("This post is already deleted", show_alert=True)
-        return
+def create_delete_request(post_id, requester_id, reason):
+    """Store a deletion request. Returns request_id, or None if this vent already has a pending one."""
+    if db_fetch_one("SELECT 1 FROM delete_requests WHERE post_id = %s AND status = 'pending'", (int(post_id),)):
+        return None
+    row = db_execute(
+        "INSERT INTO delete_requests (post_id, requester_id, reason) VALUES (%s, %s, %s) RETURNING request_id",
+        (int(post_id), str(requester_id), reason), fetchone=True)
+    return row['request_id'] if row else None
 
-    await query.answer("Post deleted")
-    try:
-        await context.bot.send_message(
-            query.message.chat_id,
-            f"Your vent was deleted.\n\nChanged your mind? You can restore it for "
-            f"{RESTORE_WINDOW_HOURS} hours.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
-                "Restore vent", callback_data=f"restore_post_{post_id}_{from_page}")]])
-        )
-    except Exception as e:
-        logger.error(f"Could not send the restore prompt: {e}")
-    await show_previous_posts(update, context, from_page)
+
+def decide_delete_request(request_id, admin_id, status):
+    """Atomically move a pending request to 'approved'/'rejected'. Returns the row, or None if it
+    was already decided (so a double tap or two admins can't both act on it)."""
+    return db_fetch_one("""
+        UPDATE delete_requests
+        SET status = %s, reviewed_by = %s, reviewed_at = NOW()
+        WHERE request_id = %s AND status = 'pending'
+        RETURNING *
+    """, (status, str(admin_id), int(request_id)))
+
+
+def reopen_delete_request(request_id):
+    db_execute("UPDATE delete_requests SET status = 'pending', reviewed_by = NULL, reviewed_at = NULL "
+               "WHERE request_id = %s", (int(request_id),))
+
+
+def notify_admin_of_delete_request(request_id, post_id, reason):
+    """DM the admin the request with Approve / Reject buttons. Sync + fire-and-forget so both the
+    bot and the Flask mini-app can call it."""
+    if not ADMIN_ID:
+        logger.warning(f"Delete request #{request_id} created but ADMIN_ID is not set")
+        return
+    post = db_fetch_one("SELECT content, media_type FROM posts WHERE post_id = %s", (int(post_id),))
+    snippet = ((post or {}).get('content') or '').strip()
+    if not snippet:
+        snippet = '[media/attachment]'
+    snippet = snippet[:200] + ('...' if len(snippet) > 200 else '')
+    text = (f"<b>Deletion request #{request_id}</b>\n"
+            f"Vent #{post_id}\n"
+            f"Reason: {html.escape(reason)}\n\n"
+            f"<blockquote>{html.escape(snippet)}</blockquote>")
+    markup = {"inline_keyboard": [[
+        {"text": "Approve (delete)", "callback_data": f"delreq_approve_{request_id}"},
+        {"text": "Reject", "callback_data": f"delreq_reject_{request_id}"},
+    ]]}
+    _fire_and_forget(send_telegram_message_sync, ADMIN_ID, text, parse_mode='HTML', reply_markup=markup)
+
+
+async def admin_remove_post(context, post):
+    """Delete a vent on an admin's decision. A published vent leaves a 'removed by an admin'
+    placeholder (author can't restore it); a never-published one is deleted outright.
+    Returns True if something changed."""
+    post_id = post['post_id']
+    if post.get('approved'):
+        if not await asyncio.to_thread(soft_delete_post, post_id, 'admin'):
+            return False
+        if post.get('channel_message_id'):
+            await channel_show_placeholder(context, post, by_admin=True, remove_media=True)
+    else:
+        if not await asyncio.to_thread(delete_post_cascade, [post_id]):
+            return False
+    calculate_user_rating.cache_clear()
+    _leaderboard_cache_bust()
+    return True
 
 
 async def _recently_deleted_button(user_id):
@@ -9063,7 +9117,7 @@ async def view_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id:
         )
 
     keyboard.append([
-        InlineKeyboardButton("Delete Post", callback_data=f"delete_post_{post_id}_{from_page}"),
+        InlineKeyboardButton("Request Deletion", callback_data=f"delete_post_{post_id}_{from_page}"),
         InlineKeyboardButton("Back to List", callback_data=f"my_posts_{from_page}")
     ])
     keyboard.append([
@@ -10464,19 +10518,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Ask for confirmation with page info
                     keyboard = InlineKeyboardMarkup([
                         [
-                            InlineKeyboardButton("Yes, Delete", callback_data=f"confirm_delete_post_{post_id}_{from_page}"),
+                            InlineKeyboardButton("Yes, Request", callback_data=f"confirm_delete_post_{post_id}_{from_page}"),
                             InlineKeyboardButton("Cancel", callback_data=f"cancel_delete_post_{post_id}_{from_page}")
                         ]
                     ])
                     
                     await query.message.edit_text(
-                        "*Delete Post*\n\nAre you sure you want to delete this post? A notice that it was deleted "
-                        f"by the author will stay in its place, and you can restore it within {RESTORE_WINDOW_HOURS} hours.",
+                        "*Request Deletion*\n\nOnly an admin can delete a vent. You'll be asked for a reason, "
+                        "and an admin will review your request and decide.",
                         reply_markup=keyboard,
                         parse_mode=ParseMode.MARKDOWN
                     )
                 else:
-                    await query.answer("You can only delete your own posts", show_alert=True)
+                    await query.answer("You can only request deletion of your own posts", show_alert=True)
             except Exception as e:
                 logger.error(f"Error in delete_post handler: {e}")
                 await query.answer("Error processing request", show_alert=True)
@@ -10486,10 +10540,84 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parts = query.data.split('_')
                 post_id = int(parts[3])
                 from_page = int(parts[4]) if len(parts) > 4 else 1
-                await perform_author_delete(update, context, user_id, post_id, from_page)
+
+                post = await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+                if not post or str(post['author_id']) != str(user_id):
+                    await query.answer("You can only request deletion of your own posts", show_alert=True)
+                    return
+                if post.get('deleted'):
+                    await query.answer("This post is already deleted", show_alert=True)
+                    return
+
+                # An admin deleting their own vent doesn't need to ask themselves.
+                if await _is_admin_user(user_id):
+                    changed = await admin_remove_post(context, post)
+                    await query.answer("Vent deleted" if changed else "Already deleted", show_alert=not changed)
+                    await show_previous_posts(update, context, from_page)
+                    return
+
+                pending = await db_fetch_one_async(
+                    "SELECT 1 FROM delete_requests WHERE post_id = %s AND status = 'pending'", (post_id,))
+                if pending:
+                    await query.answer("You already sent a deletion request for this vent. "
+                                       "An admin will decide soon.", show_alert=True)
+                    return
+
+                # Reuse the 5-minute 'reporting' text-capture state (cleared by menu/cancel/timeout).
+                context.user_data['reporting'] = {'type': 'delete_post', 'id': post_id, 'timestamp': time.time()}
+                await query.message.reply_text(
+                    "*Request Deletion*\n\nPlease type why you want this vent deleted (max 200 characters). "
+                    "An admin will review it and decide.\n\nTap Cancel to go back.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=cancel_menu
+                )
+                await query.answer()
             except Exception as e:
-                logger.error(f"Error deleting post: {e}")
-                await query.answer("Error deleting post", show_alert=True)
+                logger.error(f"Error requesting post deletion: {e}")
+                await query.answer("Error sending request", show_alert=True)
+
+        elif query.data.startswith("delreq_approve_") or query.data.startswith("delreq_reject_"):
+            try:
+                if not await _is_admin_user(user_id):
+                    await query.answer("No permission.", show_alert=True)
+                    return
+                approve = query.data.startswith("delreq_approve_")
+                request_id = int(query.data.rsplit('_', 1)[1])
+                req = await asyncio.to_thread(
+                    decide_delete_request, request_id, user_id, 'approved' if approve else 'rejected')
+                if not req:
+                    await query.answer("This request was already decided.", show_alert=True)
+                    return
+
+                if approve:
+                    post = await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (req['post_id'],))
+                    if post and not post.get('deleted'):
+                        try:
+                            changed = await admin_remove_post(context, post)
+                        except Exception:
+                            changed = False
+                        if not changed:
+                            # Let the admin try again instead of leaving an "approved" request with a live vent.
+                            await asyncio.to_thread(reopen_delete_request, request_id)
+                            await query.answer("Could not delete the vent. Try again.", show_alert=True)
+                            return
+                    verdict, note = "Approved - vent deleted", "An admin approved your request. Your vent was deleted."
+                else:
+                    verdict, note = "Rejected", "An admin reviewed your deletion request and decided to keep your vent."
+
+                try:
+                    await query.message.edit_text(f"{query.message.text_html}\n\n<b>{verdict}</b>",
+                                                  parse_mode=ParseMode.HTML)
+                except Exception as e:
+                    logger.warning(f"Could not update the deletion request message: {e}")
+                try:
+                    await context.bot.send_message(chat_id=req['requester_id'], text=note)
+                except Exception as e:
+                    logger.warning(f"Could not notify the author about request #{request_id}: {e}")
+                await query.answer(verdict)
+            except Exception as e:
+                logger.error(f"Error deciding deletion request: {e}", exc_info=True)
+                await query.answer("Error processing request", show_alert=True)
 
         elif query.data.startswith("restore_post_"):
             try:
@@ -12187,13 +12315,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('reporting') and get_state(context) != STATE_AWAITING_COMMENT:
         if text in main_menu_buttons: return
         reporting = context.user_data.get('reporting')
+        _is_del_req = reporting.get('type') == 'delete_post'
+        _again = "Request Deletion" if _is_del_req else "Report"
 
         # Expire stale reporting state so it can never linger indefinitely
         started_at = reporting.get('timestamp', 0)
         if time.time() - started_at > REPORTING_TIMEOUT_SECONDS:
             del context.user_data['reporting']
             await update.message.reply_text(
-                "Your report request timed out after 5 minutes. Tap Report again if you still want to report this.",
+                f"Your request timed out after 5 minutes. Tap {_again} again if you still want to continue.",
                 reply_markup=get_main_menu(user_id)
             )
             return
@@ -12203,20 +12333,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if not reason:
                 await update.message.reply_text(
-                    "Please provide a reason (at least 1 character). Tap Report again to retry.",
+                    f"Please provide a reason (at least 1 character). Tap {_again} again to retry.",
                     reply_markup=get_main_menu(user_id)
                 )
                 return
 
             if len(reason) > 200:
                 await update.message.reply_text(
-                    "Reason is too long (max 200 characters). Tap Report again to retry.",
+                    f"Reason is too long (max 200 characters). Tap {_again} again to retry.",
                     reply_markup=get_main_menu(user_id)
                 )
                 return
 
             target_type = reporting['type']
             target_id = reporting['id']
+
+            if target_type == 'delete_post':
+                # Author asked for their vent to be deleted: store it and ask the admin to decide.
+                post = await db_fetch_one_async("SELECT author_id, deleted FROM posts WHERE post_id = %s", (target_id,))
+                if not post or str(post['author_id']) != str(user_id):
+                    msg = "You can only request deletion of your own vents."
+                elif post.get('deleted'):
+                    msg = "This vent is already deleted."
+                else:
+                    request_id = await asyncio.to_thread(create_delete_request, target_id, user_id, reason)
+                    if request_id is None:
+                        msg = "You already sent a deletion request for this vent. An admin will decide soon."
+                    else:
+                        msg = "Your request was sent. An admin will review it and you'll be notified of the decision."
+                        await asyncio.to_thread(notify_admin_of_delete_request, request_id, target_id, reason)
+                await update.message.reply_text(msg, reply_markup=get_main_menu(user_id))
+                return  # 'reporting' state is cleared in the finally block below
 
             report_id = (await asyncio.to_thread(create_report, user_id, target_type, target_id, reason))
 
@@ -16385,7 +16532,7 @@ async function openPost(id, reveal){
         ${p.media_id?renderMedia(p.media_type,p.media_id):''}
         <div>
           ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
-          ${String(p.author_id)===String(UID)?`<button class="ca-btn" style="margin-top:6px" onclick="delVent(${p.id})">Delete vent</button>`:`<button class="ca-btn" style="margin-top:6px" onclick="openReport('post',${p.id})">${ICONS.alert} Report</button>`}
+          ${String(p.author_id)===String(UID)?`<button class="ca-btn" style="margin-top:6px" onclick="delVent(${p.id})">Request deletion</button>`:`<button class="ca-btn" style="margin-top:6px" onclick="openReport('post',${p.id})">${ICONS.alert} Report</button>`}
         </div>
       </div>`;
     await fetchAndRenderComments(id,p.author_id,revealParam);
@@ -16581,14 +16728,25 @@ async function saveEditComment(id){
 }
 
 // ---- Vent author: delete / restore ----
-async function delVent(id){
-  if(!confirm('Delete this vent? A notice that you deleted it stays in its place, and you can restore it for 24 hours.'))return;
+let delReqTarget=null;
+function delVent(id){
+  delReqTarget=id;
+  crOpenSheet('<h3>Request deletion</h3><p>Only an admin can delete a vent. Tell us why, and an admin will review your request.</p>'+
+    '<textarea id="delreq-reason" maxlength="200" rows="3" placeholder="Reason for deleting" style="width:100%;box-sizing:border-box;margin-bottom:10px"></textarea>'+
+    '<button type="button" class="modal-btn" onclick="submitDelReq()">Send request</button>'+
+    '<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
+}
+async function submitDelReq(){
+  const id=delReqTarget;const ta=document.getElementById('delreq-reason');
+  const reason=ta?ta.value.trim():'';
+  if(!id)return;
+  if(!reason)return toast('Please write a reason');
+  crCloseSheet();
   try{
-    await api('/api/mini-app/post/'+id,{method:'DELETE',body:JSON.stringify({user_id:UID})});
-    myPostsStale=true;
-    toast('Vent deleted');
-    await openPost(id);
-  }catch(e){toast(e.message)}
+    await api('/api/mini-app/post/'+id+'/delete-request',{method:'POST',body:JSON.stringify({user_id:UID,reason:reason})});
+    toast('Request sent. An admin will review it.');
+  }catch(e){toast(e.message||'Could not send the request')}
+  delReqTarget=null;
 }
 async function restoreVent(id){
   try{
@@ -21292,35 +21450,33 @@ def mini_app_live_version():
         return jsonify({'success': False, 'error': 'Could not check for updates'}), 500
 
 
-@flask_app.route('/api/mini-app/post/<int:post_id>', methods=['DELETE'])
-def mini_app_delete_post(post_id):
-    """A vent author deletes their own vent. Same rules as the bot: a 'deleted by the author'
-    notice stays in its place (comments are kept) and the author can restore it for
-    RESTORE_WINDOW_HOURS."""
+@flask_app.route('/api/mini-app/post/<int:post_id>/delete-request', methods=['POST'])
+def mini_app_request_delete_post(post_id):
+    """A vent author asks for their vent to be deleted. Only an admin can delete: the request (with
+    the author's reason) is stored and the admin is notified in the bot to approve or reject it."""
     try:
         data = request.get_json(silent=True) or {}
-        user_id = request.args.get('user_id') or data.get('user_id')
+        user_id = str(data.get('user_id') or '')
+        reason = (data.get('reason') or '').strip()[:200]
         if not user_id:
             return jsonify({'success': False, 'error': 'Not authenticated'}), 401
-        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
-        if not post or str(post['author_id']) != str(user_id):
-            return jsonify({'success': False, 'error': 'You can only delete your own vents'}), 403
+        if not reason:
+            return jsonify({'success': False, 'error': 'Please tell us why you want it deleted'}), 400
+        post = db_fetch_one("SELECT author_id, deleted FROM posts WHERE post_id = %s", (post_id,))
+        if not post or str(post['author_id']) != user_id:
+            return jsonify({'success': False, 'error': 'You can only request deletion of your own vents'}), 403
         if post.get('deleted'):
             return jsonify({'success': False, 'error': 'This vent is already deleted'}), 409
 
-        if post.get('channel_message_id'):
-            try:
-                _run_with_bot(lambda ctx: channel_show_placeholder(ctx, post, False))
-            except Exception as e:
-                logger.error(f"Mini app: could not update the channel message for vent {post_id}: {e}")
-        if not soft_delete_post(post_id, 'author'):
-            return jsonify({'success': False, 'error': 'This vent is already deleted'}), 409
-        calculate_user_rating.cache_clear()
-        _leaderboard_cache_bust()
-        return jsonify({'success': True, 'message': 'Vent deleted', 'restore_hours': RESTORE_WINDOW_HOURS})
+        request_id = create_delete_request(post_id, user_id, reason)
+        if request_id is None:
+            return jsonify({'success': False,
+                            'error': 'You already sent a deletion request for this vent. An admin will decide soon.'}), 409
+        notify_admin_of_delete_request(request_id, post_id, reason)
+        return jsonify({'success': True, 'request_id': request_id})
     except Exception as e:
-        logger.error(f"Mini app delete vent error: {e}")
-        return jsonify({'success': False, 'error': 'Could not delete the vent'}), 500
+        logger.error(f"Mini app delete request error: {e}")
+        return jsonify({'success': False, 'error': 'Could not send the request'}), 500
 
 
 @flask_app.route('/api/mini-app/post/<int:post_id>/restore', methods=['POST'])
