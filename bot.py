@@ -16623,9 +16623,19 @@ async function openPost(id, reveal){
         ${cats?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">${cats}</div>`:''}
         <div style="font-size:17px;line-height:1.65;color:var(--text)">${esc(p.content)}</div>
         ${p.media_id?renderMedia(p.media_type,p.media_id):''}
+        ${(isAdminUser && p.delete_request)?`
+        <div style="background:rgba(235,87,87,0.1);border:1px solid rgba(235,87,87,0.3);border-radius:10px;padding:12px;margin:12px 0">
+          <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:4px">⚠️ Pending Deletion Request</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Reason: <i>${esc(p.delete_request.reason)}</i></div>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="modal-btn rep-del" style="flex:1;padding:8px" onclick="adminDecideDelReq(${p.delete_request.request_id},'approve',${p.id})">Approve (delete)</button>
+            <button type="button" class="modal-btn modal-btn-secondary" style="flex:1;padding:8px" onclick="adminDecideDelReq(${p.delete_request.request_id},'reject',${p.id})">Reject</button>
+          </div>
+        </div>`:''}
         <div>
           ${renderReactionButtons(p.id, 'post', p.reactions?.counts || {}, p.reactions?.user_reaction)}
           ${String(p.author_id)===String(UID)?`<button class="ca-btn" style="margin-top:6px" onclick="delVent(${p.id})">Request deletion</button>`:`<button class="ca-btn" style="margin-top:6px" onclick="openReport('post',${p.id})">${ICONS.alert} Report</button>`}
+          ${isAdminUser?`<button class="ca-btn" style="margin-top:6px;color:#eb5757" onclick="adminDirectDeleteVent(${p.id})">🛡 Delete (Admin)</button>`:''}
         </div>
       </div>`;
     await fetchAndRenderComments(id,p.author_id,revealParam);
@@ -17689,6 +17699,7 @@ async function checkAdminStatus(){
         <div class="rp-tabs">
           <button class="btn-ghost on" id="admin-tab-chats" onclick="adminTab('chats')">Chats</button>
           <button class="btn-ghost" id="admin-tab-reports" onclick="adminTab('reports')">Reports</button>
+          <button class="btn-ghost" id="admin-tab-deletions" onclick="adminTab('deletions')">Deletions</button>
           <button class="btn-ghost" id="admin-tab-users" onclick="adminTab('users')">Users</button>
           <button class="btn-ghost" id="admin-tab-broadcast" onclick="adminTab('broadcast')">Broadcast</button>
         </div>
@@ -17698,6 +17709,7 @@ async function checkAdminStatus(){
         </div>
         <div id="admin-chats-list"></div>
         <div id="admin-reports-list" style="display:none"></div>
+        <div id="admin-deletions-list" style="display:none"></div>
         <div id="admin-users-pane" style="display:none">
           <div id="admin-users-browse">
             <div class="search-wrap">
@@ -17725,18 +17737,93 @@ async function checkAdminStatus(){
 }
 
 let adminReportsPage = 1;
+let adminDelReqsPage = 1;
 function adminTab(which){
-  const chats = which==='chats', rep = which==='reports', users = which==='users', bc = which==='broadcast';
+  const chats = which==='chats', rep = which==='reports', dels = which==='deletions', users = which==='users', bc = which==='broadcast';
   document.getElementById('admin-chats-search').style.display = chats ? '' : 'none';
   document.getElementById('admin-chats-list').style.display = chats ? '' : 'none';
   document.getElementById('admin-reports-list').style.display = rep ? '' : 'none';
+  const delEl = document.getElementById('admin-deletions-list');
+  if(delEl) delEl.style.display = dels ? '' : 'none';
   document.getElementById('admin-users-pane').style.display = users ? '' : 'none';
   document.getElementById('admin-broadcast-pane').style.display = bc ? '' : 'none';
-  ['chats','reports','users','broadcast'].forEach(t=>document.getElementById('admin-tab-'+t).classList.toggle('on', t===which));
+  ['chats','reports','deletions','users','broadcast'].forEach(t=>{
+    const btn = document.getElementById('admin-tab-'+t);
+    if(btn) btn.classList.toggle('on', t===which);
+  });
   if(!bc) stopBroadcastPoll();
   if(rep) loadAdminReports(1);
+  if(dels) loadAdminDeleteRequests(1);
   if(users) initAdminUsers();
   if(bc) loadAdminBroadcast();
+}
+
+async function loadAdminDeleteRequests(page){
+  adminDelReqsPage = page || 1;
+  const box = document.getElementById('admin-deletions-list');
+  if(!box) return;
+  box.innerHTML = skelPosts(2);
+  try{
+    const d = await api(`/api/mini-app/admin/delete-requests?admin_id=${UID}&page=${adminDelReqsPage}`);
+    const rows = d.data || [];
+    if(!rows.length){
+      box.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:14px">No pending deletion requests</div>';
+      return;
+    }
+    const cards = rows.map(r=>`<div class="rep-card" id="delreq-${r.request_id}">
+      <div class="rep-meta">${esc(r.label)} · ${esc(r.created||'')}</div>
+      <div style="font-size:13px;color:var(--text2);margin-top:2px">Author: <b>${esc(r.author_name)}</b></div>
+      <div class="rep-reason" style="margin-top:6px"><b>Reason:</b> ${esc(r.reason)}</div>
+      <div class="rep-prev" onclick="openPost(${r.post_id})" style="cursor:pointer" title="Tap to view vent">${esc(r.content)}</div>
+      <div class="rep-btns" style="margin-top:10px">
+        <button type="button" class="modal-btn rep-del" onclick="adminDecideDelReq(${r.request_id},'approve',${r.post_id})">Approve (delete)</button>
+        <button type="button" class="modal-btn modal-btn-secondary" onclick="adminDecideDelReq(${r.request_id},'reject',${r.post_id})">Reject</button>
+      </div>
+    </div>`).join('');
+    const nav = `<div style="display:flex;justify-content:center;gap:10px;padding:4px 0 12px">
+      ${adminDelReqsPage>1?`<button type="button" class="btn-ghost" onclick="loadAdminDeleteRequests(${adminDelReqsPage-1})">◀ Prev</button>`:''}
+      ${d.has_more?`<button type="button" class="btn-ghost" onclick="loadAdminDeleteRequests(${adminDelReqsPage+1})">Next ▶</button>`:''}
+    </div>`;
+    box.innerHTML = `<div style="padding:0 16px 10px;font-size:13px;color:var(--text3)">${d.pending} pending deletion request(s)</div>` + cards + nav;
+  }catch(e){
+    box.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load deletion requests</div>';
+  }
+}
+
+async function adminDecideDelReq(requestId, action, postId){
+  const isApprove = action==='approve';
+  if(isApprove && !confirm('Approve deletion? The vent will be removed.')) return;
+  try{
+    await api('/api/mini-app/admin/decide-delete-request', {
+      method: 'POST',
+      body: JSON.stringify({admin_id: UID, request_id: requestId, action: action})
+    });
+    toast(isApprove ? 'Vent deleted' : 'Request rejected');
+    const delList = document.getElementById('admin-deletions-list');
+    if(delList && delList.style.display !== 'none'){
+      loadAdminDeleteRequests(adminDelReqsPage);
+    }
+    if(postId && currentPostId === postId){
+      openPost(postId);
+    }
+  }catch(e){
+    toast(e.message || 'Could not process request');
+  }
+}
+
+async function adminDirectDeleteVent(postId){
+  if(!confirm('Admin Delete: are you sure you want to remove this vent? It will leave an admin placeholder.')) return;
+  try{
+    await api('/api/mini-app/admin/delete-post', {
+      method: 'POST',
+      body: JSON.stringify({admin_id: UID, post_id: postId})
+    });
+    toast('Vent removed by admin');
+    myPostsStale = true;
+    await openPost(postId);
+  }catch(e){
+    toast(e.message || 'Could not delete vent');
+  }
 }
 async function loadAdminReports(page){
   adminReportsPage = page || 1;
@@ -19724,6 +19811,21 @@ def mini_app_get_single_post(post_id):
             }
             return jsonify({'success': True, 'data': formatted_post})
 
+        # Fetch pending deletion request if viewer is admin or author
+        del_req_data = None
+        if is_privileged_viewer or (viewer_id and str(viewer_id) == str(post['author_id'])):
+            del_req_row = db_fetch_one(
+                "SELECT request_id, requester_id, reason, created_at FROM delete_requests WHERE post_id = %s AND status = 'pending'",
+                (post_id,)
+            )
+            if del_req_row:
+                del_req_data = {
+                    'request_id': del_req_row['request_id'],
+                    'requester_id': str(del_req_row['requester_id']),
+                    'reason': del_req_row['reason'],
+                    'created_at': _feed_time_ago(del_req_row['created_at']) if del_req_row.get('created_at') else ''
+                }
+
         formatted_post = {
             'id': post['post_id'],
             'content': post['content'] if show_content else "This post contains explicit content that may not be suitable for all viewers.",
@@ -19737,6 +19839,7 @@ def mini_app_get_single_post(post_id):
             'media_id': post['media_id'] if show_content else None,
             'explicit': is_explicit,
             'content_hidden': is_explicit and not show_content,
+            'delete_request': del_req_data,
             'author': {
                 'id': post['author_id'],
                 'name': 'Anonymous',
@@ -21541,6 +21644,155 @@ def mini_app_live_version():
     except Exception as e:
         logger.error(f"Mini app live-version error: {e}")
         return jsonify({'success': False, 'error': 'Could not check for updates'}), 500
+
+
+@flask_app.route('/api/mini-app/admin/delete-requests', methods=['GET'])
+def mini_app_admin_delete_requests():
+    """Pending vent deletion requests for the mini app admin panel."""
+    try:
+        admin_id = request.args.get('admin_id') or request.args.get('user_id')
+        if not admin_id or not _require_admin(admin_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        page = _clamp_int(request.args.get('page'), 1, 100000, 1)
+        per_page = 10
+        offset = (page - 1) * per_page
+        rows = db_fetch_all("""
+            SELECT dr.request_id, dr.post_id, dr.requester_id, dr.reason, dr.created_at,
+                   p.content, p.media_type, p.vent_number,
+                   u.anonymous_name, u.sex, u.avatar_emoji
+            FROM delete_requests dr
+            JOIN posts p ON p.post_id = dr.post_id
+            LEFT JOIN users u ON u.user_id = dr.requester_id
+            WHERE dr.status = 'pending' AND COALESCE(p.deleted, FALSE) = FALSE
+            ORDER BY dr.created_at DESC, dr.request_id DESC
+            LIMIT %s OFFSET %s
+        """, (per_page + 1, offset)) or []
+
+        items = []
+        for r in rows[:per_page]:
+            label = f"Vent - {r['vent_number']:03d}" if r.get('vent_number') else f"Vent #{r['post_id']}"
+            author_name = get_display_name(r) if r.get('anonymous_name') else "Unknown"
+            created = r.get('created_at')
+            items.append({
+                'request_id': r['request_id'],
+                'post_id': r['post_id'],
+                'label': label,
+                'author_name': author_name,
+                'author_sex': r.get('sex') or '👤',
+                'author_avatar': r.get('avatar_emoji') or '',
+                'reason': r['reason'],
+                'content': (r['content'] or '').strip() or f"[{r.get('media_type') or 'media'}]",
+                'created': _feed_time_ago(created) if created else '',
+            })
+        total = db_fetch_one("""
+            SELECT COUNT(*) AS n FROM delete_requests dr
+            JOIN posts p ON p.post_id = dr.post_id
+            WHERE dr.status = 'pending' AND COALESCE(p.deleted, FALSE) = FALSE
+        """)
+        return jsonify({
+            'success': True,
+            'data': items,
+            'has_more': len(rows) > per_page,
+            'pending': int(total['n']) if total else 0
+        })
+    except Exception as e:
+        logger.error(f"Mini-app admin delete requests error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@flask_app.route('/api/mini-app/admin/decide-delete-request', methods=['POST'])
+def mini_app_admin_decide_delete_request():
+    """Approve or reject a vent deletion request from the mini app."""
+    try:
+        data = request.get_json(silent=True) or {}
+        admin_id = str(data.get('admin_id') or data.get('user_id') or '')
+        if not admin_id or not _require_admin(admin_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        action = data.get('action')
+        if action not in ('approve', 'reject'):
+            return jsonify({'success': False, 'error': 'Invalid action'}), 400
+        try:
+            request_id = int(data.get('request_id'))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid request_id'}), 400
+
+        approve = (action == 'approve')
+        req = decide_delete_request(request_id, admin_id, 'approved' if approve else 'rejected')
+        if not req:
+            return jsonify({'success': False, 'error': 'This request was already decided'}), 409
+
+        if approve:
+            post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (req['post_id'],))
+            if post and not post.get('deleted'):
+                try:
+                    if post.get('approved'):
+                        if not soft_delete_post(post['post_id'], 'admin'):
+                            raise RuntimeError('Could not soft delete')
+                        if post.get('channel_message_id'):
+                            _run_with_bot(lambda ctx: channel_show_placeholder(ctx, post, by_admin=True, remove_media=True))
+                    else:
+                        if not delete_post_cascade([post['post_id']]):
+                            raise RuntimeError('Could not cascade delete')
+                    calculate_user_rating.cache_clear()
+                    _leaderboard_cache_bust()
+                except Exception as e:
+                    logger.error(f"Failed to delete vent for request #{request_id}: {e}")
+                    reopen_delete_request(request_id)
+                    return jsonify({'success': False, 'error': 'Could not delete the vent. Please try again.'}), 500
+            note = "An admin approved your request. Your vent was deleted."
+        else:
+            note = "An admin reviewed your deletion request and decided to keep your vent."
+
+        if req.get('requester_id'):
+            _fire_and_forget(send_telegram_message_sync, req['requester_id'], note)
+
+        return jsonify({'success': True, 'action': action})
+    except Exception as e:
+        logger.error(f"Mini-app decide delete request error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@flask_app.route('/api/mini-app/admin/delete-post', methods=['POST'])
+def mini_app_admin_direct_delete_post():
+    """An admin directly removes any vent from the mini app."""
+    try:
+        data = request.get_json(silent=True) or {}
+        admin_id = str(data.get('admin_id') or data.get('user_id') or '')
+        if not admin_id or not _require_admin(admin_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        try:
+            post_id = int(data.get('post_id'))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid post_id'}), 400
+
+        post = db_fetch_one("SELECT * FROM posts WHERE post_id = %s", (post_id,))
+        if not post:
+            return jsonify({'success': False, 'error': 'Post not found'}), 404
+        if post.get('deleted'):
+            return jsonify({'success': False, 'error': 'This vent is already deleted'}), 409
+
+        if post.get('approved'):
+            if not soft_delete_post(post_id, 'admin'):
+                return jsonify({'success': False, 'error': 'Could not delete post'}), 500
+            if post.get('channel_message_id'):
+                _run_with_bot(lambda ctx: channel_show_placeholder(ctx, post, by_admin=True, remove_media=True))
+        else:
+            if not delete_post_cascade([post_id]):
+                return jsonify({'success': False, 'error': 'Could not delete post'}), 500
+        calculate_user_rating.cache_clear()
+        _leaderboard_cache_bust()
+
+        # If there was a pending deletion request for this post, mark it approved
+        db_execute("""
+            UPDATE delete_requests
+            SET status = 'approved', reviewed_by = %s, reviewed_at = NOW()
+            WHERE post_id = %s AND status = 'pending'
+        """, (admin_id, post_id))
+
+        return jsonify({'success': True, 'message': 'Vent deleted by admin'})
+    except Exception as e:
+        logger.error(f"Mini-app admin direct delete error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @flask_app.route('/api/mini-app/post/<int:post_id>/delete-request', methods=['POST'])
