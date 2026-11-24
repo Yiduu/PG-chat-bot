@@ -21341,7 +21341,7 @@ _DECISION_ERRORS = {
 
 @flask_app.route('/api/mini-app/admin/pending-posts', methods=['GET'])
 def mini_app_admin_pending_posts():
-    """Paginated list of posts waiting for approval (oldest first), for the Monitor page."""
+    """Paginated list of posts waiting for approval (newest first), for the Monitor page."""
     try:
         # Same gate as the other admin endpoints, same generic 403 (no hint whether the id
         # exists / is an admin).
@@ -21364,7 +21364,7 @@ def mini_app_admin_pending_posts():
             FROM posts p
             LEFT JOIN users u ON u.user_id = p.author_id
             WHERE p.approved = FALSE AND COALESCE(p.deleted, FALSE) = FALSE
-            ORDER BY p.timestamp ASC, p.post_id ASC
+            ORDER BY p.timestamp DESC, p.post_id DESC
             LIMIT %s OFFSET %s
         ''', (per_page, offset)) or []
         total_row = db_fetch_one(
