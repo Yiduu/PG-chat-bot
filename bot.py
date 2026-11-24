@@ -6037,10 +6037,164 @@ async def toggle_post_explicit(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await query.answer("Marked as explicit" if new_explicit else "Unmarked as explicit")
 
+# Posts currently being approved/rejected. Guards against the same post being decided twice at once
+# (two admins, or the bot button and the Mini App). The lock is held only to touch the set, never
+# across an await, so it can't stall the event loop.
+_DECISIONS_IN_FLIGHT = set()
+_DECISIONS_LOCK = threading.Lock()
+
+
+def _claim_decision(post_id):
+    with _DECISIONS_LOCK:
+        if post_id in _DECISIONS_IN_FLIGHT:
+            return False
+        _DECISIONS_IN_FLIGHT.add(post_id)
+        return True
+
+
+def _release_decision(post_id):
+    with _DECISIONS_LOCK:
+        _DECISIONS_IN_FLIGHT.discard(post_id)
+
+
+async def publish_pending_post(bot, post_id: int, admin_id: str):
+    """Publish a pending post to the channel and mark it approved. Shared by the bot's Approve
+    button and the Mini App so both behave identically (vent number, channel message, thread reply,
+    author notification, cache busting).
+
+    Returns {'ok': True, 'post': row, 'vent_display': str, 'categories': [..]} or
+    {'ok': False, 'error': code} with code in: not_found, already_approved, busy,
+    unsupported_media, send_failed, db."""
+    if not _claim_decision(post_id):
+        return {'ok': False, 'error': 'busy'}
+    try:
+        post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
+        if not post or post.get('deleted'):
+            return {'ok': False, 'error': 'not_found'}
+        if post.get('approved'):
+            return {'ok': False, 'error': 'already_approved'}
+
+        media_type = post.get('media_type') or 'text'
+        if media_type not in ('text', 'photo', 'voice', 'audio'):
+            return {'ok': False, 'error': 'unsupported_media'}
+
+        max_vent = (await db_fetch_one_async("SELECT MAX(vent_number) as max_num FROM posts WHERE approved = TRUE"))
+        next_vent_number = ((max_vent or {}).get('max_num') or 0) + 1
+
+        cats_row = (await db_fetch_all_async("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,)))
+        categories = [row['category_code'] for row in cats_row]
+        hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
+        vent_display = f"Vent - {next_vent_number:03d}"
+
+        # View Post + Comments for explicit posts, Comments only otherwise
+        kb = build_channel_post_keyboard(post_id, 0, post.get('explicit', False))
+
+        # Thread continuation: reply to the original post's channel message
+        reply_to_message_id = None
+        if post.get('thread_from_post_id'):
+            original_post = (await db_fetch_one_async(
+                "SELECT channel_message_id FROM posts WHERE post_id = %s",
+                (post['thread_from_post_id'],)
+            ))
+            if original_post and original_post['channel_message_id']:
+                reply_to_message_id = original_post['channel_message_id']
+
+        body_html = EXPLICIT_WARNING_HTML if post.get('explicit') else html.escape(post['content'])
+        channel_text = (
+            f"{vent_header_html(vent_display, post.get('revealed_sex'))}\n\n"
+            f"{body_html}\n\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"{html.escape(hashtags)}\n"
+            f"<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
+        )
+
+        try:
+            if media_type == 'text':
+                msg = await bot.send_message(
+                    chat_id=CHANNEL_ID, text=channel_text, parse_mode=ParseMode.HTML,
+                    reply_markup=kb, reply_to_message_id=reply_to_message_id,
+                    disable_web_page_preview=True
+                )
+            else:
+                sender = getattr(bot, f"send_{media_type}")  # send_photo / send_voice / send_audio
+                msg = await sender(
+                    chat_id=CHANNEL_ID, **{media_type: post['media_id']},
+                    caption=channel_text, parse_mode=ParseMode.HTML,
+                    reply_markup=kb, reply_to_message_id=reply_to_message_id
+                )
+        except Exception as e:
+            logger.error(f"Could not publish post {post_id} to the channel: {e}")
+            return {'ok': False, 'error': 'send_failed'}
+
+        success = (await db_execute_async(
+            "UPDATE posts SET approved = TRUE, approved_at = CURRENT_TIMESTAMP, admin_approved_by = %s, "
+            "channel_message_id = %s, vent_number = %s WHERE post_id = %s",
+            (str(admin_id), msg.message_id, next_vent_number, post_id)
+        ))
+
+        # Clear Aura caches for real-time accuracy
+        calculate_user_rating.cache_clear()
+        _leaderboard_cache_bust()
+        format_aura.cache_clear()
+
+        if not success:
+            return {'ok': False, 'error': 'db'}
+
+        # Awaited (not a background task): the Mini App runs this in a short-lived event loop that
+        # would cancel a pending task as soon as the request returns.
+        try:
+            await bot.send_message(chat_id=post['author_id'], text="Your post has been approved and published!")
+        except Exception as e:
+            logger.warning(f"Could not notify author of approved post {post_id}: {e}")
+
+        return {'ok': True, 'post': post, 'vent_display': vent_display, 'categories': categories}
+    finally:
+        _release_decision(post_id)
+
+
+async def reject_pending_post(bot, post_id: int, admin_id: str, reason: str = None):
+    """Reject a pending post: delete it and tell the author (optionally with a reason). Only
+    pending posts can be rejected, an approved post must go through the delete flow instead.
+
+    Returns {'ok': True} or {'ok': False, 'error': code} (not_found, already_approved, busy, db)."""
+    if not _claim_decision(post_id):
+        return {'ok': False, 'error': 'busy'}
+    try:
+        post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
+        if not post:
+            return {'ok': False, 'error': 'not_found'}
+        if post.get('approved'):
+            return {'ok': False, 'error': 'already_approved'}
+
+        if reason and len(reason) > 200:
+            reason = reason[:197] + "..."
+
+        try:
+            deleted = await asyncio.to_thread(delete_post_cascade, [post_id])
+        except Exception as e:
+            logger.error(f"Could not delete rejected post {post_id}: {e}")
+            return {'ok': False, 'error': 'db'}
+        if not deleted:
+            return {'ok': False, 'error': 'not_found'}
+
+        notification_text = "Your post was not approved by the admin."
+        if reason:
+            notification_text += f"\n\n<b>Reason:</b> {html.escape(reason)}"
+        try:
+            await bot.send_message(chat_id=post['author_id'], text=notification_text,
+                                   parse_mode=ParseMode.HTML if reason else None)
+        except Exception as e:
+            logger.warning(f"Could not notify author of rejected post {post_id}: {e}")
+
+        return {'ok': True}
+    finally:
+        _release_decision(post_id)
+
+
 async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_id: int):
     query = update.callback_query
     user_id = str(update.effective_user.id)
-    
+
     # Verify admin permissions
     user = (await db_fetch_one_async("SELECT is_admin FROM users WHERE user_id = %s", (user_id,)))
     if not user or not user['is_admin']:
@@ -6049,134 +6203,28 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
         except:
             await query.edit_message_text("You don't have permission to do this.")
         return
-    
-    # Get the post
-    post = (await db_fetch_one_async("SELECT * FROM posts WHERE post_id = %s", (post_id,)))
-    if not post:
-        try:
-            await query.answer("Post not found.", show_alert=True)
-        except:
-            await query.edit_message_text("Post not found.")
-        return
-    
+
     try:
-        # Get the next vent number FIRST
-        max_vent = (await db_fetch_one_async("SELECT MAX(vent_number) as max_num FROM posts WHERE approved = TRUE"))
-        next_vent_number = (max_vent['max_num'] or 0) + 1
-        
-        # Get categories for this post
-        cats_row = (await db_fetch_all_async("SELECT category_code FROM post_categories WHERE post_id = %s", (post_id,)))
-        categories = [row['category_code'] for row in cats_row]
-        hashtags = ' '.join([f"#{cat}" for cat in categories]) if categories else "#Other"
-        
-        # Create the vent number text (copyable format)
-        vent_display = f"Vent - {next_vent_number:03d}"
-        
-        caption_text = (
-            f"`{vent_display}`\n\n"
-            f"{post['content']}\n\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"{hashtags}\n"
-            f"[Telegram](https://t.me/christianvent)| [Bot](https://t.me/{BOT_USERNAME})"
-        )
-        
-        # Create the channel keyboard (View Post + Comments for explicit posts, Comments only otherwise)
-        kb = build_channel_post_keyboard(post_id, 0, post.get('explicit', False))
-        
-        # Check if this is a thread continuation
-        reply_to_message_id = None
-        if post['thread_from_post_id']:
-            # Get the original post's channel message ID
-            original_post = (await db_fetch_one_async(
-                "SELECT channel_message_id FROM posts WHERE post_id = %s", 
-                (post['thread_from_post_id'],)
-            ))
-            if original_post and original_post['channel_message_id']:
-                reply_to_message_id = original_post['channel_message_id']
-        
-        # Send post to channel based on media type
-        if post.get('explicit'):
-            body_html = EXPLICIT_WARNING_HTML
-        else:
-            body_html = html.escape(post['content'])
-        safe_hashtags = html.escape(hashtags)
-        channel_text = (
-            f"{vent_header_html(vent_display, post.get('revealed_sex'))}\n\n"
-            f"{body_html}\n\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"{safe_hashtags}\n"
-            f"<a href='https://t.me/christianvent'>Telegram</a> | <a href='https://t.me/{BOT_USERNAME}'>Bot</a>"
-        )
-
-        if post['media_type'] == 'text':
-            msg = await context.bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=channel_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb,
-                reply_to_message_id=reply_to_message_id,
-                disable_web_page_preview=True
-            )
-        elif post['media_type'] == 'photo':
-            msg = await context.bot.send_photo(
-                chat_id=CHANNEL_ID,
-                photo=post['media_id'],
-                caption=channel_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb,
-                reply_to_message_id=reply_to_message_id
-            )
-        elif post['media_type'] == 'voice':
-            msg = await context.bot.send_voice(
-                chat_id=CHANNEL_ID,
-                voice=post['media_id'],
-                caption=channel_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb,
-                reply_to_message_id=reply_to_message_id
-            )
-        elif post['media_type'] == 'audio':
-            msg = await context.bot.send_audio(
-                chat_id=CHANNEL_ID,
-                audio=post['media_id'],
-                caption=channel_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb,
-                reply_to_message_id=reply_to_message_id
-            )
-        else:
-            await query.answer("Unsupported media type.", show_alert=True)
+        result = await publish_pending_post(context.bot, post_id, user_id)
+        if not result['ok']:
+            text = {
+                'not_found': "Post not found.",
+                'already_approved': "This post was already approved.",
+                'busy': "Another admin is handling this post right now.",
+                'unsupported_media': "Unsupported media type.",
+                'send_failed': "Could not publish to the channel. Please try again.",
+                'db': "Failed to update database.",
+            }.get(result['error'], "Failed to approve post.")
+            await query.answer(text, show_alert=True)
             return
-        
-        # Update the post in database with vent number
-        success = (await db_execute_async(
-            "UPDATE posts SET approved = TRUE, approved_at = CURRENT_TIMESTAMP, admin_approved_by = %s, channel_message_id = %s, vent_number = %s WHERE post_id = %s",
-            (user_id, msg.message_id, next_vent_number, post_id)
-        ))
-        
-        # Clear Aura Cache for real-time accuracy
-        calculate_user_rating.cache_clear()
-        _leaderboard_cache_bust()
-        format_aura.cache_clear()
 
-        
-        if not success:
-            await query.answer("Failed to update database.", show_alert=True)
-            return
-        
-        # Notify the author in background
-        asyncio.create_task(context.bot.send_message(
-            chat_id=post['author_id'],
-            text="Your post has been approved and published!"
-        ))
-        
-        # =============================================
+        post = result['post']
+        vent_display = result['vent_display']
+        categories = result['categories']
+
         # Update the admin's original message to remove the Approve/Reject buttons
         try:
-            # Format categories for display
             categories_display = ', '.join(categories) if categories else 'None'
-            
-            # Edit the original admin notification message to show it's approved
             safe_cats_display = html.escape(categories_display)
             safe_content_preview = html.escape(post['content'][:150])
             await query.edit_message_text(
@@ -6187,10 +6235,6 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
                 f"<b>Content Preview:</b>\n{safe_content_preview}...",
                 parse_mode=ParseMode.HTML
             )
-            
-            # Alternative: You can also delete the admin notification message entirely
-            # await query.message.delete()
-            
         except BadRequest as e:
             # If editing fails, at least reply with success message
             logger.error(f"Error updating admin message: {e}")
@@ -6199,8 +6243,7 @@ async def approve_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_
                 f"Post #{post_id} approved and published as {vent_display}!",
                 parse_mode=ParseMode.MARKDOWN
             )
-        
-        
+
     except Exception as e:
         logger.error(f"Error approving post: {e}")
         try:
@@ -6319,6 +6362,14 @@ async def reject_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_i
             await query.edit_message_text("Post not found.")
         return
     
+    # Already approved (e.g. from the Mini App): rejecting would delete a live post.
+    if post.get('approved'):
+        try:
+            await query.answer("This post was already approved.", show_alert=True)
+        except Exception:
+            pass
+        return
+
     # Instead of immediate deletion, ask for a reason
     await ask_rejection_reason(update, context, post_id)
 
@@ -17698,6 +17749,7 @@ async function checkAdminStatus(){
         </div></div>
         <div class="rp-tabs">
           <button class="btn-ghost on" id="admin-tab-chats" onclick="adminTab('chats')">Chats</button>
+          <button class="btn-ghost" id="admin-tab-pending" onclick="adminTab('pending')">Pending<span id="admin-pending-badge" class="unread-badge" style="display:none;margin-left:6px"></span></button>
           <button class="btn-ghost" id="admin-tab-reports" onclick="adminTab('reports')">Reports</button>
           <button class="btn-ghost" id="admin-tab-deletions" onclick="adminTab('deletions')">Deletions</button>
           <button class="btn-ghost" id="admin-tab-users" onclick="adminTab('users')">Users</button>
@@ -17708,6 +17760,7 @@ async function checkAdminStatus(){
           <input id="admin-search-inp" type="text" placeholder="Search by name or user ID…">
         </div>
         <div id="admin-chats-list"></div>
+        <div id="admin-pending-list" style="display:none"></div>
         <div id="admin-reports-list" style="display:none"></div>
         <div id="admin-deletions-list" style="display:none"></div>
         <div id="admin-users-pane" style="display:none">
@@ -17733,25 +17786,28 @@ async function checkAdminStatus(){
       clearTimeout(st);
       st = setTimeout(()=>loadAdminChats(e.target.value.trim(), 1), 400);
     });
+    refreshPendingBadge();
   }catch(e){console.error('checkAdminStatus failed:', e);}
 }
 
 let adminReportsPage = 1;
 let adminDelReqsPage = 1;
 function adminTab(which){
-  const chats = which==='chats', rep = which==='reports', dels = which==='deletions', users = which==='users', bc = which==='broadcast';
+  const chats = which==='chats', pend = which==='pending', rep = which==='reports', dels = which==='deletions', users = which==='users', bc = which==='broadcast';
   document.getElementById('admin-chats-search').style.display = chats ? '' : 'none';
   document.getElementById('admin-chats-list').style.display = chats ? '' : 'none';
+  document.getElementById('admin-pending-list').style.display = pend ? '' : 'none';
   document.getElementById('admin-reports-list').style.display = rep ? '' : 'none';
   const delEl = document.getElementById('admin-deletions-list');
   if(delEl) delEl.style.display = dels ? '' : 'none';
   document.getElementById('admin-users-pane').style.display = users ? '' : 'none';
   document.getElementById('admin-broadcast-pane').style.display = bc ? '' : 'none';
-  ['chats','reports','deletions','users','broadcast'].forEach(t=>{
+  ['chats','pending','reports','deletions','users','broadcast'].forEach(t=>{
     const btn = document.getElementById('admin-tab-'+t);
     if(btn) btn.classList.toggle('on', t===which);
   });
   if(!bc) stopBroadcastPoll();
+  if(pend) loadAdminPending(1);
   if(rep) loadAdminReports(1);
   if(dels) loadAdminDeleteRequests(1);
   if(users) initAdminUsers();
@@ -17809,6 +17865,107 @@ async function adminDecideDelReq(requestId, action, postId){
   }catch(e){
     toast(e.message || 'Could not process request');
   }
+}
+
+// ---- Pending posts (approve / reject / delete) ----
+let adminPendingPage = 1;
+let adminPendingBusy = false;
+
+function setPendingBadge(n){
+  const b = document.getElementById('admin-pending-badge');
+  if(!b) return;
+  b.textContent = n > 99 ? '99+' : String(n);
+  b.style.display = n > 0 ? '' : 'none';
+}
+
+async function refreshPendingBadge(){
+  try{
+    const d = await api(`/api/mini-app/admin/pending-posts?admin_id=${UID}&page=1&count_only=1`);
+    setPendingBadge(d.total || 0);
+  }catch(e){}
+}
+
+async function loadAdminPending(page){
+  adminPendingPage = Math.max(1, page || 1);
+  const box = document.getElementById('admin-pending-list');
+  if(!box) return;
+  box.innerHTML = skelPosts(2);
+  try{
+    const d = await api(`/api/mini-app/admin/pending-posts?admin_id=${UID}&page=${adminPendingPage}`);
+    setPendingBadge(d.total || 0);
+    const rows = d.data || [];
+    if(!rows.length){
+      if(adminPendingPage > 1 && d.total > 0){ return loadAdminPending(d.total_pages); } // page emptied by decisions
+      box.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:14px">No pending posts 🎉</div>';
+      return;
+    }
+    const cards = rows.map(r=>{
+      const cats = (r.categories||[]).map(c=>'#'+esc(c)).join(' ');
+      const text = (r.content||'').trim();
+      const flags = [r.explicit?'Explicit':'', r.is_thread?'Thread reply':'', r.media_type&&r.media_type!=='text'?esc(r.media_type):'']
+        .filter(Boolean).join(' · ');
+      return `<div class="rep-card" id="pend-${r.post_id}">
+        <div class="rep-meta">Post #${r.post_id} · ${esc(r.created||'')}${flags?' · '+flags:''}</div>
+        <div style="font-size:13px;color:var(--text2);margin-top:2px">Author: <b>${esc(r.author_name)}</b></div>
+        ${cats?`<div style="font-size:12px;color:var(--gold2);margin-top:4px">${cats}</div>`:''}
+        <div class="rep-prev" style="margin-top:8px;white-space:pre-wrap">${esc(text) || '<i>(no text)</i>'}</div>
+        ${r.media_id?renderMedia(r.media_type, r.media_id):''}
+        <div class="rep-btns" style="margin-top:10px">
+          <button type="button" class="modal-btn" onclick="adminApprovePending(${r.post_id})">Approve</button>
+          <button type="button" class="modal-btn modal-btn-secondary" onclick="adminRejectPendingAsk(${r.post_id})">Reject</button>
+          <button type="button" class="modal-btn rep-del" onclick="adminDeletePendingAsk(${r.post_id})">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+    const nav = `<div style="display:flex;align-items:center;justify-content:center;gap:16px;padding:8px 0 16px">
+      <button type="button" class="btn-ghost" ${adminPendingPage<=1?'disabled style="opacity:.4;cursor:not-allowed"':''} onclick="loadAdminPending(${adminPendingPage-1})">◀ Prev</button>
+      <span style="color:var(--text3);font-size:13px">Page ${d.page} of ${d.total_pages}</span>
+      <button type="button" class="btn-ghost" ${d.has_more?'':'disabled style="opacity:.4;cursor:not-allowed"'} onclick="loadAdminPending(${adminPendingPage+1})">Next ▶</button>
+    </div>`;
+    box.innerHTML = `<div style="padding:0 16px 10px;font-size:13px;color:var(--text3)">${d.total} pending post(s)</div>` + cards + nav;
+  }catch(e){
+    box.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Failed to load pending posts</div>';
+  }
+}
+
+async function adminPendingAct(path, body, okMsg){
+  if(adminPendingBusy) return;
+  adminPendingBusy = true;
+  try{
+    await api(path, {method:'POST', body: JSON.stringify(Object.assign({admin_id: UID}, body))});
+    hap('success'); toast(okMsg);
+  }catch(e){
+    toast(e.message || 'Something went wrong');
+  }finally{
+    adminPendingBusy = false;
+    loadAdminPending(adminPendingPage); // always refresh: the post may have been decided elsewhere
+  }
+}
+
+function adminApprovePending(postId){
+  adminPendingAct('/api/mini-app/admin/approve-post', {post_id: postId}, 'Approved and published');
+}
+
+function adminRejectPendingAsk(postId){
+  crOpenSheet('<h3>Reject this post?</h3><p>The author is notified and the post is deleted. You can add a reason (optional).</p>'+
+    '<textarea id="pend-reason" maxlength="200" rows="3" placeholder="Reason (optional)" style="width:100%;box-sizing:border-box;padding:10px 12px;margin:0 0 10px;border-radius:12px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font:inherit;resize:none"></textarea>'+
+    '<button type="button" class="modal-btn solid-danger" onclick="adminRejectPendingDo('+postId+')">Reject</button>'+
+    '<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
+}
+function adminRejectPendingDo(postId){
+  const el = document.getElementById('pend-reason');
+  const reason = el ? el.value.trim() : '';
+  crCloseSheet();
+  adminPendingAct('/api/mini-app/admin/reject-post', {post_id: postId, reason: reason}, 'Post rejected');
+}
+
+function adminDeletePendingAsk(postId){
+  crOpenSheet('<h3>Delete this post?</h3><p>It is removed permanently and the author is <b>not</b> notified. Use Reject if you want to tell them.</p>'+
+    '<button type="button" class="modal-btn solid-danger" onclick="crCloseSheet();adminDeletePendingDo('+postId+')">Delete</button>'+
+    '<button type="button" class="modal-btn modal-btn-secondary" onclick="crCloseSheet()">Cancel</button>');
+}
+function adminDeletePendingDo(postId){
+  adminPendingAct('/api/mini-app/admin/delete-post', {post_id: postId}, 'Post deleted');
 }
 
 async function adminDirectDeleteVent(postId){
@@ -21170,75 +21327,142 @@ def mini_app_admin_chat_transcript(user_a, user_b):
 
     return jsonify({'success': True, 'data': data, 'total': total, 'has_more': total > len(data)})
 
+PENDING_POSTS_PER_PAGE = 10
+
+_DECISION_ERRORS = {
+    'not_found': ('This post no longer exists', 404),
+    'already_approved': ('This post was already approved', 409),
+    'busy': ('Another admin is handling this post right now', 409),
+    'unsupported_media': ('Unsupported media type', 400),
+    'send_failed': ('Could not publish to the channel. Please try again.', 502),
+    'db': ('Could not save the decision. Please try again.', 500),
+}
+
+
 @flask_app.route('/api/mini-app/admin/pending-posts', methods=['GET'])
 def mini_app_admin_pending_posts():
-    """API endpoint for admin to get pending posts"""
+    """Paginated list of posts waiting for approval (oldest first), for the Monitor page."""
     try:
-        # Was completely unauthenticated. Same gate as the other admin endpoints, same
-        # generic 403 (no hint whether the id exists / is an admin).
+        # Same gate as the other admin endpoints, same generic 403 (no hint whether the id
+        # exists / is an admin).
         admin_id = request.args.get('admin_id') or request.args.get('user_id')
         if not admin_id or not _require_admin(admin_id):
             return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-        
-        posts = db_fetch_all('''
-            SELECT 
-                p.post_id,
-                p.content,
-                p.timestamp,
-                p.media_type,
-                p.explicit,
-                u.anonymous_name as author_name,
-                u.sex as author_sex,
-                STRING_AGG(pc.category_code, ',') as categories
+
+        page = _clamp_int(request.args.get('page'), 1, 100000, 1)
+        per_page = PENDING_POSTS_PER_PAGE
+        offset = (page - 1) * per_page
+
+        count_only = request.args.get('count_only') == '1'  # cheap badge refresh: no rows
+
+        rows = [] if count_only else db_fetch_all('''
+            SELECT p.post_id, p.content, p.timestamp, p.media_type, p.media_id, p.explicit,
+                   p.thread_from_post_id,
+                   u.anonymous_name, u.sex, u.avatar_emoji,
+                   (SELECT STRING_AGG(pc.category_code, ',' ORDER BY pc.category_code)
+                      FROM post_categories pc WHERE pc.post_id = p.post_id) AS categories
             FROM posts p
-            JOIN users u ON p.author_id = u.user_id
-            LEFT JOIN post_categories pc ON p.post_id = pc.post_id
-            WHERE p.approved = FALSE
-            GROUP BY p.post_id, u.anonymous_name, u.sex, p.content, p.timestamp, p.media_type, p.explicit
-            ORDER BY p.timestamp
-        ''')
-        
+            LEFT JOIN users u ON u.user_id = p.author_id
+            WHERE p.approved = FALSE AND COALESCE(p.deleted, FALSE) = FALSE
+            ORDER BY p.timestamp ASC, p.post_id ASC
+            LIMIT %s OFFSET %s
+        ''', (per_page, offset)) or []
+        total_row = db_fetch_one(
+            "SELECT COUNT(*) AS n FROM posts WHERE approved = FALSE AND COALESCE(deleted, FALSE) = FALSE"
+        )
+        total = int(total_row['n']) if total_row else 0
+        total_pages = max(1, -(-total // per_page))
+
+        items = []
+        for r in rows:
+            ts = r.get('timestamp')
+            items.append({
+                'post_id': r['post_id'],
+                'content': r.get('content') or '',
+                'media_type': r.get('media_type') or 'text',
+                'media_id': r.get('media_id'),
+                'explicit': bool(r.get('explicit')),
+                'is_thread': bool(r.get('thread_from_post_id')),
+                'author_name': get_display_name(r) if r.get('anonymous_name') else 'Unknown',
+                'author_sex': r.get('sex') or '👤',
+                'author_avatar': r.get('avatar_emoji') or '',
+                'categories': [c for c in (r.get('categories') or '').split(',') if c],
+                'created': _feed_time_ago(ts) if ts else '',
+            })
+
         return jsonify({
             'success': True,
-            'data': posts
+            'data': items,
+            'page': page,
+            'per_page': per_page,
+            'total': total,
+            'total_pages': total_pages,
+            'has_more': page < total_pages,
         })
-        
+
     except Exception as e:
         logger.error(f"Error in mini-app admin pending posts: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Could not load pending posts'}), 500
+
+
+def _parse_post_id(raw):
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
 
 @flask_app.route('/api/mini-app/admin/approve-post', methods=['POST'])
 def mini_app_admin_approve_post():
-    """API endpoint for admin to approve posts"""
+    """Approve a pending post. Does exactly what the bot's Approve button does: assigns the vent
+    number, publishes to the channel, stores the channel message id and notifies the author."""
     try:
         data = request.get_json(silent=True) or {}
         admin_id = data.get('admin_id') or data.get('user_id') or request.args.get('admin_id')
         if not admin_id or not _require_admin(admin_id):
             return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-        post_id = data.get('post_id')
-        
-        if not post_id:
+        post_id = _parse_post_id(data.get('post_id'))
+        if post_id is None:
             return jsonify({'success': False, 'error': 'Post ID required'}), 400
-        
-        # Update the post to approved
-        # Stamp approved_at only on the first approval so re-clicking never reorders the feed.
-        success = db_execute(
-            "UPDATE posts SET approved_at = COALESCE(CASE WHEN approved THEN approved_at END, CURRENT_TIMESTAMP), "
-            "approved = TRUE, admin_approved_by = COALESCE(admin_approved_by, %s) WHERE post_id = %s",
-            (str(admin_id), post_id)
-        )
-        calculate_user_rating.cache_clear()  # an approved post is +10 aura
-        _leaderboard_cache_bust()
-        
-        if success:
-            return jsonify({'success': True, 'message': 'Post approved'})
-        else:
-            return jsonify({'success': False, 'error': 'Failed to approve post'}), 500
-            
+
+        result = _run_with_bot(lambda ctx: publish_pending_post(ctx.bot, post_id, str(admin_id)))
+        if not result['ok']:
+            msg, status = _DECISION_ERRORS.get(result['error'], ('Could not approve the post', 500))
+            return jsonify({'success': False, 'error': msg}), status
+
+        return jsonify({'success': True, 'message': 'Post approved', 'vent_display': result['vent_display']})
+
     except Exception as e:
         logger.error(f"Error in mini-app approve post: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Could not approve the post'}), 500
+
+
+@flask_app.route('/api/mini-app/admin/reject-post', methods=['POST'])
+def mini_app_admin_reject_post():
+    """Reject a pending post (optional reason, max 200 chars). Same outcome as the bot's Reject:
+    the author is told, and the post is deleted outright."""
+    try:
+        data = request.get_json(silent=True) or {}
+        admin_id = data.get('admin_id') or data.get('user_id') or request.args.get('admin_id')
+        if not admin_id or not _require_admin(admin_id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+        post_id = _parse_post_id(data.get('post_id'))
+        if post_id is None:
+            return jsonify({'success': False, 'error': 'Post ID required'}), 400
+        reason = (data.get('reason') or '').strip() or None
+
+        result = _run_with_bot(lambda ctx: reject_pending_post(ctx.bot, post_id, str(admin_id), reason))
+        if not result['ok']:
+            msg, status = _DECISION_ERRORS.get(result['error'], ('Could not reject the post', 500))
+            return jsonify({'success': False, 'error': msg}), status
+
+        return jsonify({'success': True, 'message': 'Post rejected'})
+
+    except Exception as e:
+        logger.error(f"Error in mini-app reject post: {e}")
+        return jsonify({'success': False, 'error': 'Could not reject the post'}), 500
 
 # ==================== MINI APP: REPORTS, FOLLOW, ADMIN REPORT REVIEW ====================
 MINI_REPORT_REASONS = (
