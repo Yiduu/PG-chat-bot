@@ -3732,9 +3732,48 @@ def get_display_name_with_sex(user_data):
     return f"{prefix} {name}" if prefix else name
 
 def normalize_revealed_sex(value):
-    """Only 👨 / 👩 are ever shown next to a vent number. Anything else (None, '', the
+    """Only 👨 / 👩 (and 🚹 / 🚺) are ever shown next to a vent number. Anything else (None, '', the
     unset 👤 placeholder, junk) means 'show nothing'."""
-    return value if value in ('👨', '👩') else None
+    return value if value in ('👨', '👩', '🚹', '🚺') else None
+
+# Telegram Custom Emojis for Male / Female / Unset sex icons
+PREMIUM_SEX_IDS = {
+    '👨': '5429564911048992647',
+    '🚹': '5429564911048992647',
+    '👩': '5429474729620677471',
+    '🚺': '5429474729620677471',
+    '👤': '5373012449597335010',
+}
+
+PREMIUM_SEX_FALLBACK = {
+    '👨': '🚹',
+    '🚹': '🚹',
+    '👩': '🚺',
+    '🚺': '🚺',
+    '👤': '👤',
+}
+
+def sex_html(sex):
+    """Sex emoji for HTML mode (e.g. channel vent headers): premium custom emoji when available."""
+    if not sex:
+        return ""
+    clean = str(sex).replace('\ufe0f', '')
+    cid = PREMIUM_SEX_IDS.get(clean) or PREMIUM_SEX_IDS.get(str(sex))
+    if not cid:
+        return str(sex)
+    fb = PREMIUM_SEX_FALLBACK.get(clean) or PREMIUM_SEX_FALLBACK.get(str(sex)) or str(sex)
+    return f'<tg-emoji emoji-id="{cid}">{fb}</tg-emoji>'
+
+def sex_md(sex):
+    """Sex emoji for MarkdownV2 mode (e.g. comments, profile page, vent headers in bot): premium custom emoji when available."""
+    if not sex:
+        return ""
+    clean = str(sex).replace('\ufe0f', '')
+    cid = PREMIUM_SEX_IDS.get(clean) or PREMIUM_SEX_IDS.get(str(sex))
+    if not cid:
+        return escape_markdown(str(sex), version=2)
+    fb = PREMIUM_SEX_FALLBACK.get(clean) or PREMIUM_SEX_FALLBACK.get(str(sex)) or str(sex)
+    return f"![{fb}](tg://emoji?id={cid})"
 
 # Every vent shows a sex under the vent number. There is no opt-out.
 #  - Normal users: always their saved profile sex. Nothing a client sends can change it.
@@ -3769,7 +3808,7 @@ def vent_header_html(vent_display: str, revealed_sex=None) -> str:
     header = f"<code>{vent_display}</code>"
     sex = normalize_revealed_sex(revealed_sex)
     if sex:
-        header += f"\n{sex}"
+        header += f"\n{sex_html(sex)}"
     return header
 
 def format_time_ago(timestamp):
@@ -3903,8 +3942,8 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             display_name = f"{user['weekly_badge']} {display_name}"
             
         safe_name = escape_markdown(display_name, version=2)
-        sex_val = user['sex'] if user['sex'] in ('👨', '👩') else ""
-        safe_sex = escape_markdown(sex_val, version=2)
+        sex_val = user['sex'] if user['sex'] in ('👨', '👩', '🚹', '🚺') else ""
+        safe_sex = sex_md(sex_val)
         safe_total = escape_markdown(str(user['total']), version=2)
         safe_aura = escape_markdown(format_aura(user['total']), version=2)
         profile_link = f"https://t.me/{BOT_USERNAME}?start=profileid_{user['user_id']}"
@@ -3934,8 +3973,8 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_data:
             user_contributions = await asyncio.to_thread(calculate_user_rating, user_id)
             safe_user_name = escape_markdown(user_data['anonymous_name'], version=2)
-            user_sex_val = user_data['sex'] if user_data['sex'] in ('👨', '👩') else ""
-            safe_user_sex = escape_markdown(user_sex_val, version=2)
+            user_sex_val = user_data['sex'] if user_data['sex'] in ('👨', '👩', '🚹', '🚺') else ""
+            safe_user_sex = sex_md(user_sex_val)
             user_aura_val = "" if user_data.get('is_admin') else format_aura(user_contributions)
             safe_user_aura = escape_markdown(user_aura_val, version=2)
             safe_user_pts = escape_markdown(str(user_contributions), version=2)
@@ -4408,7 +4447,7 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
         replier = (await db_fetch_one_async("SELECT * FROM users WHERE user_id = %s", (replier_id,)))
         if str(replier_id) == str(post['author_id']):
             _vsex = get_display_sex(replier)
-            safe_replier_name = f"{_vsex} Vent author" if _vsex else "Vent author"
+            safe_replier_name = f"{sex_md(_vsex)} Vent author" if _vsex else "Vent author"
         else:
             replier_name = get_display_name_with_sex(replier)
             safe_replier_name = escape_markdown(replier_name, version=2)
@@ -6654,7 +6693,8 @@ async def process_start_payload(update, context, arg):
                 display_name = "Vent author"
                 # Hide stats – we will not include them in the text
                 # We also don't show bio for vent author to keep minimal
-                profile_text = f"*{escape_markdown(display_name, version=2)}*{' ' + escape_markdown(display_sex, version=2) if display_sex else ''}\n\n"
+                safe_sex = sex_md(display_sex)
+                profile_text = f"*{escape_markdown(display_name, version=2)}*{' ' + safe_sex if safe_sex else ''}\n\n"
                 # Only add a note if not self? But we already handle self above.
                 # Add a simple spacer
                 profile_text += "_This is the author of the vent_\n"
@@ -6710,7 +6750,7 @@ async def process_start_payload(update, context, arg):
 
                 is_target_admin = user_data.get('is_admin', False)
                 safe_name = escape_markdown(display_name, version=2)
-                safe_sex = escape_markdown(display_sex, version=2)
+                safe_sex = sex_md(display_sex)
                 safe_bio = escape_markdown(bio, version=2)
 
                 if is_target_admin:
@@ -7709,7 +7749,7 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
     # Never shown on a deleted post.
     sex_line = ""
     if not post.get('deleted') and normalize_revealed_sex(post.get('revealed_sex')):
-        sex_line = f"{normalize_revealed_sex(post.get('revealed_sex'))}\n"
+        sex_line = f"{sex_md(post.get('revealed_sex'))}\n"
 
     header_text = (
         f"*{escaped_vent}*\n"
@@ -8383,15 +8423,15 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
         if is_author:
             # Vent author: show sex emoji + clickable "Vent author" (no custom avatar, no aura)
             sex_emoji = comment.get('sex') or '👤'
-            author_text = f"{sex_emoji} [_{escape_markdown('Vent author', version=2)}_]({profile_link})"
+            author_text = f"{sex_md(sex_emoji)} [_{escape_markdown('Vent author', version=2)}_]({profile_link})"
         else:
             # Normal user: show full display (sex + custom avatar + name + aura)
             sex_emoji = comment.get('sex') or '👤'
             avatar_emoji = avatar_md(comment.get('avatar_emoji'))
-            if sex_emoji in ('👨', '👩'):
-                author_avatar = f"{sex_emoji} {avatar_emoji}" if avatar_emoji else sex_emoji
+            if sex_emoji in ('👨', '👩', '🚹', '🚺'):
+                author_avatar = f"{sex_md(sex_emoji)} {avatar_emoji}" if avatar_emoji else sex_md(sex_emoji)
             else:
-                author_avatar = avatar_emoji if avatar_emoji else '👤'
+                author_avatar = avatar_emoji if avatar_emoji else sex_md('👤')
             author_label = f"[_{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}_]({profile_link})"
             author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
@@ -8466,16 +8506,16 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
     if str(reply['author_id']) == str(post_author_id):
         # Vent author reply: clickable "Vent author" with sex emoji
         sex_emoji = display_sex or '👤'
-        reply_author_text = f"{sex_emoji} [_{escape_markdown('Vent author', version=2)}_]({reply_profile_link})"
+        reply_author_text = f"{sex_md(sex_emoji)} [_{escape_markdown('Vent author', version=2)}_]({reply_profile_link})"
     else:
         # Normal user
         author_sex = display_sex or '👤'
         author_label = f"[_{escape_markdown(display_name, version=2)}_]({reply_profile_link})"
         avatar_emoji = avatar_md(avatar_emoji)
-        if author_sex in ('👨', '👩'):
-            author_avatar = f"{author_sex} {avatar_emoji}" if avatar_emoji else author_sex
+        if author_sex in ('👨', '👩', '🚹', '🚺'):
+            author_avatar = f"{sex_md(author_sex)} {avatar_emoji}" if avatar_emoji else sex_md(author_sex)
         else:
-            author_avatar = avatar_emoji if avatar_emoji else '👤'
+            author_avatar = avatar_emoji if avatar_emoji else sex_md('👤')
         reply_author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
     # Pass pre-fetched reaction data if available (e.g. from show_more_replies)
@@ -8788,7 +8828,7 @@ async def send_updated_profile(user_id: str, chat_id: int, context: ContextTypes
         _prefix = f"{weekly_badge} " if weekly_badge else ''
         _plain_name = user.get('anonymous_name') or 'Anonymous'
         safe_name = escape_markdown(_prefix, version=2) + _av_md + ' ' + escape_markdown(_plain_name, version=2)
-    safe_sex = escape_markdown(display_sex, version=2)
+    safe_sex = sex_md(display_sex)
     safe_bio = escape_markdown(bio, version=2)
     safe_level = escape_markdown(str(level), version=2)
     safe_rating = escape_markdown(str(rating), version=2)
@@ -19290,7 +19330,7 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_commen
         replier = get_user_cached(replier_id)
         if str(replier_id) == str(post['author_id']):
             _vsex = get_display_sex(replier)
-            safe_replier_name = f"{_vsex} Vent author" if _vsex else "Vent author"
+            safe_replier_name = f"{sex_html(_vsex)} Vent author" if _vsex else "Vent author"
         else:
             safe_replier_name = html.escape(get_display_name_with_sex(replier))
 
