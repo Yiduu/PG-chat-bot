@@ -3732,24 +3732,28 @@ def get_display_name_with_sex(user_data):
     return f"{prefix} {name}" if prefix else name
 
 def normalize_revealed_sex(value):
-    """Only 👨 / 👩 (and 🚹 / 🚺) are ever shown next to a vent number. Anything else (None, '', the
+    """Only 👨 / 👩 (and 🕺 / 💃) are ever shown next to a vent number. Anything else (None, '', the
     unset 👤 placeholder, junk) means 'show nothing'."""
-    return value if value in ('👨', '👩', '🚹', '🚺') else None
+    return value if value in ('👨', '👩', '🚹', '🚺', '🕺', '💃') else None
 
 # Telegram Custom Emojis for Male / Female / Unset sex icons
 PREMIUM_SEX_IDS = {
-    '👨': '5429564911048992647',
-    '🚹': '5429564911048992647',
-    '👩': '5429474729620677471',
-    '🚺': '5429474729620677471',
+    '👨': '5190758974135212829',
+    '🚹': '5190758974135212829',
+    '🕺': '5190758974135212829',
+    '👩': '5190799832159100491',
+    '🚺': '5190799832159100491',
+    '💃': '5190799832159100491',
     '👤': '5373012449597335010',
 }
 
 PREMIUM_SEX_FALLBACK = {
-    '👨': '🚹',
-    '🚹': '🚹',
-    '👩': '🚺',
-    '🚺': '🚺',
+    '👨': '🕺',
+    '🚹': '🕺',
+    '🕺': '🕺',
+    '👩': '💃',
+    '🚺': '💃',
+    '💃': '💃',
     '👤': '👤',
 }
 
@@ -8428,7 +8432,7 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             # Normal user: show full display (sex + custom avatar + name + aura)
             sex_emoji = comment.get('sex') or '👤'
             avatar_emoji = avatar_md(comment.get('avatar_emoji'))
-            if sex_emoji in ('👨', '👩', '🚹', '🚺'):
+            if sex_emoji in ('👨', '👩', '🚹', '🚺', '🕺', '💃'):
                 author_avatar = f"{sex_md(sex_emoji)} {avatar_emoji}" if avatar_emoji else sex_md(sex_emoji)
             else:
                 author_avatar = avatar_emoji if avatar_emoji else sex_md('👤')
@@ -8512,7 +8516,7 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
         author_sex = display_sex or '👤'
         author_label = f"[_{escape_markdown(display_name, version=2)}_]({reply_profile_link})"
         avatar_emoji = avatar_md(avatar_emoji)
-        if author_sex in ('👨', '👩', '🚹', '🚺'):
+        if author_sex in ('👨', '👩', '🚹', '🚺', '🕺', '💃'):
             author_avatar = f"{sex_md(author_sex)} {avatar_emoji}" if avatar_emoji else sex_md(author_sex)
         else:
             author_avatar = avatar_emoji if avatar_emoji else sex_md('👤')
