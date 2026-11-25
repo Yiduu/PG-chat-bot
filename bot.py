@@ -3732,52 +3732,50 @@ def get_display_name_with_sex(user_data):
     return f"{prefix} {name}" if prefix else name
 
 def normalize_revealed_sex(value):
-    """Only 👨 / 👩 (and 🕺 / 💃) are ever shown next to a vent number. Anything else (None, '', the
+    """Only 👨 / 👩 are ever shown next to a vent number. Anything else (None, '', the
     unset 👤 placeholder, junk) means 'show nothing'."""
-    return value if value in ('👨', '👩', '🚹', '🚺', '🕺', '💃') else None
+    return value if value in ('👨', '👩') else None
 
-# Telegram Custom Emojis for Male / Female / Unset sex icons
+# ---- Premium sex emoji ----------------------------------------------------------------
+# The database (and the Mini App) keep the plain 👨/👩. Wherever the bot or channel writes a
+# message, the sex is shown as a premium custom emoji from the pack instead: the doctor emoji
+# 👨‍⚕️ (male) / 👩‍⚕️ (female). The plain emoji sits inside the tag, so if Telegram can't render the
+# premium one the normal 👨/👩 is shown - nothing breaks. Swap the IDs below to use another
+# emoji from the pack (e.g. 🚹 5429564911048992647 / 🚺 5429474729620677471).
+# Env: PREMIUM_SEX=0 turns it off.
+PREMIUM_SEX_ON = os.getenv('PREMIUM_SEX', '1').strip().lower() not in ('0', 'false', 'no', 'off')
 PREMIUM_SEX_IDS = {
-    '👨': '5190758974135212829',
-    '🚹': '5190758974135212829',
-    '🕺': '5190758974135212829',
-    '👩': '5190799832159100491',
-    '🚺': '5190799832159100491',
-    '💃': '5190799832159100491',
-    '👤': '5373012449597335010',
-}
-
-PREMIUM_SEX_FALLBACK = {
-    '👨': '🕺',
-    '🚹': '🕺',
-    '🕺': '🕺',
-    '👩': '💃',
-    '🚺': '💃',
-    '💃': '💃',
-    '👤': '👤',
+    '👨': '5429363657471434941',  # 👨‍⚕️ male
+    '👩': '5431602426354344379',  # 👩‍⚕️ female
 }
 
 def sex_html(sex):
-    """Sex emoji for HTML mode (e.g. channel vent headers): premium custom emoji when available."""
-    if not sex:
-        return ""
-    clean = str(sex).replace('\ufe0f', '')
-    cid = PREMIUM_SEX_IDS.get(clean) or PREMIUM_SEX_IDS.get(str(sex))
-    if not cid:
-        return str(sex)
-    fb = PREMIUM_SEX_FALLBACK.get(clean) or PREMIUM_SEX_FALLBACK.get(str(sex)) or str(sex)
-    return f'<tg-emoji emoji-id="{cid}">{fb}</tg-emoji>'
+    """Sex emoji for HTML messages: premium <tg-emoji> when available, else the plain emoji."""
+    cid = PREMIUM_SEX_IDS.get(sex) if PREMIUM_SEX_ON else None
+    return f'<tg-emoji emoji-id="{cid}">{sex}</tg-emoji>' if cid else (sex or "")
 
 def sex_md(sex):
-    """Sex emoji for MarkdownV2 mode (e.g. comments, profile page, vent headers in bot): premium custom emoji when available."""
-    if not sex:
-        return ""
-    clean = str(sex).replace('\ufe0f', '')
-    cid = PREMIUM_SEX_IDS.get(clean) or PREMIUM_SEX_IDS.get(str(sex))
-    if not cid:
-        return escape_markdown(str(sex), version=2)
-    fb = PREMIUM_SEX_FALLBACK.get(clean) or PREMIUM_SEX_FALLBACK.get(str(sex)) or str(sex)
-    return f"![{fb}](tg://emoji?id={cid})"
+    """Sex emoji for MarkdownV2 messages (already valid MarkdownV2, don't escape it again)."""
+    cid = PREMIUM_SEX_IDS.get(sex) if PREMIUM_SEX_ON else None
+    return f"![{sex}](tg://emoji?id={cid})" if cid else (sex or "")
+
+def display_name_with_sex_html(user_data):
+    """get_display_name_with_sex for HTML messages: premium sex emoji, everything else escaped."""
+    if not user_data:
+        return "Anonymous"
+    parts = [sex_html(get_display_sex(user_data)), html.escape(user_data.get('avatar_emoji') or "")]
+    prefix = " ".join(p for p in parts if p)
+    name = html.escape(user_data.get('anonymous_name') or "Anonymous")
+    return f"{prefix} {name}" if prefix else name
+
+def display_name_with_sex_md(user_data):
+    """get_display_name_with_sex for MarkdownV2 messages: premium sex emoji, everything else escaped."""
+    if not user_data:
+        return escape_markdown("Anonymous", version=2)
+    parts = [sex_md(get_display_sex(user_data)), escape_markdown(user_data.get('avatar_emoji') or "", version=2)]
+    prefix = " ".join(p for p in parts if p)
+    name = escape_markdown(user_data.get('anonymous_name') or "Anonymous", version=2)
+    return f"{prefix} {name}" if prefix else name
 
 # Every vent shows a sex under the vent number. There is no opt-out.
 #  - Normal users: always their saved profile sex. Nothing a client sends can change it.
@@ -3946,7 +3944,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             display_name = f"{user['weekly_badge']} {display_name}"
             
         safe_name = escape_markdown(display_name, version=2)
-        sex_val = user['sex'] if user['sex'] in ('👨', '👩', '🚹', '🚺') else ""
+        sex_val = user['sex'] if user['sex'] in ('👨', '👩') else ""
         safe_sex = sex_md(sex_val)
         safe_total = escape_markdown(str(user['total']), version=2)
         safe_aura = escape_markdown(format_aura(user['total']), version=2)
@@ -3977,7 +3975,7 @@ async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_data:
             user_contributions = await asyncio.to_thread(calculate_user_rating, user_id)
             safe_user_name = escape_markdown(user_data['anonymous_name'], version=2)
-            user_sex_val = user_data['sex'] if user_data['sex'] in ('👨', '👩', '🚹', '🚺') else ""
+            user_sex_val = user_data['sex'] if user_data['sex'] in ('👨', '👩') else ""
             safe_user_sex = sex_md(user_sex_val)
             user_aura_val = "" if user_data.get('is_admin') else format_aura(user_contributions)
             safe_user_aura = escape_markdown(user_aura_val, version=2)
@@ -4390,7 +4388,7 @@ async def notify_vent_author_of_comment(context: ContextTypes.DEFAULT_TYPE, post
         
         # Use HTML parsing – no need to escape markdown special characters
         import html
-        safe_commenter_name = html.escape(commenter_name)
+        safe_commenter_name = display_name_with_sex_html(commenter)
         safe_post_preview = html.escape(post_preview)
 
         # Show the actual comment text so it's visible in the notification itself
@@ -4453,8 +4451,7 @@ async def notify_user_of_reply(context: ContextTypes.DEFAULT_TYPE, post_id: int,
             _vsex = get_display_sex(replier)
             safe_replier_name = f"{sex_md(_vsex)} Vent author" if _vsex else "Vent author"
         else:
-            replier_name = get_display_name_with_sex(replier)
-            safe_replier_name = escape_markdown(replier_name, version=2)
+            safe_replier_name = display_name_with_sex_md(replier)
         
         post_preview = post['content'][:50] + '...' if len(post['content']) > 50 else post['content']
         
@@ -6697,8 +6694,7 @@ async def process_start_payload(update, context, arg):
                 display_name = "Vent author"
                 # Hide stats – we will not include them in the text
                 # We also don't show bio for vent author to keep minimal
-                safe_sex = sex_md(display_sex)
-                profile_text = f"*{escape_markdown(display_name, version=2)}*{' ' + safe_sex if safe_sex else ''}\n\n"
+                profile_text = f"*{escape_markdown(display_name, version=2)}*{' ' + sex_md(display_sex) if display_sex else ''}\n\n"
                 # Only add a note if not self? But we already handle self above.
                 # Add a simple spacer
                 profile_text += "_This is the author of the vent_\n"
@@ -7753,7 +7749,7 @@ async def show_comments_menu(update, context, post_id, page=1, force_reveal=Fals
     # Never shown on a deleted post.
     sex_line = ""
     if not post.get('deleted') and normalize_revealed_sex(post.get('revealed_sex')):
-        sex_line = f"{sex_md(post.get('revealed_sex'))}\n"
+        sex_line = f"{sex_md(normalize_revealed_sex(post.get('revealed_sex')))}\n"
 
     header_text = (
         f"*{escaped_vent}*\n"
@@ -8432,10 +8428,10 @@ async def show_comments_page(update, context, post_id, page=1, reply_pages=None)
             # Normal user: show full display (sex + custom avatar + name + aura)
             sex_emoji = comment.get('sex') or '👤'
             avatar_emoji = avatar_md(comment.get('avatar_emoji'))
-            if sex_emoji in ('👨', '👩', '🚹', '🚺', '🕺', '💃'):
+            if sex_emoji in ('👨', '👩'):
                 author_avatar = f"{sex_md(sex_emoji)} {avatar_emoji}" if avatar_emoji else sex_md(sex_emoji)
             else:
-                author_avatar = avatar_emoji if avatar_emoji else sex_md('👤')
+                author_avatar = avatar_emoji if avatar_emoji else '👤'
             author_label = f"[_{escape_markdown(comment['anonymous_name'] or 'Anonymous', version=2)}_]({profile_link})"
             author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
@@ -8516,10 +8512,10 @@ async def send_reply_message(context, chat_id, reply, post_author_id, post_id, r
         author_sex = display_sex or '👤'
         author_label = f"[_{escape_markdown(display_name, version=2)}_]({reply_profile_link})"
         avatar_emoji = avatar_md(avatar_emoji)
-        if author_sex in ('👨', '👩', '🚹', '🚺', '🕺', '💃'):
+        if author_sex in ('👨', '👩'):
             author_avatar = f"{sex_md(author_sex)} {avatar_emoji}" if avatar_emoji else sex_md(author_sex)
         else:
-            author_avatar = avatar_emoji if avatar_emoji else sex_md('👤')
+            author_avatar = avatar_emoji if avatar_emoji else '👤'
         reply_author_text = f"{author_avatar} {author_label} {aura_text}".strip()
 
     # Pass pre-fetched reaction data if available (e.g. from show_more_replies)
@@ -19284,7 +19280,7 @@ def notify_vent_author_of_comment_sync(post_id, commenter_id, comment_id=None, c
         commenter_name = get_display_name_with_sex(commenter)
 
         post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
-        safe_commenter = html.escape(commenter_name)
+        safe_commenter = display_name_with_sex_html(commenter)
         safe_post_preview = html.escape(post_preview)
         media_labels = {'voice': '🎤 Voice message', 'gif': '🎞 GIF', 'sticker': '🏷 Sticker', 'photo': '🖼 Photo'}
         safe_comment = html.escape(truncate_for_telegram(comment_content or '', COMMENT_TEXT_CONTENT_LIMIT)) if comment_content else media_labels.get(media_type, '')
@@ -19336,7 +19332,7 @@ def notify_user_of_reply_sync(post_id, parent_comment_id, replier_id, new_commen
             _vsex = get_display_sex(replier)
             safe_replier_name = f"{sex_html(_vsex)} Vent author" if _vsex else "Vent author"
         else:
-            safe_replier_name = html.escape(get_display_name_with_sex(replier))
+            safe_replier_name = display_name_with_sex_html(replier)
 
         post_preview = post['content'][:50] + '...' if post['content'] and len(post['content']) > 50 else (post['content'] or "")
         safe_post_preview = html.escape(post_preview)
